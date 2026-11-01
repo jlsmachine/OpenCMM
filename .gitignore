@@ -1,0 +1,29 @@
+# Visual Studio / IDE
+.vs/
+*.suo
+*.user
+*.userosversion
+*.sln.docstates
+*.ipch
+ipch/
+
+# CMake & Build Directories
+build/
+build-*/
+CMakeCache.txt
+CMakeFiles/
+cmake-build-debug/
+cmake-build-release/
+
+# vcpkg Local Packages & Artifacts
+vcpkg_installed/
+vcpkg-configuration.json.lock
+
+# Binaries & Executables
+*.exe
+*.dll
+*.lib
+*.obj
+*.pdb
+*.ilk
+*.exp
