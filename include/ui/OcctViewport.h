@@ -9,6 +9,10 @@
 #include <V3d_Viewer.hxx>
 #include <Graphic3d_GraphicDriver.hxx>
 
+class QPushButton;
+class QSlider;
+class QLabel;
+
 namespace OpenCMM {
 
     enum class ModelDisplayMode {
@@ -48,6 +52,7 @@ namespace OpenCMM {
 
     private:
         void initOcct();
+        void setupOverlayHud();
         void createDemoGraniteScene();
         void createProbeStylus();
         void applyVisualStyleToShape(const Handle(AIS_Shape)& shape);
@@ -68,6 +73,15 @@ namespace OpenCMM {
         ModelDisplayMode m_displayMode = ModelDisplayMode::ShadedWithEdges;
         double m_transparency = 0.0;
         bool m_graniteVisible = true;
+
+        // Overlay HUD Widget container
+        QWidget* m_hudContainer = nullptr;
+        QPushButton* m_btnShadedEdges = nullptr;
+        QPushButton* m_btnShadedOnly = nullptr;
+        QPushButton* m_btnWireframe = nullptr;
+        QPushButton* m_btnGranite = nullptr;
+        QSlider* m_verticalSlider = nullptr;
+        QLabel* m_sliderValLbl = nullptr;
 
         QPoint m_lastMousePos;
         QPoint m_pressMousePos;

@@ -66,11 +66,10 @@ namespace OpenCMM {
             "QPushButton { background-color: #3a3f4b; color: white; border: 1px solid #4b5263; border-radius: 3px; padding: 5px 10px; font-weight: bold; }"
             "QPushButton:hover { background-color: #4b5263; }"
             "QComboBox { background-color: #1e2227; color: white; border: 1px solid #4b5263; padding: 4px 8px; font-weight: bold; }"
-            "QComboBox QAbstractItemView { background-color: #1e2227; color: white; selection-background-color: #2d5a88; }"
-            "QCheckBox { color: #dcdfe4; font-weight: bold; spacing: 5px; padding: 0 4px; }";
+            "QComboBox QAbstractItemView { background-color: #1e2227; color: white; selection-background-color: #2d5a88; }";
 
-        // Row 1: Hardware, CAD Model View Controls & Simulator
-        auto* hwToolbar = addToolBar("Hardware & 3D View Controls");
+        // Row 1: Hardware, CAD Loader & Simulator
+        auto* hwToolbar = addToolBar("Hardware & CAD Controls");
         hwToolbar->setMovable(false);
         hwToolbar->setStyleSheet(barStyle);
 
@@ -107,39 +106,6 @@ namespace OpenCMM {
         loadStepBtn->setStyleSheet("background-color: #2d5a88; color: white; padding: 5px 10px; font-weight: bold;");
         connect(loadStepBtn, &QPushButton::clicked, this, &MainWindow::onLoadStepClicked);
         hwToolbar->addWidget(loadStepBtn);
-
-        auto* viewLabel = new QLabel(" View: ", this);
-        viewLabel->setStyleSheet("color: #abb2bf; font-weight: bold;");
-        hwToolbar->addWidget(viewLabel);
-
-        m_viewModeCombo = new QComboBox(this);
-        m_viewModeCombo->addItem("Shaded + Edges", static_cast<int>(ModelDisplayMode::ShadedWithEdges));
-        m_viewModeCombo->addItem("Shaded Only", static_cast<int>(ModelDisplayMode::ShadedOnly));
-        m_viewModeCombo->addItem("Wireframe", static_cast<int>(ModelDisplayMode::Wireframe));
-        connect(m_viewModeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, &MainWindow::onDisplayModeChanged);
-        hwToolbar->addWidget(m_viewModeCombo);
-
-        m_transparentCheck = new QCheckBox("X-Ray / Transparent", this);
-        connect(m_transparentCheck, &QCheckBox::toggled, this, &MainWindow::onTransparencyToggled);
-        hwToolbar->addWidget(m_transparentCheck);
-
-        m_transparencySlider = new QSlider(Qt::Horizontal, this);
-        m_transparencySlider->setRange(0, 90);
-        m_transparencySlider->setValue(0);
-        m_transparencySlider->setFixedWidth(90);
-        m_transparencySlider->setToolTip("Adjust model transparency (0% Opaque to 90% Transparent)");
-        connect(m_transparencySlider, &QSlider::valueChanged, this, &MainWindow::onTransparencySliderChanged);
-        hwToolbar->addWidget(m_transparencySlider);
-
-        m_transparencyValLabel = new QLabel("0%", this);
-        m_transparencyValLabel->setStyleSheet("color: #61afef; font-weight: bold; min-width: 32px;");
-        hwToolbar->addWidget(m_transparencyValLabel);
-
-        m_graniteCheck = new QCheckBox("Granite Table", this);
-        m_graniteCheck->setChecked(true);
-        connect(m_graniteCheck, &QCheckBox::toggled, this, &MainWindow::onGraniteToggled);
-        hwToolbar->addWidget(m_graniteCheck);
 
         hwToolbar->addSeparator();
 
@@ -357,42 +323,6 @@ namespace OpenCMM {
             .arg(toDisplayUnit(m_effectiveProbeRadius, m_unitSystem), 0, 'f', decimals)
             .arg(unitStr)
         );
-    }
-
-    void MainWindow::onDisplayModeChanged(int /*index*/) {
-        if (!m_viewport || !m_viewModeCombo) return;
-        auto mode = static_cast<ModelDisplayMode>(m_viewModeCombo->currentData().toInt());
-        m_viewport->setModelDisplayMode(mode);
-    }
-
-    void MainWindow::onTransparencyToggled(bool checked) {
-        if (!m_transparencySlider) return;
-        if (checked && m_transparencySlider->value() == 0) {
-            m_transparencySlider->setValue(55);
-        }
-        else if (!checked && m_transparencySlider->value() > 0) {
-            m_transparencySlider->setValue(0);
-        }
-    }
-
-    void MainWindow::onTransparencySliderChanged(int value) {
-        if (m_transparencyValLabel) {
-            m_transparencyValLabel->setText(QString("%1%").arg(value));
-        }
-        if (m_transparentCheck) {
-            m_transparentCheck->blockSignals(true);
-            m_transparentCheck->setChecked(value > 0);
-            m_transparentCheck->blockSignals(false);
-        }
-        if (m_viewport) {
-            m_viewport->setModelTransparency(static_cast<double>(value) / 100.0);
-        }
-    }
-
-    void MainWindow::onGraniteToggled(bool checked) {
-        if (m_viewport) {
-            m_viewport->setGraniteVisible(checked);
-        }
     }
 
     void MainWindow::onRefreshPortsClicked() {

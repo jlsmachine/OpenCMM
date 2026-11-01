@@ -2,6 +2,11 @@
 
 #include <QMouseEvent>
 #include <QWheelEvent>
+#include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QPushButton>
+#include <QSlider>
+#include <QLabel>
 #include <algorithm>
 
 #include <Aspect_DisplayConnection.hxx>
@@ -32,6 +37,81 @@ namespace OpenCMM {
         setAttribute(Qt::WA_NativeWindow);
         setMouseTracking(true);
         setFocusPolicy(Qt::StrongFocus);
+
+        setupOverlayHud();
+    }
+
+    void OcctViewport::setupOverlayHud() {
+        m_hudContainer = new QWidget(this);
+        m_hudContainer->setStyleSheet(
+            "QWidget { background-color: rgba(33, 37, 43, 210); border: 1px solid #3a3f4b; border-radius: 6px; }"
+            "QPushButton { background-color: #282c34; color: #abb2bf; border: 1px solid #4b5263; border-radius: 3px; padding: 5px 8px; font-weight: bold; font-size: 11px; min-width: 95px; }"
+            "QPushButton:hover { background-color: #3a3f4b; color: white; }"
+            "QPushButton:checked { background-color: #2d5a88; color: white; border: 1px solid #61afef; }"
+            "QSlider::groove:vertical { background: #1e2227; width: 6px; border-radius: 3px; }"
+            "QSlider::handle:vertical { background: #61afef; height: 14px; margin: 0 -4px; border-radius: 3px; }"
+            "QLabel { color: #abb2bf; font-size: 10px; font-weight: bold; background: transparent; border: none; }"
+        );
+
+        auto* hudLayout = new QVBoxLayout(m_hudContainer);
+        hudLayout->setContentsMargins(8, 8, 8, 8);
+        hudLayout->setSpacing(6);
+
+        auto* titleLbl = new QLabel("VIEW HUD", m_hudContainer);
+        titleLbl->setAlignment(Qt::AlignCenter);
+        hudLayout->addWidget(titleLbl);
+
+        m_btnShadedEdges = new QPushButton("Shaded + Edges", m_hudContainer);
+        m_btnShadedEdges->setCheckable(true);
+        m_btnShadedEdges->setChecked(true);
+        connect(m_btnShadedEdges, &QPushButton::clicked, this, [this]() {
+            setModelDisplayMode(ModelDisplayMode::ShadedWithEdges);
+            });
+        hudLayout->addWidget(m_btnShadedEdges);
+
+        m_btnShadedOnly = new QPushButton("Shaded Only", m_hudContainer);
+        m_btnShadedOnly->setCheckable(true);
+        connect(m_btnShadedOnly, &QPushButton::clicked, this, [this]() {
+            setModelDisplayMode(ModelDisplayMode::ShadedOnly);
+            });
+        hudLayout->addWidget(m_btnShadedOnly);
+
+        m_btnWireframe = new QPushButton("Wireframe", m_hudContainer);
+        m_btnWireframe->setCheckable(true);
+        connect(m_btnWireframe, &QPushButton::clicked, this, [this]() {
+            setModelDisplayMode(ModelDisplayMode::Wireframe);
+            });
+        hudLayout->addWidget(m_btnWireframe);
+
+        m_btnGranite = new QPushButton("Granite Table", m_hudContainer);
+        m_btnGranite->setCheckable(true);
+        m_btnGranite->setChecked(true);
+        connect(m_btnGranite, &QPushButton::clicked, this, [this]() {
+            setGraniteVisible(m_btnGranite->isChecked());
+            });
+        hudLayout->addWidget(m_btnGranite);
+
+        auto* sliderLayout = new QVBoxLayout();
+        sliderLayout->setSpacing(2);
+        auto* transTitle = new QLabel("Trans: 0%", m_hudContainer);
+        transTitle->setAlignment(Qt::AlignCenter);
+        m_sliderValLbl = transTitle;
+
+        m_verticalSlider = new QSlider(Qt::Vertical, m_hudContainer);
+        m_verticalSlider->setRange(0, 90);
+        m_verticalSlider->setValue(0);
+        m_verticalSlider->setFixedHeight(85);
+        connect(m_verticalSlider, &QSlider::valueChanged, this, [this](int val) {
+            m_sliderValLbl->setText(QString("Trans: %1%").arg(val));
+            setModelTransparency(static_cast<double>(val) / 100.0);
+            });
+
+        sliderLayout->addWidget(transTitle);
+        sliderLayout->addWidget(m_verticalSlider, 0, Qt::AlignHCenter);
+        hudLayout->addLayout(sliderLayout);
+
+        m_hudContainer->adjustSize();
+        m_hudContainer->raise();
     }
 
     void OcctViewport::initOcct() {
@@ -175,6 +255,10 @@ namespace OpenCMM {
 
     void OcctViewport::setModelDisplayMode(ModelDisplayMode mode) {
         m_displayMode = mode;
+        if (m_btnShadedEdges) m_btnShadedEdges->setChecked(mode == ModelDisplayMode::ShadedWithEdges);
+        if (m_btnShadedOnly) m_btnShadedOnly->setChecked(mode == ModelDisplayMode::ShadedOnly);
+        if (m_btnWireframe) m_btnWireframe->setChecked(mode == ModelDisplayMode::Wireframe);
+
         if (m_context.IsNull()) {
             return;
         }
@@ -205,6 +289,8 @@ namespace OpenCMM {
 
     void OcctViewport::setGraniteVisible(bool visible) {
         m_graniteVisible = visible;
+        if (m_btnGranite) m_btnGranite->setChecked(visible);
+
         if (m_context.IsNull() || m_graniteShape.IsNull()) {
             return;
         }
@@ -229,6 +315,13 @@ namespace OpenCMM {
     void OcctViewport::resizeEvent(QResizeEvent* /*event*/) {
         if (!m_view.IsNull()) {
             m_view->MustBeResized();
+        }
+        // Position HUD container in the top-right corner with 12px margin
+        if (m_hudContainer) {
+            int x = width() - m_hudContainer->width() - 12;
+            int y = 12;
+            m_hudContainer->move(x, y);
+            m_hudContainer->raise();
         }
     }
 

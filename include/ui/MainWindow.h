@@ -3,8 +3,6 @@
 #include <QLabel>
 #include <QComboBox>
 #include <QPushButton>
-#include <QCheckBox>
-#include <QSlider>
 #include <QTreeWidget>
 #include <vector>
 #include <Eigen/Dense>
@@ -29,10 +27,6 @@ namespace OpenCMM {
         void onZeroAxesClicked();
         void onUnitToggled();
         void onLoadStepClicked();
-        void onDisplayModeChanged(int index);
-        void onTransparencyToggled(bool checked);
-        void onTransparencySliderChanged(int value);
-        void onGraniteToggled(bool checked);
 
         void onSimulateHitClicked();
         void onCalibrateProbeClicked();
@@ -80,11 +74,6 @@ namespace OpenCMM {
         QComboBox* m_portCombo = nullptr;
         QPushButton* m_connectBtn = nullptr;
         QPushButton* m_unitBtn = nullptr;
-        QComboBox* m_viewModeCombo = nullptr;
-        QCheckBox* m_transparentCheck = nullptr;
-        QSlider* m_transparencySlider = nullptr;
-        QLabel* m_transparencyValLabel = nullptr;
-        QCheckBox* m_graniteCheck = nullptr;
 
         QComboBox* m_workplaneCombo = nullptr;
         QComboBox* m_compModeCombo = nullptr;
