@@ -14,6 +14,7 @@
 namespace OpenCMM {
 
     class OcctViewport;
+    struct CadFaceInfo;
 
     class MainWindow : public QMainWindow {
         Q_OBJECT
@@ -50,6 +51,7 @@ namespace OpenCMM {
         void updateDroDisplay();
         void updateProbeStatusDisplay();
         void finishFeatureBuffer();
+        void onCadFaceSelected(const CadFaceInfo& faceInfo);
         ProbeCompMode currentCompMode() const;
         WorkplaneFrame currentWorkplane() const;
 

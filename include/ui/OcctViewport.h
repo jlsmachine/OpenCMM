@@ -2,12 +2,17 @@
 #include <QWidget>
 #include <QPoint>
 #include <vector>
+#include <string>
+#include <functional>
 
 #include <AIS_InteractiveContext.hxx>
 #include <AIS_Shape.hxx>
+#include <TopoDS_Face.hxx>
 #include <V3d_View.hxx>
 #include <V3d_Viewer.hxx>
 #include <Graphic3d_GraphicDriver.hxx>
+#include <gp_Pnt.hxx>
+#include <gp_Dir.hxx>
 
 class QPushButton;
 class QSlider;
@@ -19,6 +24,16 @@ namespace OpenCMM {
         ShadedWithEdges = 0,
         ShadedOnly = 1,
         Wireframe = 2
+    };
+
+    struct CadFaceInfo {
+        bool success = false;
+        std::string surfaceType = "Unknown";
+        double nominalDiameter = 0.0;
+        double nominalRadius = 0.0;
+        bool isInternal = false; // True for internal bores/cavities, false for bosses/planes
+        gp_Pnt centerOrCentroid{ 0.0, 0.0, 0.0 };
+        gp_Dir normalOrAxis{ 0.0, 0.0, 1.0 };
     };
 
     class OcctViewport : public QWidget {
@@ -38,6 +53,9 @@ namespace OpenCMM {
         void setModelDisplayMode(ModelDisplayMode mode);
         void setModelTransparency(double transparency);
         void setGraniteVisible(bool visible);
+
+        void setFaceSelectedCallback(std::function<void(const CadFaceInfo&)> cb) { m_faceSelectedCallback = std::move(cb); }
+        CadFaceInfo inspectSelectedCadFace() const;
 
         QPaintEngine* paintEngine() const override { return nullptr; }
 
@@ -74,7 +92,8 @@ namespace OpenCMM {
         double m_transparency = 0.0;
         bool m_graniteVisible = true;
 
-        // Overlay HUD Widget container
+        std::function<void(const CadFaceInfo&)> m_faceSelectedCallback;
+
         QWidget* m_hudContainer = nullptr;
         QPushButton* m_btnShadedEdges = nullptr;
         QPushButton* m_btnShadedOnly = nullptr;

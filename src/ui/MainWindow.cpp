@@ -16,6 +16,7 @@
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QSerialPortInfo>
+#include <algorithm>
 #include <cmath>
 
 namespace OpenCMM {
@@ -54,10 +55,13 @@ namespace OpenCMM {
         setupFeatureTreeDock();
 
         m_viewport = new OcctViewport(this);
+        m_viewport->setFaceSelectedCallback([this](const CadFaceInfo& faceInfo) {
+            onCadFaceSelected(faceInfo);
+            });
         setCentralWidget(m_viewport);
 
         statusBar()->setStyleSheet("background-color: #007acc; color: white; font-weight: bold;");
-        statusBar()->showMessage("Ready - Select workplane, capture probe hits, and solve 2D/3D features.");
+        statusBar()->showMessage("Ready - Select workplane, capture probe hits, or click any STEP CAD face to extract nominals.");
     }
 
     void MainWindow::setupToolbar() {
@@ -127,7 +131,7 @@ namespace OpenCMM {
         connect(simHitBtn, &QPushButton::clicked, this, &MainWindow::onSimulateHitClicked);
         hwToolbar->addWidget(simHitBtn);
 
-        // Row 2: Metrology Workplane, Tip Compensation & Feature Solvers
+        // Row 2: Metrology Workplane, Tip Compensation, Solvers & 3-2-1 Alignment
         addToolBarBreak(Qt::TopToolBarArea);
         auto* metroToolbar = addToolBar("Metrology Feature Solvers");
         metroToolbar->setMovable(false);
@@ -186,11 +190,6 @@ namespace OpenCMM {
         connect(relBtn, &QPushButton::clicked, this, &MainWindow::onMeasureRelationClicked);
         metroToolbar->addWidget(relBtn);
 
-        auto* clearBtn = new QPushButton("Clear All Points", this);
-        connect(clearBtn, &QPushButton::clicked, this, &MainWindow::onClearPointsClicked);
-        metroToolbar->addWidget(clearBtn);
-
-        // In setupToolbar(), add an alignment button next to metrology solvers:
         auto* alignBtn = new QPushButton("3-2-1 Alignment...", this);
         alignBtn->setStyleSheet("background-color: #d15757; color: white; padding: 5px 12px; font-weight: bold;");
         connect(alignBtn, &QPushButton::clicked, this, &MainWindow::onRun321AlignmentClicked);
@@ -209,97 +208,11 @@ namespace OpenCMM {
             updateDroDisplay();
             });
         metroToolbar->addWidget(m_alignStatusBtn);
+
+        auto* clearBtn = new QPushButton("Clear All Points", this);
+        connect(clearBtn, &QPushButton::clicked, this, &MainWindow::onClearPointsClicked);
+        metroToolbar->addWidget(clearBtn);
     }
-    void MainWindow::onRun321AlignmentClicked() {
-        if (m_solvedFeatures.size() < 2) {
-            QMessageBox::information(
-                this,
-                "Need Solved Features",
-                "Please measure and solve at least a Plane (Level) and a Point/Bore/Line (Origin/Rotate) "
-                "before running the 3-2-1 alignment wizard."
-            );
-            return;
-        }
-
-        QDialog dlg(this);
-        dlg.setWindowTitle("Interactive 3-2-1 Part Alignment Wizard");
-        dlg.setMinimumWidth(420);
-        dlg.setStyleSheet(
-            "QDialog { background-color: #21252b; color: #e0e0e0; }"
-            "QLabel { color: #ffffff; font-size: 13px; font-weight: bold; }"
-            "QComboBox { background-color: #181a1f; color: #ffffff; border: 1px solid #4b5263; border-radius: 3px; padding: 5px; font-size: 13px; font-weight: bold; min-width: 200px; }"
-            "QComboBox QAbstractItemView { background-color: #181a1f; color: #ffffff; selection-background-color: #2d5a88; }"
-            "QPushButton { background-color: #3a3f4b; color: #ffffff; border: 1px solid #4b5263; border-radius: 3px; padding: 6px 16px; font-weight: bold; }"
-            "QPushButton:hover { background-color: #4b5263; }"
-        );
-
-        auto* form = new QFormLayout(&dlg);
-        form->setContentsMargins(16, 16, 16, 16);
-        form->setSpacing(14);
-
-        auto* levelCombo = new QComboBox(&dlg);
-        auto* rotateCombo = new QComboBox(&dlg);
-        auto* originCombo = new QComboBox(&dlg);
-
-        for (const auto& feat : m_solvedFeatures) {
-            QString name = QString::fromStdString(feat.name);
-            levelCombo->addItem(name, feat.id);
-            rotateCombo->addItem(name, feat.id);
-            originCombo->addItem(name, feat.id);
-        }
-
-        form->addRow("1. Level Z (Primary Plane):", levelCombo);
-        form->addRow("2. Rotate X (Secondary Line/Feat):", rotateCombo);
-        form->addRow("3. Origin XYZ (Tertiary Datum):", originCombo);
-
-        auto* btns = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
-        connect(btns, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
-        connect(btns, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
-        form->addRow(btns);
-
-        if (dlg.exec() != QDialog::Accepted) return;
-
-        // Find selected features
-        int idL = levelCombo->currentData().toInt();
-        int idR = rotateCombo->currentData().toInt();
-        int idO = originCombo->currentData().toInt();
-
-        auto itL = std::find_if(m_solvedFeatures.begin(), m_solvedFeatures.end(), [idL](const MeasuredFeature& f) { return f.id == idL; });
-        auto itR = std::find_if(m_solvedFeatures.begin(), m_solvedFeatures.end(), [idR](const MeasuredFeature& f) { return f.id == idR; });
-        auto itO = std::find_if(m_solvedFeatures.begin(), m_solvedFeatures.end(), [idO](const MeasuredFeature& f) { return f.id == idO; });
-
-        Alignment321Result res = MetrologyMath::compute321Alignment(*itL, *itR, *itO);
-        if (!res.success) {
-            QMessageBox::critical(this, "Alignment Failed", "Could not compute 3-2-1 transformation matrix.");
-            return;
-        }
-
-        m_pcsMatrix = res.transformationMatrix;
-        m_isPartAligned = true;
-        m_alignStatusBtn->setChecked(true);
-        m_alignStatusBtn->setStyleSheet("background-color: #28a745; color: white; padding: 5px 10px; font-weight: bold;");
-        m_alignStatusBtn->setText("Alignment: PCS (Active Part Datum)");
-
-        updateDroDisplay();
-        statusBar()->showMessage("3-2-1 Part Alignment successfully applied! DRO is now displaying PCS coordinates.");
-    }
-
-    void MainWindow::updateDroDisplay() {
-        Eigen::Vector3d pos(m_lastPosition.x, m_lastPosition.y, m_lastPosition.z);
-        if (m_isPartAligned && m_alignStatusBtn && m_alignStatusBtn->isChecked()) {
-            pos = MetrologyMath::transformPoint(pos, m_pcsMatrix);
-        }
-
-        const int decimals = (m_unitSystem == UnitSystem::Millimeters) ? 4 : 5;
-        const double xVal = toDisplayUnit(pos.x(), m_unitSystem);
-        const double yVal = toDisplayUnit(pos.y(), m_unitSystem);
-        const double zVal = toDisplayUnit(pos.z(), m_unitSystem);
-
-        m_droX->setText(QString::number(xVal, 'f', decimals));
-        m_droY->setText(QString::number(yVal, 'f', decimals));
-        m_droZ->setText(QString::number(zVal, 'f', decimals));
-    }
-
 
     void MainWindow::setupDroDock() {
         auto* droDock = new QDockWidget("LIVE CMM DRO & PROBE STATUS", this);
@@ -513,8 +426,55 @@ namespace OpenCMM {
         );
         if (!filePath.isEmpty() && m_viewport) {
             m_viewport->loadStepFile(filePath);
-            statusBar()->showMessage("Loaded STEP model: " + filePath);
+            statusBar()->showMessage("Loaded STEP model: " + filePath + " (Click any CAD face to extract nominal geometry)");
         }
+    }
+
+    void MainWindow::onCadFaceSelected(const CadFaceInfo& faceInfo) {
+        if (!faceInfo.success) return;
+
+        // Auto-select Internal (+R) or External (-R) probe compensation based on B-Rep face orientation
+        if (m_compModeCombo) {
+            m_compModeCombo->setCurrentIndex(faceInfo.isInternal ? 1 : 0);
+        }
+
+        const int decimals = (m_unitSystem == UnitSystem::Millimeters) ? 4 : 5;
+        const QString unitStr = (m_unitSystem == UnitSystem::Millimeters) ? " mm" : " in";
+
+        const QString cadTitle = QString("CAD_Nominal [%1]")
+            .arg(QString::fromStdString(faceInfo.surfaceType));
+
+        const QString summaryVal = (faceInfo.nominalDiameter > 0.0)
+            ? QString("Nominal Ø %1%2").arg(toDisplayUnit(faceInfo.nominalDiameter, m_unitSystem), 0, 'f', decimals).arg(unitStr)
+            : QString("Normal (%1, %2, %3)")
+            .arg(faceInfo.normalOrAxis.X(), 0, 'f', 4)
+            .arg(faceInfo.normalOrAxis.Y(), 0, 'f', 4)
+            .arg(faceInfo.normalOrAxis.Z(), 0, 'f', 4);
+
+        auto* cadItem = new QTreeWidgetItem(m_featureTree, { cadTitle, summaryVal });
+
+        if (faceInfo.nominalDiameter > 0.0) {
+            new QTreeWidgetItem(cadItem, {
+                "Nominal Radius",
+                QString("%1%2").arg(toDisplayUnit(faceInfo.nominalRadius, m_unitSystem), 0, 'f', decimals).arg(unitStr)
+                });
+        }
+
+        new QTreeWidgetItem(cadItem, {
+            "Tip Comp Auto-Set",
+            faceInfo.isInternal ? "Internal / Bore (+R)" : "External / Boss (-R)"
+            });
+
+        new QTreeWidgetItem(cadItem, {
+            "CAD Datum Location (X, Y, Z)",
+            QString("(%1, %2, %3)")
+                .arg(toDisplayUnit(faceInfo.centerOrCentroid.X(), m_unitSystem), 0, 'f', decimals)
+                .arg(toDisplayUnit(faceInfo.centerOrCentroid.Y(), m_unitSystem), 0, 'f', decimals)
+                .arg(toDisplayUnit(faceInfo.centerOrCentroid.Z(), m_unitSystem), 0, 'f', decimals)
+            });
+
+        cadItem->setExpanded(true);
+        statusBar()->showMessage("Extracted CAD nominal: " + cadTitle + " -> " + summaryVal);
     }
 
     void MainWindow::onPositionUpdated(const Position3D& pos) {
@@ -525,13 +485,32 @@ namespace OpenCMM {
         }
     }
 
-    
+    void MainWindow::updateDroDisplay() {
+        Eigen::Vector3d pos(m_lastPosition.x, m_lastPosition.y, m_lastPosition.z);
+        if (m_isPartAligned && m_alignStatusBtn && m_alignStatusBtn->isChecked()) {
+            pos = MetrologyMath::transformPoint(pos, m_pcsMatrix);
+        }
+
+        const int decimals = (m_unitSystem == UnitSystem::Millimeters) ? 4 : 5;
+        const double xVal = toDisplayUnit(pos.x(), m_unitSystem);
+        const double yVal = toDisplayUnit(pos.y(), m_unitSystem);
+        const double zVal = toDisplayUnit(pos.z(), m_unitSystem);
+
+        m_droX->setText(QString::number(xVal, 'f', decimals));
+        m_droY->setText(QString::number(yVal, 'f', decimals));
+        m_droZ->setText(QString::number(zVal, 'f', decimals));
+    }
 
     void MainWindow::onProbeHit(const Position3D& hitPos) {
         m_lastPosition = hitPos;
         updateDroDisplay();
 
-        m_recordedHits.emplace_back(hitPos.x, hitPos.y, hitPos.z);
+        Eigen::Vector3d recordedPt(hitPos.x, hitPos.y, hitPos.z);
+        if (m_isPartAligned && m_alignStatusBtn && m_alignStatusBtn->isChecked()) {
+            recordedPt = MetrologyMath::transformPoint(recordedPt, m_pcsMatrix);
+        }
+
+        m_recordedHits.push_back(recordedPt);
         const int count = static_cast<int>(m_recordedHits.size());
 
         m_hitCountLabel->setText(QString("Active Feature Hits: %1").arg(count));
@@ -539,9 +518,9 @@ namespace OpenCMM {
 
         const int decimals = (m_unitSystem == UnitSystem::Millimeters) ? 4 : 5;
         QString coordsStr = QString("X: %1, Y: %2, Z: %3")
-            .arg(toDisplayUnit(hitPos.x, m_unitSystem), 0, 'f', decimals)
-            .arg(toDisplayUnit(hitPos.y, m_unitSystem), 0, 'f', decimals)
-            .arg(toDisplayUnit(hitPos.z, m_unitSystem), 0, 'f', decimals);
+            .arg(toDisplayUnit(recordedPt.x(), m_unitSystem), 0, 'f', decimals)
+            .arg(toDisplayUnit(recordedPt.y(), m_unitSystem), 0, 'f', decimals)
+            .arg(toDisplayUnit(recordedPt.z(), m_unitSystem), 0, 'f', decimals);
 
         new QTreeWidgetItem(m_activePointsGroup, { QString("Hit #%1").arg(count), coordsStr });
 
@@ -1052,6 +1031,87 @@ namespace OpenCMM {
 
         relItem->setExpanded(true);
         statusBar()->showMessage("Computed relation: " + relTitle);
+    }
+
+    void MainWindow::onRun321AlignmentClicked() {
+        if (m_solvedFeatures.size() < 2) {
+            QMessageBox::information(
+                this,
+                "Need Solved Features",
+                "Please measure and solve at least a Plane (Level) and a Point/Bore/Line (Origin/Rotate) "
+                "before running the 3-2-1 alignment wizard."
+            );
+            return;
+        }
+
+        QDialog dlg(this);
+        dlg.setWindowTitle("Interactive 3-2-1 Part Alignment Wizard");
+        dlg.setMinimumWidth(420);
+        dlg.setStyleSheet(
+            "QDialog { background-color: #21252b; color: #e0e0e0; }"
+            "QLabel { color: #ffffff; font-size: 13px; font-weight: bold; }"
+            "QComboBox { background-color: #181a1f; color: #ffffff; border: 1px solid #4b5263; border-radius: 3px; padding: 5px; font-size: 13px; font-weight: bold; min-width: 200px; }"
+            "QComboBox QAbstractItemView { background-color: #181a1f; color: #ffffff; selection-background-color: #2d5a88; }"
+            "QPushButton { background-color: #3a3f4b; color: #ffffff; border: 1px solid #4b5263; border-radius: 3px; padding: 6px 16px; font-weight: bold; }"
+            "QPushButton:hover { background-color: #4b5263; }"
+        );
+
+        auto* form = new QFormLayout(&dlg);
+        form->setContentsMargins(16, 16, 16, 16);
+        form->setSpacing(14);
+
+        auto* levelCombo = new QComboBox(&dlg);
+        auto* rotateCombo = new QComboBox(&dlg);
+        auto* originCombo = new QComboBox(&dlg);
+
+        for (const auto& feat : m_solvedFeatures) {
+            QString name = QString::fromStdString(feat.name);
+            levelCombo->addItem(name, feat.id);
+            rotateCombo->addItem(name, feat.id);
+            originCombo->addItem(name, feat.id);
+        }
+
+        form->addRow("1. Level Z (Primary Plane):", levelCombo);
+        form->addRow("2. Rotate X (Secondary Line/Feat):", rotateCombo);
+        form->addRow("3. Origin XYZ (Tertiary Datum):", originCombo);
+
+        auto* btns = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+        connect(btns, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+        connect(btns, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+        form->addRow(btns);
+
+        if (dlg.exec() != QDialog::Accepted) return;
+
+        int idL = levelCombo->currentData().toInt();
+        int idR = rotateCombo->currentData().toInt();
+        int idO = originCombo->currentData().toInt();
+
+        auto itL = std::find_if(m_solvedFeatures.begin(), m_solvedFeatures.end(), [idL](const MeasuredFeature& f) { return f.id == idL; });
+        auto itR = std::find_if(m_solvedFeatures.begin(), m_solvedFeatures.end(), [idR](const MeasuredFeature& f) { return f.id == idR; });
+        auto itO = std::find_if(m_solvedFeatures.begin(), m_solvedFeatures.end(), [idO](const MeasuredFeature& f) { return f.id == idO; });
+
+        if (itL == m_solvedFeatures.end() || itR == m_solvedFeatures.end() || itO == m_solvedFeatures.end()) {
+            return;
+        }
+
+        Alignment321Result res = MetrologyMath::compute321Alignment(*itL, *itR, *itO);
+        if (!res.success) {
+            QMessageBox::critical(
+                this,
+                "Alignment Failed",
+                "Could not compute 3-2-1 transformation matrix. Ensure '1. Level Z' is a solved Plane feature."
+            );
+            return;
+        }
+
+        m_pcsMatrix = res.transformationMatrix;
+        m_isPartAligned = true;
+        m_alignStatusBtn->setChecked(true);
+        m_alignStatusBtn->setStyleSheet("background-color: #28a745; color: white; padding: 5px 10px; font-weight: bold;");
+        m_alignStatusBtn->setText("Alignment: PCS (Active Part Datum)");
+
+        updateDroDisplay();
+        statusBar()->showMessage("3-2-1 Part Alignment active! DRO and new probe hits are now in PCS coordinates.");
     }
 
     void MainWindow::onClearPointsClicked() {

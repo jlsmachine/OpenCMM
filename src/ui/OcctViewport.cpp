@@ -19,7 +19,15 @@
 #include <Prs3d_Drawer.hxx>
 #include <Prs3d_LineAspect.hxx>
 #include <TopAbs_ShapeEnum.hxx>
+#include <TopAbs_Orientation.hxx>
 #include <TopLoc_Location.hxx>
+#include <TopoDS.hxx>
+#include <TopoDS_Face.hxx>
+#include <BRepAdaptor_Surface.hxx>
+#include <GeomAbs_SurfaceType.hxx>
+#include <gp_Pln.hxx>
+#include <gp_Cylinder.hxx>
+#include <gp_Sphere.hxx>
 #include <gp_Trsf.hxx>
 #include <gp_Vec.hxx>
 #include <gp_Ax2.hxx>
@@ -44,12 +52,12 @@ namespace OpenCMM {
     void OcctViewport::setupOverlayHud() {
         m_hudContainer = new QWidget(this);
         m_hudContainer->setStyleSheet(
-            "QWidget { background-color: rgba(33, 37, 43, 210); border: 1px solid #3a3f4b; border-radius: 6px; }"
-            "QPushButton { background-color: #282c34; color: #abb2bf; border: 1px solid #4b5263; border-radius: 3px; padding: 5px 8px; font-weight: bold; font-size: 11px; min-width: 95px; }"
+            "QWidget { background-color: rgba(33, 37, 43, 220); border: 1px solid #3a3f4b; border-radius: 6px; }"
+            "QPushButton { background-color: #282c34; color: #abb2bf; border: 1px solid #4b5263; border-radius: 3px; padding: 5px 8px; font-weight: bold; font-size: 11px; min-width: 105px; }"
             "QPushButton:hover { background-color: #3a3f4b; color: white; }"
             "QPushButton:checked { background-color: #2d5a88; color: white; border: 1px solid #61afef; }"
             "QSlider::groove:vertical { background: #1e2227; width: 6px; border-radius: 3px; }"
-            "QSlider::handle:vertical { background: #61afef; height: 14px; margin: 0 -4px; border-radius: 3px; }"
+            "QSlider::handle:vertical { background: #61afef; height: 16px; margin: 0 -5px; border-radius: 3px; }"
             "QLabel { color: #abb2bf; font-size: 10px; font-weight: bold; background: transparent; border: none; }"
         );
 
@@ -92,7 +100,7 @@ namespace OpenCMM {
         hudLayout->addWidget(m_btnGranite);
 
         auto* sliderLayout = new QVBoxLayout();
-        sliderLayout->setSpacing(2);
+        sliderLayout->setSpacing(3);
         auto* transTitle = new QLabel("Trans: 0%", m_hudContainer);
         transTitle->setAlignment(Qt::AlignCenter);
         m_sliderValLbl = transTitle;
@@ -100,7 +108,7 @@ namespace OpenCMM {
         m_verticalSlider = new QSlider(Qt::Vertical, m_hudContainer);
         m_verticalSlider->setRange(0, 90);
         m_verticalSlider->setValue(0);
-        m_verticalSlider->setFixedHeight(85);
+        m_verticalSlider->setFixedHeight(90);
         connect(m_verticalSlider, &QSlider::valueChanged, this, [this](int val) {
             m_sliderValLbl->setText(QString("Trans: %1%").arg(val));
             setModelTransparency(static_cast<double>(val) / 100.0);
@@ -316,10 +324,9 @@ namespace OpenCMM {
         if (!m_view.IsNull()) {
             m_view->MustBeResized();
         }
-        // Position HUD container in the top-right corner with 12px margin
         if (m_hudContainer) {
-            int x = width() - m_hudContainer->width() - 12;
-            int y = 12;
+            int x = width() - m_hudContainer->width() - 14;
+            int y = 14;
             m_hudContainer->move(x, y);
             m_hudContainer->raise();
         }
@@ -347,6 +354,71 @@ namespace OpenCMM {
         }
     }
 
+    CadFaceInfo OcctViewport::inspectSelectedCadFace() const {
+        CadFaceInfo info;
+        if (m_context.IsNull()) {
+            return info;
+        }
+
+        m_context->InitSelected();
+        if (!m_context->MoreSelected() || !m_context->HasSelectedShape()) {
+            return info;
+        }
+
+        TopoDS_Shape selectedShape = m_context->SelectedShape();
+        if (selectedShape.IsNull() || selectedShape.ShapeType() != TopAbs_FACE) {
+            return info;
+        }
+
+        TopoDS_Face face = TopoDS::Face(selectedShape);
+        BRepAdaptor_Surface surfAdaptor(face, Standard_True);
+        GeomAbs_SurfaceType surfType = surfAdaptor.GetType();
+
+        // TopAbs_REVERSED on a cylindrical/spherical B-Rep face indicates an inward-facing normal (internal bore/cavity)
+        info.isInternal = (face.Orientation() == TopAbs_REVERSED);
+
+        switch (surfType) {
+        case GeomAbs_Plane: {
+            gp_Pln pln = surfAdaptor.Plane();
+            info.surfaceType = "Plane";
+            info.centerOrCentroid = pln.Location();
+            gp_Dir n = pln.Axis().Direction();
+            if (face.Orientation() == TopAbs_REVERSED) {
+                n.Reverse();
+            }
+            info.normalOrAxis = n;
+            info.isInternal = false;
+            info.success = true;
+            break;
+        }
+        case GeomAbs_Cylinder: {
+            gp_Cylinder cyl = surfAdaptor.Cylinder();
+            info.surfaceType = info.isInternal ? "Internal Bore (Cylinder)" : "External Boss (Cylinder)";
+            info.nominalRadius = cyl.Radius();
+            info.nominalDiameter = cyl.Radius() * 2.0;
+            info.centerOrCentroid = cyl.Location();
+            info.normalOrAxis = cyl.Axis().Direction();
+            info.success = true;
+            break;
+        }
+        case GeomAbs_Sphere: {
+            gp_Sphere sph = surfAdaptor.Sphere();
+            info.surfaceType = info.isInternal ? "Spherical Cavity" : "Sphere";
+            info.nominalRadius = sph.Radius();
+            info.nominalDiameter = sph.Radius() * 2.0;
+            info.centerOrCentroid = sph.Location();
+            info.success = true;
+            break;
+        }
+        default:
+            info.surfaceType = "Freeform / B-Spline Surface";
+            info.success = true;
+            break;
+        }
+
+        return info;
+    }
+
     void OcctViewport::mousePressEvent(QMouseEvent* event) {
         m_lastMousePos = event->pos();
         m_pressMousePos = event->pos();
@@ -366,6 +438,11 @@ namespace OpenCMM {
             if ((event->pos() - m_pressMousePos).manhattanLength() <= 3 && !m_context.IsNull()) {
                 m_context->SelectDetected();
                 m_view->Redraw();
+
+                CadFaceInfo faceInfo = inspectSelectedCadFace();
+                if (faceInfo.success && m_faceSelectedCallback) {
+                    m_faceSelectedCallback(faceInfo);
+                }
             }
         }
         if (event->button() == Qt::RightButton || event->button() == Qt::MiddleButton) {
