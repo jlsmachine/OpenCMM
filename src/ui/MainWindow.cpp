@@ -189,7 +189,117 @@ namespace OpenCMM {
         auto* clearBtn = new QPushButton("Clear All Points", this);
         connect(clearBtn, &QPushButton::clicked, this, &MainWindow::onClearPointsClicked);
         metroToolbar->addWidget(clearBtn);
+
+        // In setupToolbar(), add an alignment button next to metrology solvers:
+        auto* alignBtn = new QPushButton("3-2-1 Alignment...", this);
+        alignBtn->setStyleSheet("background-color: #d15757; color: white; padding: 5px 12px; font-weight: bold;");
+        connect(alignBtn, &QPushButton::clicked, this, &MainWindow::onRun321AlignmentClicked);
+        metroToolbar->addWidget(alignBtn);
+
+        m_alignStatusBtn = new QPushButton("Alignment: MCS (Machine)", this);
+        m_alignStatusBtn->setCheckable(true);
+        m_alignStatusBtn->setChecked(false);
+        m_alignStatusBtn->setStyleSheet("background-color: #3a3f4b; color: #e5c07b; padding: 5px 10px; font-weight: bold;");
+        connect(m_alignStatusBtn, &QPushButton::clicked, this, [this](bool checked) {
+            if (!m_isPartAligned && checked) {
+                QMessageBox::warning(this, "No Alignment Active", "Please run a 3-2-1 alignment first.");
+                m_alignStatusBtn->setChecked(false);
+                return;
+            }
+            updateDroDisplay();
+            });
+        metroToolbar->addWidget(m_alignStatusBtn);
     }
+    void MainWindow::onRun321AlignmentClicked() {
+        if (m_solvedFeatures.size() < 2) {
+            QMessageBox::information(
+                this,
+                "Need Solved Features",
+                "Please measure and solve at least a Plane (Level) and a Point/Bore/Line (Origin/Rotate) "
+                "before running the 3-2-1 alignment wizard."
+            );
+            return;
+        }
+
+        QDialog dlg(this);
+        dlg.setWindowTitle("Interactive 3-2-1 Part Alignment Wizard");
+        dlg.setMinimumWidth(420);
+        dlg.setStyleSheet(
+            "QDialog { background-color: #21252b; color: #e0e0e0; }"
+            "QLabel { color: #ffffff; font-size: 13px; font-weight: bold; }"
+            "QComboBox { background-color: #181a1f; color: #ffffff; border: 1px solid #4b5263; border-radius: 3px; padding: 5px; font-size: 13px; font-weight: bold; min-width: 200px; }"
+            "QComboBox QAbstractItemView { background-color: #181a1f; color: #ffffff; selection-background-color: #2d5a88; }"
+            "QPushButton { background-color: #3a3f4b; color: #ffffff; border: 1px solid #4b5263; border-radius: 3px; padding: 6px 16px; font-weight: bold; }"
+            "QPushButton:hover { background-color: #4b5263; }"
+        );
+
+        auto* form = new QFormLayout(&dlg);
+        form->setContentsMargins(16, 16, 16, 16);
+        form->setSpacing(14);
+
+        auto* levelCombo = new QComboBox(&dlg);
+        auto* rotateCombo = new QComboBox(&dlg);
+        auto* originCombo = new QComboBox(&dlg);
+
+        for (const auto& feat : m_solvedFeatures) {
+            QString name = QString::fromStdString(feat.name);
+            levelCombo->addItem(name, feat.id);
+            rotateCombo->addItem(name, feat.id);
+            originCombo->addItem(name, feat.id);
+        }
+
+        form->addRow("1. Level Z (Primary Plane):", levelCombo);
+        form->addRow("2. Rotate X (Secondary Line/Feat):", rotateCombo);
+        form->addRow("3. Origin XYZ (Tertiary Datum):", originCombo);
+
+        auto* btns = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+        connect(btns, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+        connect(btns, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+        form->addRow(btns);
+
+        if (dlg.exec() != QDialog::Accepted) return;
+
+        // Find selected features
+        int idL = levelCombo->currentData().toInt();
+        int idR = rotateCombo->currentData().toInt();
+        int idO = originCombo->currentData().toInt();
+
+        auto itL = std::find_if(m_solvedFeatures.begin(), m_solvedFeatures.end(), [idL](const MeasuredFeature& f) { return f.id == idL; });
+        auto itR = std::find_if(m_solvedFeatures.begin(), m_solvedFeatures.end(), [idR](const MeasuredFeature& f) { return f.id == idR; });
+        auto itO = std::find_if(m_solvedFeatures.begin(), m_solvedFeatures.end(), [idO](const MeasuredFeature& f) { return f.id == idO; });
+
+        Alignment321Result res = MetrologyMath::compute321Alignment(*itL, *itR, *itO);
+        if (!res.success) {
+            QMessageBox::critical(this, "Alignment Failed", "Could not compute 3-2-1 transformation matrix.");
+            return;
+        }
+
+        m_pcsMatrix = res.transformationMatrix;
+        m_isPartAligned = true;
+        m_alignStatusBtn->setChecked(true);
+        m_alignStatusBtn->setStyleSheet("background-color: #28a745; color: white; padding: 5px 10px; font-weight: bold;");
+        m_alignStatusBtn->setText("Alignment: PCS (Active Part Datum)");
+
+        updateDroDisplay();
+        statusBar()->showMessage("3-2-1 Part Alignment successfully applied! DRO is now displaying PCS coordinates.");
+    }
+
+    void MainWindow::updateDroDisplay() {
+        Eigen::Vector3d pos(m_lastPosition.x, m_lastPosition.y, m_lastPosition.z);
+        if (m_isPartAligned && m_alignStatusBtn && m_alignStatusBtn->isChecked()) {
+            pos = MetrologyMath::transformPoint(pos, m_pcsMatrix);
+        }
+
+        const int decimals = (m_unitSystem == UnitSystem::Millimeters) ? 4 : 5;
+        const double xVal = toDisplayUnit(pos.x(), m_unitSystem);
+        const double yVal = toDisplayUnit(pos.y(), m_unitSystem);
+        const double zVal = toDisplayUnit(pos.z(), m_unitSystem);
+
+        m_droX->setText(QString::number(xVal, 'f', decimals));
+        m_droY->setText(QString::number(yVal, 'f', decimals));
+        m_droZ->setText(QString::number(zVal, 'f', decimals));
+    }
+
 
     void MainWindow::setupDroDock() {
         auto* droDock = new QDockWidget("LIVE CMM DRO & PROBE STATUS", this);
@@ -415,16 +525,7 @@ namespace OpenCMM {
         }
     }
 
-    void MainWindow::updateDroDisplay() {
-        const int decimals = (m_unitSystem == UnitSystem::Millimeters) ? 4 : 5;
-        const double xVal = toDisplayUnit(m_lastPosition.x, m_unitSystem);
-        const double yVal = toDisplayUnit(m_lastPosition.y, m_unitSystem);
-        const double zVal = toDisplayUnit(m_lastPosition.z, m_unitSystem);
-
-        m_droX->setText(QString::number(xVal, 'f', decimals));
-        m_droY->setText(QString::number(yVal, 'f', decimals));
-        m_droZ->setText(QString::number(zVal, 'f', decimals));
-    }
+    
 
     void MainWindow::onProbeHit(const Position3D& hitPos) {
         m_lastPosition = hitPos;

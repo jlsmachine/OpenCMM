@@ -37,7 +37,6 @@ namespace OpenCMM {
         frame.origin = planeCentroid;
         frame.normal = planeNormal.normalized();
 
-        // Pick a stable reference axis not parallel to normal to build orthonormal U, V basis
         Eigen::Vector3d refAxis = (std::abs(frame.normal.x()) < 0.9)
             ? Eigen::Vector3d::UnitX()
             : Eigen::Vector3d::UnitY();
@@ -226,7 +225,6 @@ namespace OpenCMM {
         }
         meanHeight /= static_cast<double>(n);
 
-        // Center coordinates before solving to maximize numerical conditioning
         Eigen::Vector2d mean2d = Eigen::Vector2d::Zero();
         for (const auto& p : pts2d) mean2d += p;
         mean2d /= static_cast<double>(n);
@@ -313,7 +311,6 @@ namespace OpenCMM {
         Eigen::Vector2d dir2d = svd.matrixV().col(0).normalized();
         Eigen::Vector2d norm2d = svd.matrixV().col(1).normalized();
 
-        // Orient tangent positively along dominant axis in workplane
         if (std::abs(dir2d.x()) >= std::abs(dir2d.y())) {
             if (dir2d.x() < 0.0) dir2d = -dir2d;
         }
@@ -321,8 +318,6 @@ namespace OpenCMM {
             if (dir2d.y() < 0.0) dir2d = -dir2d;
         }
 
-        // Orient in-plane edge normal toward clearance point (if backed off > 0.25mm),
-        // otherwise default toward +V / +U
         if (clearancePoint != nullptr) {
             Eigen::Vector2d clear2d = workplane.projectTo2D(*clearancePoint);
             double signedClearDist = (clear2d - rawCentroid2d).dot(norm2d);
@@ -377,7 +372,6 @@ namespace OpenCMM {
         Eigen::Vector2d posB2D = workplane.projectTo2D(featB.position);
         rel.distance2D = (posB2D - posA2D).norm();
 
-        // Perpendicular offset along Feature A's normal/edge normal
         if (featA.kind == FeatureKind::Plane3D) {
             rel.normalDistance = std::abs(rel.deltaXYZ.dot(featA.direction.normalized()));
         }
@@ -391,11 +385,9 @@ namespace OpenCMM {
             rel.normalDistance = std::abs(rel.deltaXYZ.dot(workplane.normal));
         }
 
-        // Angle between directional vectors (0 to 90 degrees acute/orthogonal reference)
         double cosTheta = std::clamp(std::abs(featA.direction.normalized().dot(featB.direction.normalized())), 0.0, 1.0);
         rel.angleDegrees = std::acos(cosTheta) * (180.0 / PI_VAL);
 
-        // If both features are 2D Lines, solve their 2D intersection point in the workplane
         if (featA.kind == FeatureKind::Line2D && featB.kind == FeatureKind::Line2D) {
             Eigen::Vector2d dA(featA.direction.dot(workplane.uAxis), featA.direction.dot(workplane.vAxis));
             Eigen::Vector2d dB(featB.direction.dot(workplane.uAxis), featB.direction.dot(workplane.vAxis));
@@ -412,6 +404,56 @@ namespace OpenCMM {
 
         rel.success = true;
         return rel;
+    }
+
+    Alignment321Result MetrologyMath::compute321Alignment(
+        const MeasuredFeature& levelPlane,
+        const MeasuredFeature& rotateLineOrFeature,
+        const MeasuredFeature& originFeature) {
+
+        Alignment321Result res;
+        if (levelPlane.kind != FeatureKind::Plane3D) {
+            return res;
+        }
+
+        Eigen::Vector3d zDir = levelPlane.direction.normalized();
+
+        Eigen::Vector3d rawXDir = Eigen::Vector3d::UnitX();
+        if (rotateLineOrFeature.kind == FeatureKind::Line2D) {
+            rawXDir = rotateLineOrFeature.direction.normalized();
+        }
+        else {
+            rawXDir = (rotateLineOrFeature.position - originFeature.position).normalized();
+        }
+
+        Eigen::Vector3d xDir = (rawXDir - rawXDir.dot(zDir) * zDir).normalized();
+        Eigen::Vector3d yDir = zDir.cross(xDir).normalized();
+
+        Eigen::Matrix3d R;
+        R.col(0) = xDir;
+        R.col(1) = yDir;
+        R.col(2) = zDir;
+
+        Eigen::Matrix3d R_align = R.transpose();
+        Eigen::Vector3d T = originFeature.position;
+
+        // Build 4x4 homogenous transformation matrix safely
+        Eigen::Matrix4d mat = Eigen::Matrix4d::Identity();
+        mat.block<3, 3>(0, 0) = R_align;
+        mat.block<3, 1>(0, 3) = -R_align * T;
+
+        res.success = true;
+        res.transformationMatrix = mat;
+        res.origin = T;
+        res.zAxis = zDir;
+        res.xAxis = xDir;
+        return res;
+    }
+
+    Eigen::Vector3d MetrologyMath::transformPoint(const Eigen::Vector3d& pt, const Eigen::Matrix4d& matrix) {
+        Eigen::Vector4d p4(pt.x(), pt.y(), pt.z(), 1.0);
+        Eigen::Vector4d res4 = matrix * p4;
+        return Eigen::Vector3d(res4.x(), res4.y(), res4.z());
     }
 
 } // namespace OpenCMM

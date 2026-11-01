@@ -12,10 +12,10 @@ namespace OpenCMM {
     };
 
     enum class StandardWorkplane {
-        XY_PlusZ,      // Origin (0,0,0), Normal +Z, U=+X, V=+Y
-        YZ_PlusX,      // Origin (0,0,0), Normal +X, U=+Y, V=+Z
-        ZX_PlusY,      // Origin (0,0,0), Normal +Y, U=+Z, V=+X
-        CustomPlane    // Constructed from last fitted 3D Plane
+        XY_PlusZ,
+        YZ_PlusX,
+        ZX_PlusY,
+        CustomPlane
     };
 
     struct WorkplaneFrame {
@@ -68,7 +68,7 @@ namespace OpenCMM {
         double rawRadius = 0.0;
         double radius = 0.0;
         double appliedComp = 0.0;
-        double circularity = 0.0; // Roundness (Max R - Min R in workplane)
+        double circularity = 0.0;
         double rmsError = 0.0;
     };
 
@@ -76,10 +76,10 @@ namespace OpenCMM {
         bool success = false;
         Eigen::Vector3d rawCentroid = Eigen::Vector3d::Zero();
         Eigen::Vector3d centroid = Eigen::Vector3d::Zero();
-        Eigen::Vector3d direction = Eigen::Vector3d::UnitX();  // Unit tangent along edge
-        Eigen::Vector3d edgeNormal = Eigen::Vector3d::UnitY(); // In-plane normal pointing toward probe
+        Eigen::Vector3d direction = Eigen::Vector3d::UnitX();
+        Eigen::Vector3d edgeNormal = Eigen::Vector3d::UnitY();
         double appliedComp = 0.0;
-        double straightness = 0.0; // Max - Min orthogonal distance
+        double straightness = 0.0;
         double rmsError = 0.0;
     };
 
@@ -94,8 +94,8 @@ namespace OpenCMM {
         int id = 0;
         std::string name;
         FeatureKind kind = FeatureKind::Sphere3D;
-        Eigen::Vector3d position = Eigen::Vector3d::Zero();   // Center or Centroid
-        Eigen::Vector3d direction = Eigen::Vector3d::UnitZ(); // Normal, Axis, or Line Tangent
+        Eigen::Vector3d position = Eigen::Vector3d::Zero();
+        Eigen::Vector3d direction = Eigen::Vector3d::UnitZ();
         Eigen::Vector3d edgeNormal = Eigen::Vector3d::UnitY();
         double diameter = 0.0;
         double formError = 0.0;
@@ -105,11 +105,19 @@ namespace OpenCMM {
         bool success = false;
         Eigen::Vector3d deltaXYZ = Eigen::Vector3d::Zero();
         double distance3D = 0.0;
-        double distance2D = 0.0;       // Projected distance in active workplane
-        double normalDistance = 0.0;   // Perpendicular offset along Feature A's normal
-        double angleDegrees = 0.0;     // Angle between feature axes/normals/directions
+        double distance2D = 0.0;
+        double normalDistance = 0.0;
+        double angleDegrees = 0.0;
         bool hasIntersection = false;
         Eigen::Vector3d intersectionPoint = Eigen::Vector3d::Zero();
+    };
+
+    struct Alignment321Result {
+        bool success = false;
+        Eigen::Matrix4d transformationMatrix = Eigen::Matrix4d::Identity();
+        Eigen::Vector3d origin = Eigen::Vector3d::Zero();
+        Eigen::Vector3d zAxis = Eigen::Vector3d::UnitZ();
+        Eigen::Vector3d xAxis = Eigen::Vector3d::UnitX();
     };
 
     class MetrologyMath {
@@ -146,6 +154,15 @@ namespace OpenCMM {
             const MeasuredFeature& featA,
             const MeasuredFeature& featB,
             const WorkplaneFrame& workplane);
+
+        static Alignment321Result compute321Alignment(
+            const MeasuredFeature& levelPlane,
+            const MeasuredFeature& rotateLineOrFeature,
+            const MeasuredFeature& originFeature);
+
+        static Eigen::Vector3d transformPoint(
+            const Eigen::Vector3d& pt,
+            const Eigen::Matrix4d& matrix);
     };
 
 } // namespace OpenCMM

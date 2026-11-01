@@ -35,6 +35,7 @@ namespace OpenCMM {
         void onFitCircleClicked();
         void onFitLineClicked();
         void onMeasureRelationClicked();
+        void onRun321AlignmentClicked();
         void onClearPointsClicked();
 
         void onPositionUpdated(const Position3D& pos);
@@ -65,6 +66,11 @@ namespace OpenCMM {
 
         WorkplaneFrame m_lastFittedPlaneFrame = WorkplaneFrame::fromStandard(StandardWorkplane::XY_PlusZ);
         bool m_hasCustomPlane = false;
+
+        // 3-2-1 Alignment State
+        Eigen::Matrix4d m_pcsMatrix = Eigen::Matrix4d::Identity();
+        bool m_isPartAligned = false;
+        QPushButton* m_alignStatusBtn = nullptr;
 
         std::vector<Eigen::Vector3d> m_recordedHits;
         std::vector<MeasuredFeature> m_solvedFeatures;
