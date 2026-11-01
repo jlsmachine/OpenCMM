@@ -48,3 +48,15 @@ target_link_libraries(OpenCMM PRIVATE
 if(WIN32)
     target_compile_definitions(OpenCMM PRIVATE _USE_MATH_DEFINES NOMINMAX)
 endif()
+
+# Automatically copy Qt platforms plugin to output directory on Windows
+if(WIN32)
+    add_custom_command(TARGET OpenCMM POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:OpenCMM>/platforms
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_BINARY_DIR}/vcpkg_installed/x64-windows/Qt6/plugins/platforms/qwindows.dll"
+            "$<TARGET_FILE_DIR:OpenCMM>/platforms/qwindows.dll"
+        COMMENT "Deploying Qt windows platform plugin..."
+        VERBATIM
+    )
+endif()
