@@ -1,6 +1,5 @@
 #include "ui/MainWindow.h"
 #include "ui/OcctViewport.h"
-#include "math/MetrologyMath.h"
 
 #include <QToolBar>
 #include <QDockWidget>
@@ -11,6 +10,11 @@
 #include <QHeaderView>
 #include <QStatusBar>
 #include <QFileDialog>
+#include <QInputDialog>
+#include <QMessageBox>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QFormLayout>
 #include <QSerialPortInfo>
 #include <cmath>
 
@@ -21,7 +25,7 @@ namespace OpenCMM {
         m_controller(new PicoSerialController(this)) {
 
         setWindowTitle("OpenCMM - Precision Coordinate Metrology Studio");
-        resize(1440, 900);
+        resize(1600, 940);
 
         setupUi();
 
@@ -33,6 +37,7 @@ namespace OpenCMM {
             this, &MainWindow::onConnectionChanged);
 
         onRefreshPortsClicked();
+        updateProbeStatusDisplay();
     }
 
     void MainWindow::setupUi() {
@@ -40,7 +45,7 @@ namespace OpenCMM {
             "QMainWindow { background-color: #1e2227; color: #e0e0e0; }"
             "QDockWidget { color: #ffffff; font-weight: bold; }"
             "QDockWidget::title { background: #282c34; padding: 6px; border: 1px solid #3a3f4b; }"
-            "QGroupBox { border: 1px solid #3a3f4b; border-radius: 4px; margin-top: 8px; padding-top: 10px; color: #abb2bf; font-weight: bold; }"
+            "QGroupBox { border: 1px solid #3a3f4b; border-radius: 4px; margin-top: 10px; padding-top: 12px; color: #abb2bf; font-weight: bold; }"
             "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }"
         );
 
@@ -48,79 +53,180 @@ namespace OpenCMM {
         setupDroDock();
         setupFeatureTreeDock();
 
-        // Central Viewport: Live Open CASCADE 3D View
         m_viewport = new OcctViewport(this);
         setCentralWidget(m_viewport);
 
         statusBar()->setStyleSheet("background-color: #007acc; color: white; font-weight: bold;");
-        statusBar()->showMessage("Disconnected - Select Pico 2 COM port or use Simulate Probe Hit.");
+        statusBar()->showMessage("Ready - Select workplane, capture probe hits, and solve 2D/3D features.");
     }
 
     void MainWindow::setupToolbar() {
-        auto* toolbar = addToolBar("Hardware & Inspection Controls");
-        toolbar->setMovable(false);
-        toolbar->setStyleSheet(
-            "QToolBar { background-color: #21252b; border-bottom: 1px solid #3a3f4b; spacing: 8px; padding: 6px; }"
-            "QPushButton { background-color: #3a3f4b; color: white; border: 1px solid #4b5263; border-radius: 3px; padding: 5px 12px; font-weight: bold; }"
+        const QString barStyle =
+            "QToolBar { background-color: #21252b; border-bottom: 1px solid #3a3f4b; spacing: 6px; padding: 5px; }"
+            "QPushButton { background-color: #3a3f4b; color: white; border: 1px solid #4b5263; border-radius: 3px; padding: 5px 10px; font-weight: bold; }"
             "QPushButton:hover { background-color: #4b5263; }"
-            "QComboBox { background-color: #1e2227; color: white; border: 1px solid #4b5263; padding: 4px 8px; min-width: 140px; }"
-        );
+            "QComboBox { background-color: #1e2227; color: white; border: 1px solid #4b5263; padding: 4px 8px; font-weight: bold; }"
+            "QComboBox QAbstractItemView { background-color: #1e2227; color: white; selection-background-color: #2d5a88; }"
+            "QCheckBox { color: #dcdfe4; font-weight: bold; spacing: 5px; padding: 0 4px; }";
 
-        auto* portLabel = new QLabel(" Pico 2 Port: ", this);
+        // Row 1: Hardware, CAD Model View Controls & Simulator
+        auto* hwToolbar = addToolBar("Hardware & 3D View Controls");
+        hwToolbar->setMovable(false);
+        hwToolbar->setStyleSheet(barStyle);
+
+        auto* portLabel = new QLabel(" Pico 2: ", this);
         portLabel->setStyleSheet("color: #abb2bf; font-weight: bold;");
-        toolbar->addWidget(portLabel);
+        hwToolbar->addWidget(portLabel);
 
         m_portCombo = new QComboBox(this);
-        toolbar->addWidget(m_portCombo);
+        m_portCombo->setMinimumWidth(120);
+        hwToolbar->addWidget(m_portCombo);
 
         auto* refreshBtn = new QPushButton("Refresh", this);
         connect(refreshBtn, &QPushButton::clicked, this, &MainWindow::onRefreshPortsClicked);
-        toolbar->addWidget(refreshBtn);
+        hwToolbar->addWidget(refreshBtn);
 
         m_connectBtn = new QPushButton("Connect", this);
-        m_connectBtn->setStyleSheet("background-color: #28a745; color: white; padding: 5px 14px; font-weight: bold;");
+        m_connectBtn->setStyleSheet("background-color: #28a745; color: white; padding: 5px 12px; font-weight: bold;");
         connect(m_connectBtn, &QPushButton::clicked, this, &MainWindow::onConnectClicked);
-        toolbar->addWidget(m_connectBtn);
+        hwToolbar->addWidget(m_connectBtn);
 
-        toolbar->addSeparator();
+        hwToolbar->addSeparator();
 
         auto* zeroBtn = new QPushButton("Zero XYZ", this);
         connect(zeroBtn, &QPushButton::clicked, this, &MainWindow::onZeroAxesClicked);
-        toolbar->addWidget(zeroBtn);
+        hwToolbar->addWidget(zeroBtn);
 
         m_unitBtn = new QPushButton("Units: MM", this);
         connect(m_unitBtn, &QPushButton::clicked, this, &MainWindow::onUnitToggled);
-        toolbar->addWidget(m_unitBtn);
+        hwToolbar->addWidget(m_unitBtn);
 
-        toolbar->addSeparator();
+        hwToolbar->addSeparator();
 
         auto* loadStepBtn = new QPushButton("Load STEP CAD", this);
-        loadStepBtn->setStyleSheet("background-color: #2d5a88; color: white; padding: 5px 12px; font-weight: bold;");
+        loadStepBtn->setStyleSheet("background-color: #2d5a88; color: white; padding: 5px 10px; font-weight: bold;");
         connect(loadStepBtn, &QPushButton::clicked, this, &MainWindow::onLoadStepClicked);
-        toolbar->addWidget(loadStepBtn);
+        hwToolbar->addWidget(loadStepBtn);
 
-        toolbar->addSeparator();
+        auto* viewLabel = new QLabel(" View: ", this);
+        viewLabel->setStyleSheet("color: #abb2bf; font-weight: bold;");
+        hwToolbar->addWidget(viewLabel);
+
+        m_viewModeCombo = new QComboBox(this);
+        m_viewModeCombo->addItem("Shaded + Edges", static_cast<int>(ModelDisplayMode::ShadedWithEdges));
+        m_viewModeCombo->addItem("Shaded Only", static_cast<int>(ModelDisplayMode::ShadedOnly));
+        m_viewModeCombo->addItem("Wireframe", static_cast<int>(ModelDisplayMode::Wireframe));
+        connect(m_viewModeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &MainWindow::onDisplayModeChanged);
+        hwToolbar->addWidget(m_viewModeCombo);
+
+        m_transparentCheck = new QCheckBox("X-Ray / Transparent", this);
+        connect(m_transparentCheck, &QCheckBox::toggled, this, &MainWindow::onTransparencyToggled);
+        hwToolbar->addWidget(m_transparentCheck);
+
+        m_transparencySlider = new QSlider(Qt::Horizontal, this);
+        m_transparencySlider->setRange(0, 90);
+        m_transparencySlider->setValue(0);
+        m_transparencySlider->setFixedWidth(90);
+        m_transparencySlider->setToolTip("Adjust model transparency (0% Opaque to 90% Transparent)");
+        connect(m_transparencySlider, &QSlider::valueChanged, this, &MainWindow::onTransparencySliderChanged);
+        hwToolbar->addWidget(m_transparencySlider);
+
+        m_transparencyValLabel = new QLabel("0%", this);
+        m_transparencyValLabel->setStyleSheet("color: #61afef; font-weight: bold; min-width: 32px;");
+        hwToolbar->addWidget(m_transparencyValLabel);
+
+        m_graniteCheck = new QCheckBox("Granite Table", this);
+        m_graniteCheck->setChecked(true);
+        connect(m_graniteCheck, &QCheckBox::toggled, this, &MainWindow::onGraniteToggled);
+        hwToolbar->addWidget(m_graniteCheck);
+
+        hwToolbar->addSeparator();
+
+        auto* simLabel = new QLabel(" Sim: ", this);
+        simLabel->setStyleSheet("color: #abb2bf; font-weight: bold;");
+        hwToolbar->addWidget(simLabel);
+
+        m_simTargetCombo = new QComboBox(this);
+        m_simTargetCombo->addItem("Master Ball Ø25.4mm", 0);
+        m_simTargetCombo->addItem("Bore #1 Ø20.0mm (50,30)", 1);
+        m_simTargetCombo->addItem("Bore #2 Ø12.0mm (100,30)", 2);
+        m_simTargetCombo->addItem("Top Datum Plane (Z=20)", 3);
+        m_simTargetCombo->addItem("Front X-Edge (Y=0)", 4);
+        m_simTargetCombo->addItem("Left Y-Edge (X=0)", 5);
+        hwToolbar->addWidget(m_simTargetCombo);
 
         auto* simHitBtn = new QPushButton("Simulate Probe Hit", this);
-        simHitBtn->setStyleSheet("background-color: #d19a66; color: #1e2227; padding: 5px 12px; font-weight: bold;");
+        simHitBtn->setStyleSheet("background-color: #d19a66; color: #1e2227; padding: 5px 10px; font-weight: bold;");
         connect(simHitBtn, &QPushButton::clicked, this, &MainWindow::onSimulateHitClicked);
-        toolbar->addWidget(simHitBtn);
+        hwToolbar->addWidget(simHitBtn);
 
-        auto* fitSphereBtn = new QPushButton("Fit Sphere / Master Ball", this);
+        // Row 2: Metrology Workplane, Tip Compensation & Feature Solvers
+        addToolBarBreak(Qt::TopToolBarArea);
+        auto* metroToolbar = addToolBar("Metrology Feature Solvers");
+        metroToolbar->setMovable(false);
+        metroToolbar->setStyleSheet(barStyle);
+
+        auto* wpLabel = new QLabel(" Workplane: ", this);
+        wpLabel->setStyleSheet("color: #abb2bf; font-weight: bold;");
+        metroToolbar->addWidget(wpLabel);
+
+        m_workplaneCombo = new QComboBox(this);
+        m_workplaneCombo->addItem("XY Plane (+Z)", static_cast<int>(StandardWorkplane::XY_PlusZ));
+        m_workplaneCombo->addItem("YZ Plane (+X)", static_cast<int>(StandardWorkplane::YZ_PlusX));
+        m_workplaneCombo->addItem("ZX Plane (+Y)", static_cast<int>(StandardWorkplane::ZX_PlusY));
+        m_workplaneCombo->addItem("Last Fitted Plane", static_cast<int>(StandardWorkplane::CustomPlane));
+        metroToolbar->addWidget(m_workplaneCombo);
+
+        auto* compLabel = new QLabel(" Tip Comp: ", this);
+        compLabel->setStyleSheet("color: #abb2bf; font-weight: bold;");
+        metroToolbar->addWidget(compLabel);
+
+        m_compModeCombo = new QComboBox(this);
+        m_compModeCombo->addItem("External / Boss (-R)", static_cast<int>(ProbeCompMode::External));
+        m_compModeCombo->addItem("Internal / Bore (+R)", static_cast<int>(ProbeCompMode::Internal));
+        m_compModeCombo->addItem("Uncompensated (Ruby)", static_cast<int>(ProbeCompMode::Uncompensated));
+        metroToolbar->addWidget(m_compModeCombo);
+
+        auto* calBtn = new QPushButton("Calibrate Probe", this);
+        calBtn->setStyleSheet("background-color: #8957e5; color: white; padding: 5px 10px; font-weight: bold;");
+        connect(calBtn, &QPushButton::clicked, this, &MainWindow::onCalibrateProbeClicked);
+        metroToolbar->addWidget(calBtn);
+
+        metroToolbar->addSeparator();
+
+        auto* fitSphereBtn = new QPushButton("Fit Sphere", this);
         connect(fitSphereBtn, &QPushButton::clicked, this, &MainWindow::onFitSphereClicked);
-        toolbar->addWidget(fitSphereBtn);
+        metroToolbar->addWidget(fitSphereBtn);
 
         auto* fitPlaneBtn = new QPushButton("Fit Plane", this);
         connect(fitPlaneBtn, &QPushButton::clicked, this, &MainWindow::onFitPlaneClicked);
-        toolbar->addWidget(fitPlaneBtn);
+        metroToolbar->addWidget(fitPlaneBtn);
 
-        auto* clearBtn = new QPushButton("Clear Points", this);
+        auto* fitCircleBtn = new QPushButton("Fit 2D Circle (Bore/Boss)", this);
+        fitCircleBtn->setStyleSheet("background-color: #2b6cb0; color: white; padding: 5px 10px; font-weight: bold;");
+        connect(fitCircleBtn, &QPushButton::clicked, this, &MainWindow::onFitCircleClicked);
+        metroToolbar->addWidget(fitCircleBtn);
+
+        auto* fitLineBtn = new QPushButton("Fit 2D Line (Edge)", this);
+        fitLineBtn->setStyleSheet("background-color: #2b6cb0; color: white; padding: 5px 10px; font-weight: bold;");
+        connect(fitLineBtn, &QPushButton::clicked, this, &MainWindow::onFitLineClicked);
+        metroToolbar->addWidget(fitLineBtn);
+
+        metroToolbar->addSeparator();
+
+        auto* relBtn = new QPushButton("Measure Relation / Distance", this);
+        relBtn->setStyleSheet("background-color: #2f855a; color: white; padding: 5px 10px; font-weight: bold;");
+        connect(relBtn, &QPushButton::clicked, this, &MainWindow::onMeasureRelationClicked);
+        metroToolbar->addWidget(relBtn);
+
+        auto* clearBtn = new QPushButton("Clear All Points", this);
         connect(clearBtn, &QPushButton::clicked, this, &MainWindow::onClearPointsClicked);
-        toolbar->addWidget(clearBtn);
+        metroToolbar->addWidget(clearBtn);
     }
 
     void MainWindow::setupDroDock() {
-        auto* droDock = new QDockWidget("LIVE CMM DRO", this);
+        auto* droDock = new QDockWidget("LIVE CMM DRO & PROBE STATUS", this);
         droDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
 
         auto* container = new QWidget(droDock);
@@ -128,7 +234,7 @@ namespace OpenCMM {
         auto* layout = new QVBoxLayout(container);
 
         auto* grid = new QGridLayout();
-        grid->setVerticalSpacing(12);
+        grid->setVerticalSpacing(10);
 
         const char* axisNames[3] = { "X", "Y", "Z" };
         const char* axisColors[3] = { "#e06c75", "#98c379", "#61afef" };
@@ -156,9 +262,31 @@ namespace OpenCMM {
 
         layout->addLayout(grid);
 
-        m_hitCountLabel = new QLabel("Recorded Probe Hits: 0", container);
-        m_hitCountLabel->setStyleSheet("color: #61afef; font-size: 14px; font-weight: bold; margin-top: 10px;");
+        m_hitCountLabel = new QLabel("Active Feature Hits: 0", container);
+        m_hitCountLabel->setStyleSheet("color: #61afef; font-size: 14px; font-weight: bold; margin-top: 6px;");
         layout->addWidget(m_hitCountLabel);
+
+        auto* probeGroup = new QGroupBox("ACTIVE PROBE CALIBRATION", container);
+        auto* probeLayout = new QVBoxLayout(probeGroup);
+        probeLayout->setSpacing(6);
+
+        m_probeStatusBadge = new QLabel("UNINITIALIZED (Nominal Default)", probeGroup);
+        m_probeStatusBadge->setStyleSheet("color: #e5c07b; font-size: 12px; font-weight: bold;");
+
+        m_probeDiamLabel = new QLabel("Effective Tip Ø: 3.0000 mm", probeGroup);
+        m_probeDiamLabel->setStyleSheet("color: #dcdfe4; font-family: 'Consolas', monospace; font-size: 13px;");
+
+        m_probeRadLabel = new QLabel("Effective Radius (R_eff): 1.5000 mm", probeGroup);
+        m_probeRadLabel->setStyleSheet("color: #dcdfe4; font-family: 'Consolas', monospace; font-size: 13px;");
+
+        m_probeLobingLabel = new QLabel("Sphericity / Lobing: --", probeGroup);
+        m_probeLobingLabel->setStyleSheet("color: #abb2bf; font-family: 'Consolas', monospace; font-size: 13px;");
+
+        probeLayout->addWidget(m_probeStatusBadge);
+        probeLayout->addWidget(m_probeDiamLabel);
+        probeLayout->addWidget(m_probeRadLabel);
+        probeLayout->addWidget(m_probeLobingLabel);
+        layout->addWidget(probeGroup);
 
         layout->addStretch();
         droDock->setWidget(container);
@@ -184,6 +312,87 @@ namespace OpenCMM {
 
         treeDock->setWidget(m_featureTree);
         addDockWidget(Qt::LeftDockWidgetArea, treeDock);
+    }
+
+    ProbeCompMode MainWindow::currentCompMode() const {
+        if (!m_compModeCombo) return ProbeCompMode::External;
+        return static_cast<ProbeCompMode>(m_compModeCombo->currentData().toInt());
+    }
+
+    WorkplaneFrame MainWindow::currentWorkplane() const {
+        if (!m_workplaneCombo) return WorkplaneFrame::fromStandard(StandardWorkplane::XY_PlusZ);
+        auto wp = static_cast<StandardWorkplane>(m_workplaneCombo->currentData().toInt());
+        if (wp == StandardWorkplane::CustomPlane && m_hasCustomPlane) {
+            return m_lastFittedPlaneFrame;
+        }
+        return WorkplaneFrame::fromStandard(wp);
+    }
+
+    void MainWindow::updateProbeStatusDisplay() {
+        const int decimals = (m_unitSystem == UnitSystem::Millimeters) ? 4 : 5;
+        const QString unitStr = (m_unitSystem == UnitSystem::Millimeters) ? " mm" : " in";
+
+        if (m_isProbeCalibrated) {
+            m_probeStatusBadge->setText("CALIBRATED ON MASTER BALL");
+            m_probeStatusBadge->setStyleSheet("color: #98c379; font-size: 12px; font-weight: bold;");
+            m_probeLobingLabel->setText(
+                QString("Sphericity / Lobing: %1%2")
+                .arg(toDisplayUnit(m_lastProbeLobingMm, m_unitSystem), 0, 'f', decimals)
+                .arg(unitStr)
+            );
+        }
+        else {
+            m_probeStatusBadge->setText("DEFAULT NOMINAL (Uncalibrated)");
+            m_probeStatusBadge->setStyleSheet("color: #e5c07b; font-size: 12px; font-weight: bold;");
+            m_probeLobingLabel->setText("Sphericity / Lobing: --");
+        }
+
+        m_probeDiamLabel->setText(
+            QString("Effective Tip Ø: %1%2")
+            .arg(toDisplayUnit(m_effectiveProbeRadius * 2.0, m_unitSystem), 0, 'f', decimals)
+            .arg(unitStr)
+        );
+        m_probeRadLabel->setText(
+            QString("Effective Radius (R_eff): %1%2")
+            .arg(toDisplayUnit(m_effectiveProbeRadius, m_unitSystem), 0, 'f', decimals)
+            .arg(unitStr)
+        );
+    }
+
+    void MainWindow::onDisplayModeChanged(int /*index*/) {
+        if (!m_viewport || !m_viewModeCombo) return;
+        auto mode = static_cast<ModelDisplayMode>(m_viewModeCombo->currentData().toInt());
+        m_viewport->setModelDisplayMode(mode);
+    }
+
+    void MainWindow::onTransparencyToggled(bool checked) {
+        if (!m_transparencySlider) return;
+        if (checked && m_transparencySlider->value() == 0) {
+            m_transparencySlider->setValue(55);
+        }
+        else if (!checked && m_transparencySlider->value() > 0) {
+            m_transparencySlider->setValue(0);
+        }
+    }
+
+    void MainWindow::onTransparencySliderChanged(int value) {
+        if (m_transparencyValLabel) {
+            m_transparencyValLabel->setText(QString("%1%").arg(value));
+        }
+        if (m_transparentCheck) {
+            m_transparentCheck->blockSignals(true);
+            m_transparentCheck->setChecked(value > 0);
+            m_transparentCheck->blockSignals(false);
+        }
+        if (m_viewport) {
+            m_viewport->setModelTransparency(static_cast<double>(value) / 100.0);
+        }
+    }
+
+    void MainWindow::onGraniteToggled(bool checked) {
+        if (m_viewport) {
+            m_viewport->setGraniteVisible(checked);
+        }
     }
 
     void MainWindow::onRefreshPortsClicked() {
@@ -219,12 +428,12 @@ namespace OpenCMM {
     void MainWindow::onConnectionChanged(bool connected, const QString& message) {
         if (connected) {
             m_connectBtn->setText("Disconnect");
-            m_connectBtn->setStyleSheet("background-color: #e06c75; color: white; padding: 5px 14px; font-weight: bold;");
+            m_connectBtn->setStyleSheet("background-color: #e06c75; color: white; padding: 5px 12px; font-weight: bold;");
             statusBar()->setStyleSheet("background-color: #28a745; color: white; font-weight: bold;");
         }
         else {
             m_connectBtn->setText("Connect");
-            m_connectBtn->setStyleSheet("background-color: #28a745; color: white; padding: 5px 14px; font-weight: bold;");
+            m_connectBtn->setStyleSheet("background-color: #28a745; color: white; padding: 5px 12px; font-weight: bold;");
             statusBar()->setStyleSheet("background-color: #007acc; color: white; font-weight: bold;");
         }
         statusBar()->showMessage(message);
@@ -252,6 +461,7 @@ namespace OpenCMM {
             for (auto* lbl : m_unitLabels) lbl->setText("mm");
         }
         updateDroDisplay();
+        updateProbeStatusDisplay();
     }
 
     void MainWindow::onLoadStepClicked() {
@@ -293,7 +503,7 @@ namespace OpenCMM {
         m_recordedHits.emplace_back(hitPos.x, hitPos.y, hitPos.z);
         const int count = static_cast<int>(m_recordedHits.size());
 
-        m_hitCountLabel->setText(QString("Recorded Probe Hits: %1").arg(count));
+        m_hitCountLabel->setText(QString("Active Feature Hits: %1").arg(count));
         m_activePointsGroup->setText(1, QString("%1 pts").arg(count));
 
         const int decimals = (m_unitSystem == UnitSystem::Millimeters) ? 4 : 5;
@@ -312,41 +522,177 @@ namespace OpenCMM {
         statusBar()->showMessage(QString("Probe hit #%1 captured at (%2)").arg(count).arg(coordsStr));
     }
 
+    void MainWindow::finishFeatureBuffer() {
+        m_recordedHits.clear();
+        m_hitCountLabel->setText("Active Feature Hits: 0");
+        while (m_activePointsGroup->childCount() > 0) {
+            delete m_activePointsGroup->takeChild(0);
+        }
+        m_activePointsGroup->setText(1, "0 pts");
+
+        if (m_viewport) {
+            m_viewport->commitActiveHitMarkers();
+        }
+    }
+
     void MainWindow::onSimulateHitClicked() {
         const int idx = static_cast<int>(m_recordedHits.size());
-        const double R = 14.2000;
-        const double cx = 60.0, cy = 40.0, cz = 25.0;
+        const int mode = m_simTargetCombo ? m_simTargetCombo->currentData().toInt() : 0;
+        const double rProbe = m_effectiveProbeRadius;
 
-        const double goldenAngle = 2.399963229728653;
-        const double theta = idx * goldenAngle;
-        const double phi = std::acos(1.0 - 0.65 * ((idx % 12) + 0.5) / 12.0);
+        Position3D simHit{ 0.0, 0.0, 0.0 };
 
-        Position3D simHit{
-            cx + R * std::sin(phi) * std::cos(theta),
-            cy + R * std::sin(phi) * std::sin(theta),
-            cz + R * std::cos(phi)
-        };
+        if (mode == 0) {
+            const double R = 12.7000 + rProbe;
+            const double goldenAngle = 2.399963229728653;
+            const double theta = idx * goldenAngle;
+            const double phi = std::acos(1.0 - 0.65 * ((idx % 12) + 0.5) / 12.0);
+            simHit = {
+                60.0 + R * std::sin(phi) * std::cos(theta),
+                40.0 + R * std::sin(phi) * std::sin(theta),
+                25.0 + R * std::cos(phi)
+            };
+        }
+        else if (mode == 1) {
+            const double R = 10.0000 - rProbe;
+            const double angle = idx * (2.0 * 3.141592653589793 / 5.0) + 0.2;
+            simHit = { 50.0 + R * std::cos(angle), 30.0 + R * std::sin(angle), 15.0 };
+        }
+        else if (mode == 2) {
+            const double R = 6.0000 - rProbe;
+            const double angle = idx * (2.0 * 3.141592653589793 / 5.0) + 0.4;
+            simHit = { 100.0 + R * std::cos(angle), 30.0 + R * std::sin(angle), 15.0 };
+        }
+        else if (mode == 3) {
+            const double xGrid[6] = { 15.0, 85.0, 85.0, 15.0, 50.0, 50.0 };
+            const double yGrid[6] = { 10.0, 10.0, 55.0, 55.0, 30.0, 45.0 };
+            simHit = { xGrid[idx % 6], yGrid[idx % 6], 20.0 + rProbe };
+        }
+        else if (mode == 4) {
+            simHit = { 15.0 + idx * 20.0, -rProbe, 15.0 };
+        }
+        else if (mode == 5) {
+            simHit = { -rProbe, 10.0 + idx * 15.0, 15.0 };
+        }
 
         onProbeHit(simHit);
     }
 
-    void MainWindow::onFitSphereClicked() {
-        if (m_recordedHits.size() < 4) {
-            statusBar()->showMessage("Need at least 4 probe hits to fit a Sphere.");
+    void MainWindow::onCalibrateProbeClicked() {
+        if (m_recordedHits.size() < 5) {
+            QMessageBox::warning(
+                this,
+                "Probe Calibration Requires 5+ Hits",
+                "Please capture at least 5 probe hits distributed across the Master Ball "
+                "(4 around the equator + 1 on the top pole) before calibrating."
+            );
             return;
         }
 
-        SphereFitResult res = MetrologyMath::fitSphereLeastSquares(m_recordedHits);
+        const bool isInch = (m_unitSystem == UnitSystem::Inches);
+        const int decimals = isInch ? 5 : 4;
+        const QString unitStr = isInch ? " in" : " mm";
+        const double defaultDispDiam = toDisplayUnit(m_certifiedBallDiameterMm, m_unitSystem);
+
+        bool ok = false;
+        double enteredDiam = QInputDialog::getDouble(
+            this,
+            "Master Ball Probe Calibration",
+            QString("Enter Certified Master Ball Diameter (%1):").arg(isInch ? "Inches" : "Millimeters"),
+            defaultDispDiam,
+            isInch ? 0.10000 : 2.0000,
+            isInch ? 10.00000 : 254.0000,
+            decimals,
+            &ok
+        );
+
+        if (!ok) return;
+
+        m_certifiedBallDiameterMm = isInch ? (enteredDiam * MM_PER_INCH) : enteredDiam;
+
+        ProbeCalibrationResult cal = MetrologyMath::calibrateProbeOnMasterBall(
+            m_recordedHits,
+            m_certifiedBallDiameterMm
+        );
+
+        if (!cal.success) {
+            QMessageBox::critical(
+                this,
+                "Calibration Failed",
+                "Could not compute a valid effective probe radius. Verify that points are non-coplanar "
+                "and that the certified Master Ball diameter is smaller than the probed center-path sphere."
+            );
+            return;
+        }
+
+        m_effectiveProbeRadius = cal.effectiveRadius;
+        m_lastProbeLobingMm = cal.formError;
+        m_isProbeCalibrated = true;
+        updateProbeStatusDisplay();
+
+        auto* calItem = new QTreeWidgetItem(m_featureTree, {
+            QString("Probe_Cal (%1 pts)").arg(m_recordedHits.size()),
+            QString("R_eff: %1%2").arg(toDisplayUnit(cal.effectiveRadius, m_unitSystem), 0, 'f', decimals).arg(unitStr)
+            });
+
+        new QTreeWidgetItem(calItem, {
+            "Effective Tip Diameter",
+            QString("Ø %1%2").arg(toDisplayUnit(cal.effectiveRadius * 2.0, m_unitSystem), 0, 'f', decimals).arg(unitStr)
+            });
+        new QTreeWidgetItem(calItem, {
+            "Master Ball Center (X, Y, Z)",
+            QString("(%1, %2, %3)")
+                .arg(toDisplayUnit(cal.masterBallCenter.x(), m_unitSystem), 0, 'f', decimals)
+                .arg(toDisplayUnit(cal.masterBallCenter.y(), m_unitSystem), 0, 'f', decimals)
+                .arg(toDisplayUnit(cal.masterBallCenter.z(), m_unitSystem), 0, 'f', decimals)
+            });
+        new QTreeWidgetItem(calItem, {
+            "3D Probe Lobing (Form Error)",
+            QString("%1%2").arg(toDisplayUnit(cal.formError, m_unitSystem), 0, 'f', decimals).arg(unitStr)
+            });
+
+        calItem->setExpanded(true);
+        finishFeatureBuffer();
+        statusBar()->showMessage("Probe calibrated on Master Ball. Active hit buffer reset for next feature.");
+    }
+
+    void MainWindow::onFitSphereClicked() {
+        if (m_recordedHits.size() < 4) {
+            statusBar()->showMessage("Need at least 4 probe hits to fit a 3D Sphere.");
+            return;
+        }
+
+        const ProbeCompMode compMode = currentCompMode();
+        SphereFitResult res = MetrologyMath::fitSphereLeastSquares(
+            m_recordedHits,
+            m_effectiveProbeRadius,
+            compMode
+        );
+
         if (!res.success) {
             statusBar()->showMessage("Sphere least-squares fit failed (coplanar or singular points).");
             return;
         }
 
+        const int id = m_featureCounter++;
+        const QString featName = QString("Sphere_%1").arg(id);
+
+        m_solvedFeatures.push_back({
+            id,
+            featName.toStdString(),
+            FeatureKind::Sphere3D,
+            res.center,
+            Eigen::Vector3d::UnitZ(),
+            Eigen::Vector3d::UnitY(),
+            res.radius * 2.0,
+            res.formError
+            });
+
         const int decimals = (m_unitSystem == UnitSystem::Millimeters) ? 4 : 5;
         const QString unitStr = (m_unitSystem == UnitSystem::Millimeters) ? " mm" : " in";
 
         auto* sphereItem = new QTreeWidgetItem(m_featureTree, {
-            QString("Sphere_%1 (%2 pts)").arg(m_featureCounter++).arg(m_recordedHits.size()),
+            QString("%1 (%2 pts)").arg(featName).arg(m_recordedHits.size()),
             QString("Ø %1%2").arg(toDisplayUnit(res.radius * 2.0, m_unitSystem), 0, 'f', decimals).arg(unitStr)
             });
 
@@ -358,20 +704,13 @@ namespace OpenCMM {
                 .arg(toDisplayUnit(res.center.z(), m_unitSystem), 0, 'f', decimals)
             });
         new QTreeWidgetItem(sphereItem, {
-            "Center-to-Center Radius",
-            QString("%1%2").arg(toDisplayUnit(res.radius, m_unitSystem), 0, 'f', decimals).arg(unitStr)
-            });
-        new QTreeWidgetItem(sphereItem, {
-            "Form Error (Sphericity)",
+            "Sphericity (Form Error)",
             QString("%1%2").arg(toDisplayUnit(res.formError, m_unitSystem), 0, 'f', decimals).arg(unitStr)
-            });
-        new QTreeWidgetItem(sphereItem, {
-            "RMS Residual",
-            QString("%1%2").arg(toDisplayUnit(res.rmsError, m_unitSystem), 0, 'f', decimals).arg(unitStr)
             });
 
         sphereItem->setExpanded(true);
-        statusBar()->showMessage("Sphere feature solved and added to Inspection Tree.");
+        finishFeatureBuffer();
+        statusBar()->showMessage(featName + " solved. Active point buffer reset for next feature.");
     }
 
     void MainWindow::onFitPlaneClicked() {
@@ -380,46 +719,313 @@ namespace OpenCMM {
             return;
         }
 
-        PlaneFitResult res = MetrologyMath::fitPlaneLeastSquares(m_recordedHits);
+        const ProbeCompMode compMode = currentCompMode();
+        Eigen::Vector3d currentMachinePos(m_lastPosition.x, m_lastPosition.y, m_lastPosition.z);
+
+        PlaneFitResult res = MetrologyMath::fitPlaneLeastSquares(
+            m_recordedHits,
+            m_effectiveProbeRadius,
+            compMode,
+            &currentMachinePos
+        );
+
         if (!res.success) {
             statusBar()->showMessage("Plane SVD fit failed (collinear points).");
             return;
         }
 
+        m_lastFittedPlaneFrame = WorkplaneFrame::fromPlane(res.centroid, res.normal);
+        m_hasCustomPlane = true;
+
+        const int id = m_featureCounter++;
+        const QString featName = QString("Plane_%1").arg(id);
+
+        m_solvedFeatures.push_back({
+            id,
+            featName.toStdString(),
+            FeatureKind::Plane3D,
+            res.centroid,
+            res.normal,
+            Eigen::Vector3d::UnitY(),
+            0.0,
+            res.flatness
+            });
+
         const int decimals = (m_unitSystem == UnitSystem::Millimeters) ? 4 : 5;
         const QString unitStr = (m_unitSystem == UnitSystem::Millimeters) ? " mm" : " in";
 
         auto* planeItem = new QTreeWidgetItem(m_featureTree, {
-            QString("Plane_%1 (%2 pts)").arg(m_featureCounter++).arg(m_recordedHits.size()),
+            QString("%1 (%2 pts)").arg(featName).arg(m_recordedHits.size()),
             QString("Flatness: %1%2").arg(toDisplayUnit(res.flatness, m_unitSystem), 0, 'f', decimals).arg(unitStr)
             });
 
         new QTreeWidgetItem(planeItem, {
-            "Normal Vector (I, J, K)",
+            "Outward Normal (I, J, K)",
             QString("(%1, %2, %3)")
                 .arg(res.normal.x(), 0, 'f', 5)
                 .arg(res.normal.y(), 0, 'f', 5)
                 .arg(res.normal.z(), 0, 'f', 5)
             });
         new QTreeWidgetItem(planeItem, {
-            "Centroid (X, Y, Z)",
+            "Surface Centroid (X, Y, Z)",
             QString("(%1, %2, %3)")
                 .arg(toDisplayUnit(res.centroid.x(), m_unitSystem), 0, 'f', decimals)
                 .arg(toDisplayUnit(res.centroid.y(), m_unitSystem), 0, 'f', decimals)
                 .arg(toDisplayUnit(res.centroid.z(), m_unitSystem), 0, 'f', decimals)
             });
-        new QTreeWidgetItem(planeItem, {
-            "RMS Residual",
-            QString("%1%2").arg(toDisplayUnit(res.rmsError, m_unitSystem), 0, 'f', decimals).arg(unitStr)
-            });
 
         planeItem->setExpanded(true);
-        statusBar()->showMessage("Plane feature solved and added to Inspection Tree.");
+        finishFeatureBuffer();
+        statusBar()->showMessage(featName + " solved. Active point buffer reset for next feature.");
+    }
+
+    void MainWindow::onFitCircleClicked() {
+        if (m_recordedHits.size() < 3) {
+            statusBar()->showMessage("Need at least 3 probe hits to fit a 2D Circle (Bore/Boss).");
+            return;
+        }
+
+        ProbeCompMode compMode = currentCompMode();
+        if (m_simTargetCombo && (m_simTargetCombo->currentData().toInt() == 1 || m_simTargetCombo->currentData().toInt() == 2)) {
+            compMode = ProbeCompMode::Internal;
+            m_compModeCombo->setCurrentIndex(1);
+        }
+
+        const WorkplaneFrame wp = currentWorkplane();
+        Circle2DFitResult res = MetrologyMath::fitCircle2DLeastSquares(
+            m_recordedHits,
+            wp,
+            m_effectiveProbeRadius,
+            compMode
+        );
+
+        if (!res.success) {
+            statusBar()->showMessage("2D Circle fit failed (collinear points in active workplane).");
+            return;
+        }
+
+        const int id = m_featureCounter++;
+        const QString prefix = (compMode == ProbeCompMode::Internal) ? "Bore" : "Boss";
+        const QString featName = QString("%1_%2").arg(prefix).arg(id);
+
+        m_solvedFeatures.push_back({
+            id,
+            featName.toStdString(),
+            FeatureKind::Circle2D,
+            res.center,
+            res.planeNormal,
+            Eigen::Vector3d::UnitY(),
+            res.radius * 2.0,
+            res.circularity
+            });
+
+        const int decimals = (m_unitSystem == UnitSystem::Millimeters) ? 4 : 5;
+        const QString unitStr = (m_unitSystem == UnitSystem::Millimeters) ? " mm" : " in";
+
+        auto* circleItem = new QTreeWidgetItem(m_featureTree, {
+            QString("%1 (%2 pts)").arg(featName).arg(m_recordedHits.size()),
+            QString("Ø %1%2").arg(toDisplayUnit(res.radius * 2.0, m_unitSystem), 0, 'f', decimals).arg(unitStr)
+            });
+
+        new QTreeWidgetItem(circleItem, {
+            "Center (X, Y, Z)",
+            QString("(%1, %2, %3)")
+                .arg(toDisplayUnit(res.center.x(), m_unitSystem), 0, 'f', decimals)
+                .arg(toDisplayUnit(res.center.y(), m_unitSystem), 0, 'f', decimals)
+                .arg(toDisplayUnit(res.center.z(), m_unitSystem), 0, 'f', decimals)
+            });
+        new QTreeWidgetItem(circleItem, {
+            "Compensated Radius",
+            QString("%1%2 (Comp: %3%2)")
+                .arg(toDisplayUnit(res.radius, m_unitSystem), 0, 'f', decimals)
+                .arg(unitStr)
+                .arg(toDisplayUnit(res.appliedComp, m_unitSystem), 0, 'f', decimals)
+            });
+        new QTreeWidgetItem(circleItem, {
+            "Circularity (Roundness)",
+            QString("%1%2").arg(toDisplayUnit(res.circularity, m_unitSystem), 0, 'f', decimals).arg(unitStr)
+            });
+
+        circleItem->setExpanded(true);
+        finishFeatureBuffer();
+        statusBar()->showMessage(featName + " solved. Active point buffer reset for next feature.");
+    }
+
+    void MainWindow::onFitLineClicked() {
+        if (m_recordedHits.size() < 2) {
+            statusBar()->showMessage("Need at least 2 probe hits to fit a 2D Line (Edge).");
+            return;
+        }
+
+        const ProbeCompMode compMode = currentCompMode();
+        const WorkplaneFrame wp = currentWorkplane();
+        Eigen::Vector3d currentMachinePos(m_lastPosition.x, m_lastPosition.y, m_lastPosition.z);
+
+        Line2DFitResult res = MetrologyMath::fitLine2DLeastSquares(
+            m_recordedHits,
+            wp,
+            m_effectiveProbeRadius,
+            compMode,
+            &currentMachinePos
+        );
+
+        if (!res.success) {
+            statusBar()->showMessage("2D Line fit failed (coincident points).");
+            return;
+        }
+
+        const int id = m_featureCounter++;
+        const QString featName = QString("Line_%1").arg(id);
+
+        m_solvedFeatures.push_back({
+            id,
+            featName.toStdString(),
+            FeatureKind::Line2D,
+            res.centroid,
+            res.direction,
+            res.edgeNormal,
+            0.0,
+            res.straightness
+            });
+
+        const int decimals = (m_unitSystem == UnitSystem::Millimeters) ? 4 : 5;
+        const QString unitStr = (m_unitSystem == UnitSystem::Millimeters) ? " mm" : " in";
+
+        auto* lineItem = new QTreeWidgetItem(m_featureTree, {
+            QString("%1 (%2 pts)").arg(featName).arg(m_recordedHits.size()),
+            QString("Straightness: %1%2").arg(toDisplayUnit(res.straightness, m_unitSystem), 0, 'f', decimals).arg(unitStr)
+            });
+
+        new QTreeWidgetItem(lineItem, {
+            "Edge Point (X, Y, Z)",
+            QString("(%1, %2, %3)")
+                .arg(toDisplayUnit(res.centroid.x(), m_unitSystem), 0, 'f', decimals)
+                .arg(toDisplayUnit(res.centroid.y(), m_unitSystem), 0, 'f', decimals)
+                .arg(toDisplayUnit(res.centroid.z(), m_unitSystem), 0, 'f', decimals)
+            });
+        new QTreeWidgetItem(lineItem, {
+            "Unit Direction (I, J, K)",
+            QString("(%1, %2, %3)")
+                .arg(res.direction.x(), 0, 'f', 5)
+                .arg(res.direction.y(), 0, 'f', 5)
+                .arg(res.direction.z(), 0, 'f', 5)
+            });
+        new QTreeWidgetItem(lineItem, {
+            "Outward Edge Normal",
+            QString("(%1, %2, %3)")
+                .arg(res.edgeNormal.x(), 0, 'f', 5)
+                .arg(res.edgeNormal.y(), 0, 'f', 5)
+                .arg(res.edgeNormal.z(), 0, 'f', 5)
+            });
+
+        lineItem->setExpanded(true);
+        finishFeatureBuffer();
+        statusBar()->showMessage(featName + " solved. Active point buffer reset for next feature.");
+    }
+
+    void MainWindow::onMeasureRelationClicked() {
+        if (m_solvedFeatures.size() < 2) {
+            QMessageBox::information(
+                this,
+                "Need 2+ Solved Features",
+                "Please solve at least two features (e.g., two Bores, two Planes, or two Edges) "
+                "before measuring a feature-to-feature relation."
+            );
+            return;
+        }
+
+        QDialog dlg(this);
+        dlg.setWindowTitle("Measure Feature-to-Feature Relation");
+        dlg.setMinimumWidth(360);
+        dlg.setStyleSheet(
+            "QDialog { background-color: #21252b; color: #e0e0e0; }"
+            "QLabel { color: #ffffff; font-size: 13px; font-weight: bold; }"
+            "QComboBox { background-color: #181a1f; color: #ffffff; border: 1px solid #4b5263; border-radius: 3px; padding: 5px 10px; font-size: 13px; font-weight: bold; min-width: 170px; }"
+            "QComboBox QAbstractItemView { background-color: #181a1f; color: #ffffff; selection-background-color: #2d5a88; selection-color: #ffffff; }"
+            "QPushButton { background-color: #3a3f4b; color: #ffffff; border: 1px solid #4b5263; border-radius: 3px; padding: 5px 16px; font-weight: bold; }"
+            "QPushButton:hover { background-color: #4b5263; }"
+        );
+        auto* form = new QFormLayout(&dlg);
+        form->setContentsMargins(16, 16, 16, 16);
+        form->setSpacing(12);
+
+        auto* comboA = new QComboBox(&dlg);
+        auto* comboB = new QComboBox(&dlg);
+
+        for (size_t i = 0; i < m_solvedFeatures.size(); ++i) {
+            QString label = QString::fromStdString(m_solvedFeatures[i].name);
+            comboA->addItem(label, static_cast<int>(i));
+            comboB->addItem(label, static_cast<int>(i));
+        }
+        comboA->setCurrentIndex(static_cast<int>(m_solvedFeatures.size()) - 2);
+        comboB->setCurrentIndex(static_cast<int>(m_solvedFeatures.size()) - 1);
+
+        form->addRow("Reference Feature A:", comboA);
+        form->addRow("Target Feature B:", comboB);
+
+        auto* btns = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+        connect(btns, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+        connect(btns, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+        form->addRow(btns);
+
+        if (dlg.exec() != QDialog::Accepted) return;
+
+        const auto& featA = m_solvedFeatures[comboA->currentData().toInt()];
+        const auto& featB = m_solvedFeatures[comboB->currentData().toInt()];
+
+        FeatureRelationResult rel = MetrologyMath::computeFeatureRelation(featA, featB, currentWorkplane());
+        if (!rel.success) return;
+
+        const int decimals = (m_unitSystem == UnitSystem::Millimeters) ? 4 : 5;
+        const QString unitStr = (m_unitSystem == UnitSystem::Millimeters) ? " mm" : " in";
+
+        const QString relTitle = QString("Dim_%1 [%2 -> %3]")
+            .arg(m_featureCounter++)
+            .arg(QString::fromStdString(featA.name))
+            .arg(QString::fromStdString(featB.name));
+
+        auto* relItem = new QTreeWidgetItem(m_featureTree, {
+            relTitle,
+            QString("2D Dist: %1%2").arg(toDisplayUnit(rel.distance2D, m_unitSystem), 0, 'f', decimals).arg(unitStr)
+            });
+
+        new QTreeWidgetItem(relItem, {
+            "3D Direct Distance",
+            QString("%1%2").arg(toDisplayUnit(rel.distance3D, m_unitSystem), 0, 'f', decimals).arg(unitStr)
+            });
+        new QTreeWidgetItem(relItem, {
+            "Delta (dX, dY, dZ)",
+            QString("(%1, %2, %3)")
+                .arg(toDisplayUnit(rel.deltaXYZ.x(), m_unitSystem), 0, 'f', decimals)
+                .arg(toDisplayUnit(rel.deltaXYZ.y(), m_unitSystem), 0, 'f', decimals)
+                .arg(toDisplayUnit(rel.deltaXYZ.z(), m_unitSystem), 0, 'f', decimals)
+            });
+        new QTreeWidgetItem(relItem, {
+            "Perpendicular / Normal Offset",
+            QString("%1%2").arg(toDisplayUnit(rel.normalDistance, m_unitSystem), 0, 'f', decimals).arg(unitStr)
+            });
+        new QTreeWidgetItem(relItem, {
+            "Angle Between Vectors",
+            QString("%1°").arg(rel.angleDegrees, 0, 'f', 4)
+            });
+
+        if (rel.hasIntersection) {
+            new QTreeWidgetItem(relItem, {
+                "2D Corner Intersection (X, Y, Z)",
+                QString("(%1, %2, %3)")
+                    .arg(toDisplayUnit(rel.intersectionPoint.x(), m_unitSystem), 0, 'f', decimals)
+                    .arg(toDisplayUnit(rel.intersectionPoint.y(), m_unitSystem), 0, 'f', decimals)
+                    .arg(toDisplayUnit(rel.intersectionPoint.z(), m_unitSystem), 0, 'f', decimals)
+                });
+        }
+
+        relItem->setExpanded(true);
+        statusBar()->showMessage("Computed relation: " + relTitle);
     }
 
     void MainWindow::onClearPointsClicked() {
         m_recordedHits.clear();
-        m_hitCountLabel->setText("Recorded Probe Hits: 0");
+        m_hitCountLabel->setText("Active Feature Hits: 0");
 
         while (m_activePointsGroup->childCount() > 0) {
             delete m_activePointsGroup->takeChild(0);
@@ -430,7 +1036,7 @@ namespace OpenCMM {
             m_viewport->clearHitMarkers();
         }
 
-        statusBar()->showMessage("Active probe point buffer and 3D hit markers cleared.");
+        statusBar()->showMessage("Active probe point buffer and all 3D hit markers cleared.");
     }
 
 } // namespace OpenCMM

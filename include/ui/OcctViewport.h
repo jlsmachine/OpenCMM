@@ -11,6 +11,12 @@
 
 namespace OpenCMM {
 
+    enum class ModelDisplayMode {
+        ShadedWithEdges = 0,
+        ShadedOnly = 1,
+        Wireframe = 2
+    };
+
     class OcctViewport : public QWidget {
         Q_OBJECT
     public:
@@ -22,7 +28,12 @@ namespace OpenCMM {
         void loadStepFile(const QString& filepath);
         void updateProbePosition(double x, double y, double z);
         void addHitPointMarker(double x, double y, double z);
+        void commitActiveHitMarkers();
         void clearHitMarkers();
+
+        void setModelDisplayMode(ModelDisplayMode mode);
+        void setModelTransparency(double transparency);
+        void setGraniteVisible(bool visible);
 
         QPaintEngine* paintEngine() const override { return nullptr; }
 
@@ -39,15 +50,24 @@ namespace OpenCMM {
         void initOcct();
         void createDemoGraniteScene();
         void createProbeStylus();
+        void applyVisualStyleToShape(const Handle(AIS_Shape)& shape);
 
         Handle(Graphic3d_GraphicDriver) m_graphicDriver;
         Handle(V3d_Viewer) m_viewer;
         Handle(V3d_View) m_view;
         Handle(AIS_InteractiveContext) m_context;
 
+        Handle(AIS_Shape) m_graniteShape;
+        std::vector<Handle(AIS_Shape)> m_cadShapes;
+
         Handle(AIS_Shape) m_probeRuby;
         Handle(AIS_Shape) m_probeStem;
-        std::vector<Handle(AIS_Shape)> m_hitMarkers;
+        std::vector<Handle(AIS_Shape)> m_activeHitMarkers;
+        std::vector<Handle(AIS_Shape)> m_solvedHitMarkers;
+
+        ModelDisplayMode m_displayMode = ModelDisplayMode::ShadedWithEdges;
+        double m_transparency = 0.0;
+        bool m_graniteVisible = true;
 
         QPoint m_lastMousePos;
         QPoint m_pressMousePos;
