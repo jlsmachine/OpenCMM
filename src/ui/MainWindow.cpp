@@ -1,3 +1,13 @@
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 #include "ui/MainWindow.h"
 #include "ui/OcctViewport.h"
 
@@ -15,18 +25,37 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QFormLayout>
+#include <QDoubleSpinBox>
+#include <QCheckBox>
 #include <QSerialPortInfo>
+#include <QFile>
+#include <QTextStream>
+#include <QDateTime>
+#include <QDesktopServices>
+#include <QUrl>
+#include <QColor>
+#include <QBrush>
 #include <algorithm>
 #include <cmath>
+#include <thread>
 
 namespace OpenCMM {
+
+    namespace {
+        // Custom data roles stored on top-level feature QTreeWidgetItems (column 0)
+        constexpr int ROLE_ACTUAL_MM = Qt::UserRole + 1;
+        constexpr int ROLE_HAS_NOMINAL = Qt::UserRole + 2;
+        constexpr int ROLE_NOMINAL_MM = Qt::UserRole + 3;
+        constexpr int ROLE_PLUS_TOL_MM = Qt::UserRole + 4;
+        constexpr int ROLE_MINUS_TOL_MM = Qt::UserRole + 5;
+    }
 
     MainWindow::MainWindow(QWidget* parent)
         : QMainWindow(parent),
         m_controller(new PicoSerialController(this)) {
 
         setWindowTitle("OpenCMM - Precision Coordinate Metrology Studio");
-        resize(1600, 940);
+        resize(1680, 960);
 
         setupUi();
 
@@ -61,7 +90,7 @@ namespace OpenCMM {
         setCentralWidget(m_viewport);
 
         statusBar()->setStyleSheet("background-color: #007acc; color: white; font-weight: bold;");
-        statusBar()->showMessage("Ready - Select workplane, capture probe hits, or click any STEP CAD face to extract nominals.");
+        statusBar()->showMessage("Ready - Probe features, double-click any feature row to edit Nominal/Tolerance, or Export Report.");
     }
 
     void MainWindow::setupToolbar() {
@@ -70,9 +99,10 @@ namespace OpenCMM {
             "QPushButton { background-color: #3a3f4b; color: white; border: 1px solid #4b5263; border-radius: 3px; padding: 5px 10px; font-weight: bold; }"
             "QPushButton:hover { background-color: #4b5263; }"
             "QComboBox { background-color: #1e2227; color: white; border: 1px solid #4b5263; padding: 4px 8px; font-weight: bold; }"
-            "QComboBox QAbstractItemView { background-color: #1e2227; color: white; selection-background-color: #2d5a88; }";
+            "QComboBox QAbstractItemView { background-color: #1e2227; color: white; selection-background-color: #2d5a88; }"
+            "QCheckBox { color: #dcdfe4; font-weight: bold; spacing: 5px; padding: 0 4px; }";
 
-        // Row 1: Hardware, CAD Loader & Simulator
+        // Row 1: Hardware, CAD Loader, Audio, Export & Simulator
         auto* hwToolbar = addToolBar("Hardware & CAD Controls");
         hwToolbar->setMovable(false);
         hwToolbar->setStyleSheet(barStyle);
@@ -104,12 +134,28 @@ namespace OpenCMM {
         connect(m_unitBtn, &QPushButton::clicked, this, &MainWindow::onUnitToggled);
         hwToolbar->addWidget(m_unitBtn);
 
+        m_audioCheck = new QCheckBox("Audio", this);
+        m_audioCheck->setChecked(true);
+        m_audioCheck->setToolTip("Play eyes-free audio chimes on probe trigger and feature solve");
+        hwToolbar->addWidget(m_audioCheck);
+
         hwToolbar->addSeparator();
 
-        auto* loadStepBtn = new QPushButton("Load STEP CAD", this);
+        auto* loadStepBtn = new QPushButton("Load CAD", this);
         loadStepBtn->setStyleSheet("background-color: #2d5a88; color: white; padding: 5px 10px; font-weight: bold;");
         connect(loadStepBtn, &QPushButton::clicked, this, &MainWindow::onLoadStepClicked);
         hwToolbar->addWidget(loadStepBtn);
+
+        auto* transformCadBtn = new QPushButton("Orient CAD...", this);
+        transformCadBtn->setStyleSheet("background-color: #3b6998; color: white; padding: 5px 10px; font-weight: bold;");
+        connect(transformCadBtn, &QPushButton::clicked, this, &MainWindow::onTransformCadClicked);
+        hwToolbar->addWidget(transformCadBtn);
+
+        auto* exportBtn = new QPushButton("Export Report (Ctrl+E)", this);
+        exportBtn->setStyleSheet("background-color: #1f7a8c; color: white; padding: 5px 12px; font-weight: bold;");
+        exportBtn->setShortcut(QKeySequence("Ctrl+E"));
+        connect(exportBtn, &QPushButton::clicked, this, &MainWindow::onExportReportClicked);
+        hwToolbar->addWidget(exportBtn);
 
         hwToolbar->addSeparator();
 
@@ -126,12 +172,12 @@ namespace OpenCMM {
         m_simTargetCombo->addItem("Left Y-Edge (X=0)", 5);
         hwToolbar->addWidget(m_simTargetCombo);
 
-        auto* simHitBtn = new QPushButton("Simulate Probe Hit", this);
+        auto* simHitBtn = new QPushButton("Sim Hit", this);
         simHitBtn->setStyleSheet("background-color: #d19a66; color: #1e2227; padding: 5px 10px; font-weight: bold;");
         connect(simHitBtn, &QPushButton::clicked, this, &MainWindow::onSimulateHitClicked);
         hwToolbar->addWidget(simHitBtn);
 
-        // Row 2: Metrology Workplane, Tip Compensation, Solvers & 3-2-1 Alignment
+        // Row 2: Metrology Workplane, Tip Compensation, Solvers & Alignment
         addToolBarBreak(Qt::TopToolBarArea);
         auto* metroToolbar = addToolBar("Metrology Feature Solvers");
         metroToolbar->setMovable(false);
@@ -142,9 +188,9 @@ namespace OpenCMM {
         metroToolbar->addWidget(wpLabel);
 
         m_workplaneCombo = new QComboBox(this);
-        m_workplaneCombo->addItem("XY Plane (+Z)", static_cast<int>(StandardWorkplane::XY_PlusZ));
-        m_workplaneCombo->addItem("YZ Plane (+X)", static_cast<int>(StandardWorkplane::YZ_PlusX));
-        m_workplaneCombo->addItem("ZX Plane (+Y)", static_cast<int>(StandardWorkplane::ZX_PlusY));
+        m_workplaneCombo->addItem("XY (+Z)", static_cast<int>(StandardWorkplane::XY_PlusZ));
+        m_workplaneCombo->addItem("YZ (+X)", static_cast<int>(StandardWorkplane::YZ_PlusX));
+        m_workplaneCombo->addItem("ZX (+Y)", static_cast<int>(StandardWorkplane::ZX_PlusY));
         m_workplaneCombo->addItem("Last Fitted Plane", static_cast<int>(StandardWorkplane::CustomPlane));
         metroToolbar->addWidget(m_workplaneCombo);
 
@@ -153,9 +199,9 @@ namespace OpenCMM {
         metroToolbar->addWidget(compLabel);
 
         m_compModeCombo = new QComboBox(this);
-        m_compModeCombo->addItem("External / Boss (-R)", static_cast<int>(ProbeCompMode::External));
-        m_compModeCombo->addItem("Internal / Bore (+R)", static_cast<int>(ProbeCompMode::Internal));
-        m_compModeCombo->addItem("Uncompensated (Ruby)", static_cast<int>(ProbeCompMode::Uncompensated));
+        m_compModeCombo->addItem("External (-R)", static_cast<int>(ProbeCompMode::External));
+        m_compModeCombo->addItem("Internal (+R)", static_cast<int>(ProbeCompMode::Internal));
+        m_compModeCombo->addItem("Uncomp (0)", static_cast<int>(ProbeCompMode::Uncompensated));
         metroToolbar->addWidget(m_compModeCombo);
 
         auto* calBtn = new QPushButton("Calibrate Probe", this);
@@ -173,31 +219,32 @@ namespace OpenCMM {
         connect(fitPlaneBtn, &QPushButton::clicked, this, &MainWindow::onFitPlaneClicked);
         metroToolbar->addWidget(fitPlaneBtn);
 
-        auto* fitCircleBtn = new QPushButton("Fit 2D Circle (Bore/Boss)", this);
+        auto* fitCircleBtn = new QPushButton("Fit 2D Circle", this);
         fitCircleBtn->setStyleSheet("background-color: #2b6cb0; color: white; padding: 5px 10px; font-weight: bold;");
         connect(fitCircleBtn, &QPushButton::clicked, this, &MainWindow::onFitCircleClicked);
         metroToolbar->addWidget(fitCircleBtn);
 
-        auto* fitLineBtn = new QPushButton("Fit 2D Line (Edge)", this);
+        auto* fitLineBtn = new QPushButton("Fit 2D Line", this);
         fitLineBtn->setStyleSheet("background-color: #2b6cb0; color: white; padding: 5px 10px; font-weight: bold;");
         connect(fitLineBtn, &QPushButton::clicked, this, &MainWindow::onFitLineClicked);
         metroToolbar->addWidget(fitLineBtn);
 
-        metroToolbar->addSeparator();
-
-        auto* relBtn = new QPushButton("Measure Relation / Distance", this);
+        auto* relBtn = new QPushButton("Measure Distance", this);
         relBtn->setStyleSheet("background-color: #2f855a; color: white; padding: 5px 10px; font-weight: bold;");
         connect(relBtn, &QPushButton::clicked, this, &MainWindow::onMeasureRelationClicked);
         metroToolbar->addWidget(relBtn);
 
+        metroToolbar->addSeparator();
+
         auto* alignBtn = new QPushButton("3-2-1 Alignment...", this);
-        alignBtn->setStyleSheet("background-color: #d15757; color: white; padding: 5px 12px; font-weight: bold;");
+        alignBtn->setStyleSheet("background-color: #d15757; color: white; padding: 5px 10px; font-weight: bold;");
         connect(alignBtn, &QPushButton::clicked, this, &MainWindow::onRun321AlignmentClicked);
         metroToolbar->addWidget(alignBtn);
 
-        m_alignStatusBtn = new QPushButton("Alignment: MCS (Machine)", this);
+        m_alignStatusBtn = new QPushButton("MCS", this);
         m_alignStatusBtn->setCheckable(true);
         m_alignStatusBtn->setChecked(false);
+        m_alignStatusBtn->setToolTip("Toggle between Machine Coordinate System (MCS) and 3-2-1 Part Coordinate System (PCS)");
         m_alignStatusBtn->setStyleSheet("background-color: #3a3f4b; color: #e5c07b; padding: 5px 10px; font-weight: bold;");
         connect(m_alignStatusBtn, &QPushButton::clicked, this, [this](bool checked) {
             if (!m_isPartAligned && checked) {
@@ -209,7 +256,9 @@ namespace OpenCMM {
             });
         metroToolbar->addWidget(m_alignStatusBtn);
 
-        auto* clearBtn = new QPushButton("Clear All Points", this);
+        metroToolbar->addSeparator();
+
+        auto* clearBtn = new QPushButton("Clear Points", this);
         connect(clearBtn, &QPushButton::clicked, this, &MainWindow::onClearPointsClicked);
         metroToolbar->addWidget(clearBtn);
     }
@@ -284,23 +333,133 @@ namespace OpenCMM {
 
     void MainWindow::setupFeatureTreeDock() {
         auto* treeDock = new QDockWidget("INSPECTION FEATURE TREE", this);
-        treeDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+        treeDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea | Qt::BottomDockWidgetArea);
 
-        m_featureTree = new QTreeWidget(treeDock);
-        m_featureTree->setColumnCount(2);
-        m_featureTree->setHeaderLabels({ "Feature / Parameter", "Measured Value" });
+        auto* container = new QWidget(treeDock);
+        container->setStyleSheet("background-color: #181a1f;");
+        auto* dockLayout = new QVBoxLayout(container);
+        dockLayout->setContentsMargins(4, 4, 4, 4);
+        dockLayout->setSpacing(4);
+
+        // Action bar right above the tree table
+        auto* actionBar = new QHBoxLayout();
+        actionBar->setSpacing(6);
+
+        auto* editTolBtn = new QPushButton("Edit Nominal / Tol... (Ctrl+T)", container);
+        editTolBtn->setStyleSheet("background-color: #2d3748; color: #e5c07b; border: 1px solid #4b5263; border-radius: 3px; padding: 4px 10px; font-weight: bold; font-size: 11px;");
+        editTolBtn->setShortcut(QKeySequence("Ctrl+T"));
+        connect(editTolBtn, &QPushButton::clicked, this, &MainWindow::onEditToleranceClicked);
+        actionBar->addWidget(editTolBtn);
+
+        auto* exportDockBtn = new QPushButton("Export Report... (Ctrl+E)", container);
+        exportDockBtn->setStyleSheet("background-color: #1f7a8c; color: white; border: 1px solid #4b5263; border-radius: 3px; padding: 4px 10px; font-weight: bold; font-size: 11px;");
+        connect(exportDockBtn, &QPushButton::clicked, this, &MainWindow::onExportReportClicked);
+        actionBar->addWidget(exportDockBtn);
+
+        dockLayout->addLayout(actionBar);
+
+        m_featureTree = new QTreeWidget(container);
+        m_featureTree->setColumnCount(5);
+        m_featureTree->setHeaderLabels({ "Feature / Parameter", "Nominal", "Actual", "±Tol", "Dev / Status" });
         m_featureTree->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
-        m_featureTree->header()->setSectionResizeMode(1, QHeaderView::Stretch);
+        m_featureTree->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+        m_featureTree->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+        m_featureTree->header()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
+        m_featureTree->header()->setSectionResizeMode(4, QHeaderView::Stretch);
+        m_featureTree->setMinimumWidth(460);
         m_featureTree->setStyleSheet(
-            "QTreeWidget { background-color: #181a1f; color: #dcdfe4; border: none; font-family: 'Segoe UI', sans-serif; font-size: 13px; }"
+            "QTreeWidget { background-color: #181a1f; color: #dcdfe4; border: 1px solid #282c34; font-family: 'Segoe UI', sans-serif; font-size: 12px; }"
             "QHeaderView::section { background-color: #21252b; color: #abb2bf; padding: 5px; border: 1px solid #3a3f4b; font-weight: bold; }"
         );
 
-        m_activePointsGroup = new QTreeWidgetItem(m_featureTree, { "Active Probe Buffer", "0 pts" });
+        m_activePointsGroup = new QTreeWidgetItem(m_featureTree, { "Active Probe Buffer", "", "0 pts", "", "READY" });
         m_activePointsGroup->setExpanded(true);
 
-        treeDock->setWidget(m_featureTree);
+        connect(m_featureTree, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem* /*item*/, int /*col*/) {
+            onEditToleranceClicked();
+            });
+
+        dockLayout->addWidget(m_featureTree);
+        treeDock->setWidget(container);
         addDockWidget(Qt::LeftDockWidgetArea, treeDock);
+    }
+
+    void MainWindow::playHitChime() const {
+        if (!m_audioCheck || !m_audioCheck->isChecked()) return;
+#ifdef _WIN32
+        std::thread([]() {
+            Beep(1250, 35);
+            }).detach();
+#endif
+    }
+
+    void MainWindow::playSolveChime(bool passed) const {
+        if (!m_audioCheck || !m_audioCheck->isChecked()) return;
+#ifdef _WIN32
+        std::thread([passed]() {
+            if (passed) {
+                Beep(980, 40);
+                Beep(1480, 65);
+            }
+            else {
+                Beep(420, 90);
+                Beep(340, 120);
+            }
+            }).detach();
+#endif
+    }
+
+    void MainWindow::applyEvaluationToTreeItem(QTreeWidgetItem* item,
+        double actualMm,
+        bool hasNominal,
+        double nominalMm,
+        double plusTolMm,
+        double minusTolMm) {
+        if (!item) return;
+
+        item->setData(0, ROLE_ACTUAL_MM, actualMm);
+        item->setData(0, ROLE_HAS_NOMINAL, hasNominal);
+        item->setData(0, ROLE_NOMINAL_MM, nominalMm);
+        item->setData(0, ROLE_PLUS_TOL_MM, plusTolMm);
+        item->setData(0, ROLE_MINUS_TOL_MM, minusTolMm);
+
+        const int decimals = (m_unitSystem == UnitSystem::Millimeters) ? 4 : 5;
+        const QString unitStr = (m_unitSystem == UnitSystem::Millimeters) ? " mm" : " in";
+
+        item->setText(2, QString("%1%2").arg(toDisplayUnit(actualMm, m_unitSystem), 0, 'f', decimals).arg(unitStr));
+
+        if (!hasNominal) {
+            item->setText(1, "--");
+            item->setText(3, "--");
+            item->setText(4, "MEASURED");
+            item->setForeground(4, QBrush(QColor("#61afef")));
+            return;
+        }
+
+        const double devMm = actualMm - nominalMm;
+        const bool passed = (devMm <= plusTolMm + 1e-7) && (devMm >= -minusTolMm - 1e-7);
+
+        item->setText(1, QString("%1%2").arg(toDisplayUnit(nominalMm, m_unitSystem), 0, 'f', decimals).arg(unitStr));
+
+        if (std::abs(plusTolMm - minusTolMm) < 1e-6) {
+            item->setText(3, QString("±%1").arg(toDisplayUnit(plusTolMm, m_unitSystem), 0, 'f', decimals));
+        }
+        else {
+            item->setText(3, QString("+%1 / -%2")
+                .arg(toDisplayUnit(plusTolMm, m_unitSystem), 0, 'f', decimals)
+                .arg(toDisplayUnit(minusTolMm, m_unitSystem), 0, 'f', decimals));
+        }
+
+        const double dispDev = toDisplayUnit(devMm, m_unitSystem);
+        const QString signPrefix = (dispDev >= 0.0) ? "+" : "";
+        const QString statusTag = passed ? "PASS" : "FAIL";
+
+        item->setText(4, QString("%1%2 (%3)")
+            .arg(signPrefix)
+            .arg(dispDev, 0, 'f', decimals)
+            .arg(statusTag));
+
+        item->setForeground(4, QBrush(QColor(passed ? "#98c379" : "#e06c75")));
     }
 
     ProbeCompMode MainWindow::currentCompMode() const {
@@ -415,6 +574,20 @@ namespace OpenCMM {
         }
         updateDroDisplay();
         updateProbeStatusDisplay();
+
+        for (int i = 0; i < m_featureTree->topLevelItemCount(); ++i) {
+            QTreeWidgetItem* item = m_featureTree->topLevelItem(i);
+            if (item != m_activePointsGroup && item->data(0, ROLE_ACTUAL_MM).isValid()) {
+                applyEvaluationToTreeItem(
+                    item,
+                    item->data(0, ROLE_ACTUAL_MM).toDouble(),
+                    item->data(0, ROLE_HAS_NOMINAL).toBool(),
+                    item->data(0, ROLE_NOMINAL_MM).toDouble(),
+                    item->data(0, ROLE_PLUS_TOL_MM).toDouble(),
+                    item->data(0, ROLE_MINUS_TOL_MM).toDouble()
+                );
+            }
+        }
     }
 
     void MainWindow::onLoadStepClicked() {
@@ -426,55 +599,257 @@ namespace OpenCMM {
         );
         if (!filePath.isEmpty() && m_viewport) {
             m_viewport->loadStepFile(filePath);
-            statusBar()->showMessage("Loaded STEP model: " + filePath + " (Click any CAD face to extract nominal geometry)");
+            statusBar()->showMessage("Loaded STEP model: " + filePath + " (Click any CAD face to arm nominal geometry)");
         }
+    }
+
+    void MainWindow::onTransformCadClicked() {
+        if (!m_viewport || !m_viewport->hasCadModel()) {
+            QMessageBox::information(
+                this,
+                "No STEP Model Loaded",
+                "Please load a STEP CAD model first before opening the Transform CAD tool."
+            );
+            return;
+        }
+
+        auto* dlg = new QDialog(this, Qt::Tool);
+        dlg->setAttribute(Qt::WA_DeleteOnClose);
+        dlg->setWindowTitle("Transform & Orient CAD Model");
+        dlg->setMinimumWidth(440);
+        dlg->setStyleSheet(
+            "QDialog { background-color: #21252b; color: #e0e0e0; }"
+            "QGroupBox { border: 1px solid #3a3f4b; border-radius: 4px; margin-top: 8px; padding-top: 10px; color: #61afef; font-weight: bold; }"
+            "QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 4px; }"
+            "QLabel { color: #dcdfe4; font-size: 12px; font-weight: bold; }"
+            "QPushButton { background-color: #3a3f4b; color: #ffffff; border: 1px solid #4b5263; border-radius: 3px; padding: 5px 10px; font-weight: bold; }"
+            "QPushButton:hover { background-color: #4b5263; }"
+            "QDoubleSpinBox { background-color: #181a1f; color: #ffffff; border: 1px solid #4b5263; border-radius: 3px; padding: 4px; font-weight: bold; }"
+            "QCheckBox { color: #dcdfe4; font-weight: bold; }"
+        );
+
+        auto* mainLayout = new QVBoxLayout(dlg);
+        mainLayout->setSpacing(10);
+
+        auto* bboxGroup = new QGroupBox("CURRENT CAD BOUNDING BOX", dlg);
+        auto* bboxLayout = new QVBoxLayout(bboxGroup);
+        auto* bboxLabel = new QLabel(bboxGroup);
+        bboxLabel->setStyleSheet("font-family: 'Consolas', monospace; font-size: 12px; color: #98c379;");
+        bboxLayout->addWidget(bboxLabel);
+        mainLayout->addWidget(bboxGroup);
+
+        auto updateBboxText = [this, bboxLabel]() {
+            double xmin = 0, ymin = 0, zmin = 0, xmax = 0, ymax = 0, zmax = 0;
+            if (!m_viewport->getCadBoundingBox(xmin, ymin, zmin, xmax, ymax, zmax)) {
+                bboxLabel->setText("No bounding box available.");
+                return;
+            }
+            const int dec = (m_unitSystem == UnitSystem::Millimeters) ? 3 : 4;
+            const QString u = (m_unitSystem == UnitSystem::Millimeters) ? "mm" : "in";
+            bboxLabel->setText(
+                QString("X: [%1 .. %2] %7\nY: [%3 .. %4] %7\nZ: [%5 .. %6] %7")
+                .arg(toDisplayUnit(xmin, m_unitSystem), 0, 'f', dec)
+                .arg(toDisplayUnit(xmax, m_unitSystem), 0, 'f', dec)
+                .arg(toDisplayUnit(ymin, m_unitSystem), 0, 'f', dec)
+                .arg(toDisplayUnit(ymax, m_unitSystem), 0, 'f', dec)
+                .arg(toDisplayUnit(zmin, m_unitSystem), 0, 'f', dec)
+                .arg(toDisplayUnit(zmax, m_unitSystem), 0, 'f', dec)
+                .arg(u)
+            );
+            };
+        updateBboxText();
+
+        auto* rotGroup = new QGroupBox("ROTATE MODEL (ORIENTATION)", dlg);
+        auto* rotLayout = new QVBoxLayout(rotGroup);
+
+        auto* pivotCheck = new QCheckBox("Rotate around Part Bounding-Box Center", rotGroup);
+        pivotCheck->setChecked(true);
+        rotLayout->addWidget(pivotCheck);
+
+        auto* grid90 = new QGridLayout();
+        auto addRotBtn = [&](const QString& text, double rx, double ry, double rz, int row, int col) {
+            auto* btn = new QPushButton(text, rotGroup);
+            connect(btn, &QPushButton::clicked, dlg, [this, rx, ry, rz, pivotCheck, updateBboxText]() {
+                m_viewport->rotateCadModels(rx, ry, rz, pivotCheck->isChecked());
+                updateBboxText();
+                });
+            grid90->addWidget(btn, row, col);
+            };
+
+        addRotBtn("Rot X -90°", -90.0, 0.0, 0.0, 0, 0);
+        addRotBtn("Rot X +90°", +90.0, 0.0, 0.0, 0, 1);
+        addRotBtn("Rot Y -90°", 0.0, -90.0, 0.0, 1, 0);
+        addRotBtn("Rot Y +90°", 0.0, +90.0, 0.0, 1, 1);
+        addRotBtn("Rot Z -90°", 0.0, 0.0, -90.0, 2, 0);
+        addRotBtn("Rot Z +90°", 0.0, 0.0, +90.0, 2, 1);
+        rotLayout->addLayout(grid90);
+
+        auto* customRotRow = new QHBoxLayout();
+        auto* spinRx = new QDoubleSpinBox(rotGroup);
+        auto* spinRy = new QDoubleSpinBox(rotGroup);
+        auto* spinRz = new QDoubleSpinBox(rotGroup);
+        for (auto* sp : { spinRx, spinRy, spinRz }) {
+            sp->setRange(-360.0, 360.0);
+            sp->setDecimals(2);
+            sp->setSuffix("°");
+        }
+        customRotRow->addWidget(new QLabel("RX:", rotGroup));
+        customRotRow->addWidget(spinRx);
+        customRotRow->addWidget(new QLabel("RY:", rotGroup));
+        customRotRow->addWidget(spinRy);
+        customRotRow->addWidget(new QLabel("RZ:", rotGroup));
+        customRotRow->addWidget(spinRz);
+
+        auto* applyRotBtn = new QPushButton("Apply ∠", rotGroup);
+        applyRotBtn->setStyleSheet("background-color: #2b6cb0; color: white;");
+        connect(applyRotBtn, &QPushButton::clicked, dlg, [this, spinRx, spinRy, spinRz, pivotCheck, updateBboxText]() {
+            m_viewport->rotateCadModels(spinRx->value(), spinRy->value(), spinRz->value(), pivotCheck->isChecked());
+            updateBboxText();
+            });
+        customRotRow->addWidget(applyRotBtn);
+        rotLayout->addLayout(customRotRow);
+
+        auto* faceAlignRow = new QHBoxLayout();
+        auto* levelTopBtn = new QPushButton("Level Selected Face -> +Z (Top)", rotGroup);
+        levelTopBtn->setStyleSheet("background-color: #8957e5; color: white;");
+        connect(levelTopBtn, &QPushButton::clicked, dlg, [this, dlg, updateBboxText]() {
+            if (!m_viewport->alignSelectedFaceToZ(true)) {
+                QMessageBox::information(dlg, "Select a CAD Face First", "Click any planar face on the STEP model in the 3D viewport, then click this button to level it to +Z.");
+                return;
+            }
+            updateBboxText();
+            statusBar()->showMessage("Leveled selected CAD face normal to +Z.");
+            });
+
+        auto* levelBotBtn = new QPushButton("Level Selected Face -> -Z (Bottom)", rotGroup);
+        connect(levelBotBtn, &QPushButton::clicked, dlg, [this, dlg, updateBboxText]() {
+            if (!m_viewport->alignSelectedFaceToZ(false)) {
+                QMessageBox::information(dlg, "Select a CAD Face First", "Click any planar face on the STEP model in the 3D viewport, then click this button to orient it to -Z.");
+                return;
+            }
+            updateBboxText();
+            statusBar()->showMessage("Leveled selected CAD face normal to -Z.");
+            });
+        faceAlignRow->addWidget(levelTopBtn);
+        faceAlignRow->addWidget(levelBotBtn);
+        rotLayout->addLayout(faceAlignRow);
+
+        mainLayout->addWidget(rotGroup);
+
+        const bool isInch = (m_unitSystem == UnitSystem::Inches);
+        const QString unitSuffix = isInch ? " in" : " mm";
+        auto* transGroup = new QGroupBox(QString("TRANSLATE / SNAP MODEL (%1)").arg(isInch ? "INCHES" : "MM"), dlg);
+        auto* transLayout = new QVBoxLayout(transGroup);
+
+        auto* jogRow = new QHBoxLayout();
+        auto* spinDx = new QDoubleSpinBox(transGroup);
+        auto* spinDy = new QDoubleSpinBox(transGroup);
+        auto* spinDz = new QDoubleSpinBox(transGroup);
+        for (auto* sp : { spinDx, spinDy, spinDz }) {
+            sp->setRange(-10000.0, 10000.0);
+            sp->setDecimals(isInch ? 4 : 3);
+            sp->setSingleStep(isInch ? 0.1000 : 5.000);
+            sp->setSuffix(unitSuffix);
+        }
+        jogRow->addWidget(new QLabel("ΔX:", transGroup));
+        jogRow->addWidget(spinDx);
+        jogRow->addWidget(new QLabel("ΔY:", transGroup));
+        jogRow->addWidget(spinDy);
+        jogRow->addWidget(new QLabel("ΔZ:", transGroup));
+        jogRow->addWidget(spinDz);
+
+        auto* applyTransBtn = new QPushButton("Move XYZ", transGroup);
+        applyTransBtn->setStyleSheet("background-color: #2b6cb0; color: white;");
+        connect(applyTransBtn, &QPushButton::clicked, dlg, [this, spinDx, spinDy, spinDz, isInch, updateBboxText]() {
+            const double scale = isInch ? MM_PER_INCH : 1.0;
+            m_viewport->translateCadModels(spinDx->value() * scale, spinDy->value() * scale, spinDz->value() * scale);
+            updateBboxText();
+            });
+        jogRow->addWidget(applyTransBtn);
+        transLayout->addLayout(jogRow);
+
+        auto* snapGrid = new QGridLayout();
+        auto* dropGraniteBtn = new QPushButton("Drop Bottom to Granite (Z_min = 0)", transGroup);
+        dropGraniteBtn->setStyleSheet("background-color: #2f855a; color: white;");
+        connect(dropGraniteBtn, &QPushButton::clicked, dlg, [this, updateBboxText]() {
+            m_viewport->dropCadModelsToGranite(0.0);
+            updateBboxText();
+            statusBar()->showMessage("Dropped CAD model bottom flush with Granite Table (Z = 0).");
+            });
+
+        auto* centerXyBtn = new QPushButton("Center XY on Origin (0, 0)", transGroup);
+        connect(centerXyBtn, &QPushButton::clicked, dlg, [this, updateBboxText]() {
+            m_viewport->centerCadModelsXY(0.0, 0.0);
+            updateBboxText();
+            statusBar()->showMessage("Centered CAD model bounding box at X = 0, Y = 0.");
+            });
+
+        auto* cornerOriginBtn = new QPushButton("Corner to Origin (X/Y/Z_min = 0)", transGroup);
+        connect(cornerOriginBtn, &QPushButton::clicked, dlg, [this, updateBboxText]() {
+            m_viewport->snapCadMinCornerToOrigin();
+            updateBboxText();
+            statusBar()->showMessage("Snapped CAD model front-left-bottom corner to (0, 0, 0).");
+            });
+
+        auto* resetPoseBtn = new QPushButton("Reset Original Pose", transGroup);
+        resetPoseBtn->setStyleSheet("background-color: #d15757; color: white;");
+        connect(resetPoseBtn, &QPushButton::clicked, dlg, [this, updateBboxText]() {
+            m_viewport->resetCadModelsTransform();
+            updateBboxText();
+            statusBar()->showMessage("Reset CAD model to original imported STEP coordinates.");
+            });
+
+        snapGrid->addWidget(dropGraniteBtn, 0, 0);
+        snapGrid->addWidget(centerXyBtn, 0, 1);
+        snapGrid->addWidget(cornerOriginBtn, 1, 0);
+        snapGrid->addWidget(resetPoseBtn, 1, 1);
+        transLayout->addLayout(snapGrid);
+
+        mainLayout->addWidget(transGroup);
+
+        auto* closeBtn = new QPushButton("Close", dlg);
+        connect(closeBtn, &QPushButton::clicked, dlg, &QDialog::close);
+        mainLayout->addWidget(closeBtn);
+
+        dlg->show();
     }
 
     void MainWindow::onCadFaceSelected(const CadFaceInfo& faceInfo) {
         if (!faceInfo.success) return;
 
-        // Auto-select Internal (+R) or External (-R) probe compensation based on B-Rep face orientation
         if (m_compModeCombo) {
             m_compModeCombo->setCurrentIndex(faceInfo.isInternal ? 1 : 0);
         }
 
+        m_hasArmedCadNominal = true;
+        m_armedCadDiameterMm = faceInfo.nominalDiameter;
+        m_armedCadLocationMm = Eigen::Vector3d(
+            faceInfo.centerOrCentroid.X(),
+            faceInfo.centerOrCentroid.Y(),
+            faceInfo.centerOrCentroid.Z()
+        );
+        m_armedCadDescription = QString::fromStdString(faceInfo.surfaceType);
+
         const int decimals = (m_unitSystem == UnitSystem::Millimeters) ? 4 : 5;
         const QString unitStr = (m_unitSystem == UnitSystem::Millimeters) ? " mm" : " in";
 
-        const QString cadTitle = QString("CAD_Nominal [%1]")
-            .arg(QString::fromStdString(faceInfo.surfaceType));
-
-        const QString summaryVal = (faceInfo.nominalDiameter > 0.0)
-            ? QString("Nominal Ø %1%2").arg(toDisplayUnit(faceInfo.nominalDiameter, m_unitSystem), 0, 'f', decimals).arg(unitStr)
-            : QString("Normal (%1, %2, %3)")
-            .arg(faceInfo.normalOrAxis.X(), 0, 'f', 4)
-            .arg(faceInfo.normalOrAxis.Y(), 0, 'f', 4)
-            .arg(faceInfo.normalOrAxis.Z(), 0, 'f', 4);
-
-        auto* cadItem = new QTreeWidgetItem(m_featureTree, { cadTitle, summaryVal });
-
         if (faceInfo.nominalDiameter > 0.0) {
-            new QTreeWidgetItem(cadItem, {
-                "Nominal Radius",
-                QString("%1%2").arg(toDisplayUnit(faceInfo.nominalRadius, m_unitSystem), 0, 'f', decimals).arg(unitStr)
-                });
+            statusBar()->showMessage(
+                QString("CAD Nominal Armed [%1]: Ø %2%3 — Probe & fit feature to auto-evaluate Pass/Fail.")
+                .arg(m_armedCadDescription)
+                .arg(toDisplayUnit(faceInfo.nominalDiameter, m_unitSystem), 0, 'f', decimals)
+                .arg(unitStr)
+            );
         }
-
-        new QTreeWidgetItem(cadItem, {
-            "Tip Comp Auto-Set",
-            faceInfo.isInternal ? "Internal / Bore (+R)" : "External / Boss (-R)"
-            });
-
-        new QTreeWidgetItem(cadItem, {
-            "CAD Datum Location (X, Y, Z)",
-            QString("(%1, %2, %3)")
-                .arg(toDisplayUnit(faceInfo.centerOrCentroid.X(), m_unitSystem), 0, 'f', decimals)
-                .arg(toDisplayUnit(faceInfo.centerOrCentroid.Y(), m_unitSystem), 0, 'f', decimals)
-                .arg(toDisplayUnit(faceInfo.centerOrCentroid.Z(), m_unitSystem), 0, 'f', decimals)
-            });
-
-        cadItem->setExpanded(true);
-        statusBar()->showMessage("Extracted CAD nominal: " + cadTitle + " -> " + summaryVal);
+        else {
+            statusBar()->showMessage(
+                QString("CAD Face Selected [%1]: Normal (%2, %3, %4)")
+                .arg(m_armedCadDescription)
+                .arg(faceInfo.normalOrAxis.X(), 0, 'f', 4)
+                .arg(faceInfo.normalOrAxis.Y(), 0, 'f', 4)
+                .arg(faceInfo.normalOrAxis.Z(), 0, 'f', 4)
+            );
+        }
     }
 
     void MainWindow::onPositionUpdated(const Position3D& pos) {
@@ -502,6 +877,8 @@ namespace OpenCMM {
     }
 
     void MainWindow::onProbeHit(const Position3D& hitPos) {
+        playHitChime();
+
         m_lastPosition = hitPos;
         updateDroDisplay();
 
@@ -514,7 +891,7 @@ namespace OpenCMM {
         const int count = static_cast<int>(m_recordedHits.size());
 
         m_hitCountLabel->setText(QString("Active Feature Hits: %1").arg(count));
-        m_activePointsGroup->setText(1, QString("%1 pts").arg(count));
+        m_activePointsGroup->setText(2, QString("%1 pts").arg(count));
 
         const int decimals = (m_unitSystem == UnitSystem::Millimeters) ? 4 : 5;
         QString coordsStr = QString("X: %1, Y: %2, Z: %3")
@@ -522,7 +899,7 @@ namespace OpenCMM {
             .arg(toDisplayUnit(recordedPt.y(), m_unitSystem), 0, 'f', decimals)
             .arg(toDisplayUnit(recordedPt.z(), m_unitSystem), 0, 'f', decimals);
 
-        new QTreeWidgetItem(m_activePointsGroup, { QString("Hit #%1").arg(count), coordsStr });
+        new QTreeWidgetItem(m_activePointsGroup, { QString("Hit #%1").arg(count), "", coordsStr, "", "" });
 
         if (m_viewport) {
             m_viewport->updateProbePosition(hitPos.x, hitPos.y, hitPos.z);
@@ -538,7 +915,7 @@ namespace OpenCMM {
         while (m_activePointsGroup->childCount() > 0) {
             delete m_activePointsGroup->takeChild(0);
         }
-        m_activePointsGroup->setText(1, "0 pts");
+        m_activePointsGroup->setText(2, "0 pts");
 
         if (m_viewport) {
             m_viewport->commitActiveHitMarkers();
@@ -626,6 +1003,7 @@ namespace OpenCMM {
         );
 
         if (!cal.success) {
+            playSolveChime(false);
             QMessageBox::critical(
                 this,
                 "Calibration Failed",
@@ -642,27 +1020,35 @@ namespace OpenCMM {
 
         auto* calItem = new QTreeWidgetItem(m_featureTree, {
             QString("Probe_Cal (%1 pts)").arg(m_recordedHits.size()),
-            QString("R_eff: %1%2").arg(toDisplayUnit(cal.effectiveRadius, m_unitSystem), 0, 'f', decimals).arg(unitStr)
+            QString("Ø %1%2").arg(toDisplayUnit(cal.certifiedDiameter, m_unitSystem), 0, 'f', decimals).arg(unitStr),
+            QString("R_eff: %1%2").arg(toDisplayUnit(cal.effectiveRadius, m_unitSystem), 0, 'f', decimals).arg(unitStr),
+            "--",
+            "CALIBRATED"
             });
+        calItem->setForeground(4, QBrush(QColor("#98c379")));
 
         new QTreeWidgetItem(calItem, {
-            "Effective Tip Diameter",
-            QString("Ø %1%2").arg(toDisplayUnit(cal.effectiveRadius * 2.0, m_unitSystem), 0, 'f', decimals).arg(unitStr)
+            "Effective Tip Diameter", "",
+            QString("Ø %1%2").arg(toDisplayUnit(cal.effectiveRadius * 2.0, m_unitSystem), 0, 'f', decimals).arg(unitStr),
+            "", ""
             });
         new QTreeWidgetItem(calItem, {
-            "Master Ball Center (X, Y, Z)",
+            "Master Ball Center (X, Y, Z)", "",
             QString("(%1, %2, %3)")
                 .arg(toDisplayUnit(cal.masterBallCenter.x(), m_unitSystem), 0, 'f', decimals)
                 .arg(toDisplayUnit(cal.masterBallCenter.y(), m_unitSystem), 0, 'f', decimals)
-                .arg(toDisplayUnit(cal.masterBallCenter.z(), m_unitSystem), 0, 'f', decimals)
+                .arg(toDisplayUnit(cal.masterBallCenter.z(), m_unitSystem), 0, 'f', decimals),
+            "", ""
             });
         new QTreeWidgetItem(calItem, {
-            "3D Probe Lobing (Form Error)",
-            QString("%1%2").arg(toDisplayUnit(cal.formError, m_unitSystem), 0, 'f', decimals).arg(unitStr)
+            "3D Probe Lobing (Form Error)", "",
+            QString("%1%2").arg(toDisplayUnit(cal.formError, m_unitSystem), 0, 'f', decimals).arg(unitStr),
+            "", ""
             });
 
         calItem->setExpanded(true);
         finishFeatureBuffer();
+        playSolveChime(true);
         statusBar()->showMessage("Probe calibrated on Master Ball. Active hit buffer reset for next feature.");
     }
 
@@ -680,12 +1066,14 @@ namespace OpenCMM {
         );
 
         if (!res.success) {
+            playSolveChime(false);
             statusBar()->showMessage("Sphere least-squares fit failed (coplanar or singular points).");
             return;
         }
 
         const int id = m_featureCounter++;
         const QString featName = QString("Sphere_%1").arg(id);
+        const double actualDiamMm = res.radius * 2.0;
 
         m_solvedFeatures.push_back({
             id,
@@ -694,33 +1082,44 @@ namespace OpenCMM {
             res.center,
             Eigen::Vector3d::UnitZ(),
             Eigen::Vector3d::UnitY(),
-            res.radius * 2.0,
+            actualDiamMm,
             res.formError
             });
+
+        bool hasNom = m_hasArmedCadNominal && (m_armedCadDiameterMm > 0.0);
+        double nomMm = hasNom ? m_armedCadDiameterMm : m_certifiedBallDiameterMm;
+        if (m_simTargetCombo && m_simTargetCombo->currentData().toInt() == 0 && !hasNom) {
+            hasNom = true;
+            nomMm = 25.4000;
+        }
+        m_hasArmedCadNominal = false;
 
         const int decimals = (m_unitSystem == UnitSystem::Millimeters) ? 4 : 5;
         const QString unitStr = (m_unitSystem == UnitSystem::Millimeters) ? " mm" : " in";
 
-        auto* sphereItem = new QTreeWidgetItem(m_featureTree, {
-            QString("%1 (%2 pts)").arg(featName).arg(m_recordedHits.size()),
-            QString("Ø %1%2").arg(toDisplayUnit(res.radius * 2.0, m_unitSystem), 0, 'f', decimals).arg(unitStr)
-            });
+        auto* sphereItem = new QTreeWidgetItem(m_featureTree);
+        sphereItem->setText(0, QString("%1 Ø (%2 pts)").arg(featName).arg(m_recordedHits.size()));
+        applyEvaluationToTreeItem(sphereItem, actualDiamMm, hasNom, nomMm, m_defaultTolMm, m_defaultTolMm);
 
         new QTreeWidgetItem(sphereItem, {
-            "Center (X, Y, Z)",
+            "Center (X, Y, Z)", "",
             QString("(%1, %2, %3)")
                 .arg(toDisplayUnit(res.center.x(), m_unitSystem), 0, 'f', decimals)
                 .arg(toDisplayUnit(res.center.y(), m_unitSystem), 0, 'f', decimals)
-                .arg(toDisplayUnit(res.center.z(), m_unitSystem), 0, 'f', decimals)
+                .arg(toDisplayUnit(res.center.z(), m_unitSystem), 0, 'f', decimals),
+            "", ""
             });
         new QTreeWidgetItem(sphereItem, {
-            "Sphericity (Form Error)",
-            QString("%1%2").arg(toDisplayUnit(res.formError, m_unitSystem), 0, 'f', decimals).arg(unitStr)
+            "Sphericity (Form Error)", "",
+            QString("%1%2").arg(toDisplayUnit(res.formError, m_unitSystem), 0, 'f', decimals).arg(unitStr),
+            "", ""
             });
 
         sphereItem->setExpanded(true);
+        m_featureTree->setCurrentItem(sphereItem);
         finishFeatureBuffer();
-        statusBar()->showMessage(featName + " solved. Active point buffer reset for next feature.");
+        playSolveChime(true);
+        statusBar()->showMessage(featName + " solved. Double-click row in tree to customize Nominal / Tolerance.");
     }
 
     void MainWindow::onFitPlaneClicked() {
@@ -740,6 +1139,7 @@ namespace OpenCMM {
         );
 
         if (!res.success) {
+            playSolveChime(false);
             statusBar()->showMessage("Plane SVD fit failed (collinear points).");
             return;
         }
@@ -762,31 +1162,33 @@ namespace OpenCMM {
             });
 
         const int decimals = (m_unitSystem == UnitSystem::Millimeters) ? 4 : 5;
-        const QString unitStr = (m_unitSystem == UnitSystem::Millimeters) ? " mm" : " in";
 
-        auto* planeItem = new QTreeWidgetItem(m_featureTree, {
-            QString("%1 (%2 pts)").arg(featName).arg(m_recordedHits.size()),
-            QString("Flatness: %1%2").arg(toDisplayUnit(res.flatness, m_unitSystem), 0, 'f', decimals).arg(unitStr)
-            });
+        auto* planeItem = new QTreeWidgetItem(m_featureTree);
+        planeItem->setText(0, QString("%1 Flatness (%2 pts)").arg(featName).arg(m_recordedHits.size()));
+        applyEvaluationToTreeItem(planeItem, res.flatness, true, 0.0, m_defaultTolMm, 0.0);
 
         new QTreeWidgetItem(planeItem, {
-            "Outward Normal (I, J, K)",
+            "Outward Normal (I, J, K)", "",
             QString("(%1, %2, %3)")
                 .arg(res.normal.x(), 0, 'f', 5)
                 .arg(res.normal.y(), 0, 'f', 5)
-                .arg(res.normal.z(), 0, 'f', 5)
+                .arg(res.normal.z(), 0, 'f', 5),
+            "", ""
             });
         new QTreeWidgetItem(planeItem, {
-            "Surface Centroid (X, Y, Z)",
+            "Surface Centroid (X, Y, Z)", "",
             QString("(%1, %2, %3)")
                 .arg(toDisplayUnit(res.centroid.x(), m_unitSystem), 0, 'f', decimals)
                 .arg(toDisplayUnit(res.centroid.y(), m_unitSystem), 0, 'f', decimals)
-                .arg(toDisplayUnit(res.centroid.z(), m_unitSystem), 0, 'f', decimals)
+                .arg(toDisplayUnit(res.centroid.z(), m_unitSystem), 0, 'f', decimals),
+            "", ""
             });
 
         planeItem->setExpanded(true);
+        m_featureTree->setCurrentItem(planeItem);
         finishFeatureBuffer();
-        statusBar()->showMessage(featName + " solved. Active point buffer reset for next feature.");
+        playSolveChime(true);
+        statusBar()->showMessage(featName + " solved and stored as custom workplane.");
     }
 
     void MainWindow::onFitCircleClicked() {
@@ -796,7 +1198,8 @@ namespace OpenCMM {
         }
 
         ProbeCompMode compMode = currentCompMode();
-        if (m_simTargetCombo && (m_simTargetCombo->currentData().toInt() == 1 || m_simTargetCombo->currentData().toInt() == 2)) {
+        const int simMode = m_simTargetCombo ? m_simTargetCombo->currentData().toInt() : -1;
+        if (simMode == 1 || simMode == 2) {
             compMode = ProbeCompMode::Internal;
             m_compModeCombo->setCurrentIndex(1);
         }
@@ -810,6 +1213,7 @@ namespace OpenCMM {
         );
 
         if (!res.success) {
+            playSolveChime(false);
             statusBar()->showMessage("2D Circle fit failed (collinear points in active workplane).");
             return;
         }
@@ -817,6 +1221,7 @@ namespace OpenCMM {
         const int id = m_featureCounter++;
         const QString prefix = (compMode == ProbeCompMode::Internal) ? "Bore" : "Boss";
         const QString featName = QString("%1_%2").arg(prefix).arg(id);
+        const double actualDiamMm = res.radius * 2.0;
 
         m_solvedFeatures.push_back({
             id,
@@ -825,40 +1230,48 @@ namespace OpenCMM {
             res.center,
             res.planeNormal,
             Eigen::Vector3d::UnitY(),
-            res.radius * 2.0,
+            actualDiamMm,
             res.circularity
             });
+
+        bool hasNom = m_hasArmedCadNominal && (m_armedCadDiameterMm > 0.0);
+        double nomMm = hasNom ? m_armedCadDiameterMm : 0.0;
+        if (!hasNom && simMode == 1) {
+            hasNom = true;
+            nomMm = 20.0000;
+        }
+        else if (!hasNom && simMode == 2) {
+            hasNom = true;
+            nomMm = 12.0000;
+        }
+        m_hasArmedCadNominal = false;
 
         const int decimals = (m_unitSystem == UnitSystem::Millimeters) ? 4 : 5;
         const QString unitStr = (m_unitSystem == UnitSystem::Millimeters) ? " mm" : " in";
 
-        auto* circleItem = new QTreeWidgetItem(m_featureTree, {
-            QString("%1 (%2 pts)").arg(featName).arg(m_recordedHits.size()),
-            QString("Ø %1%2").arg(toDisplayUnit(res.radius * 2.0, m_unitSystem), 0, 'f', decimals).arg(unitStr)
-            });
+        auto* circleItem = new QTreeWidgetItem(m_featureTree);
+        circleItem->setText(0, QString("%1 Ø (%2 pts)").arg(featName).arg(m_recordedHits.size()));
+        applyEvaluationToTreeItem(circleItem, actualDiamMm, hasNom, nomMm, m_defaultTolMm, m_defaultTolMm);
 
         new QTreeWidgetItem(circleItem, {
-            "Center (X, Y, Z)",
+            "Center (X, Y, Z)", "",
             QString("(%1, %2, %3)")
                 .arg(toDisplayUnit(res.center.x(), m_unitSystem), 0, 'f', decimals)
                 .arg(toDisplayUnit(res.center.y(), m_unitSystem), 0, 'f', decimals)
-                .arg(toDisplayUnit(res.center.z(), m_unitSystem), 0, 'f', decimals)
+                .arg(toDisplayUnit(res.center.z(), m_unitSystem), 0, 'f', decimals),
+            "", ""
             });
         new QTreeWidgetItem(circleItem, {
-            "Compensated Radius",
-            QString("%1%2 (Comp: %3%2)")
-                .arg(toDisplayUnit(res.radius, m_unitSystem), 0, 'f', decimals)
-                .arg(unitStr)
-                .arg(toDisplayUnit(res.appliedComp, m_unitSystem), 0, 'f', decimals)
-            });
-        new QTreeWidgetItem(circleItem, {
-            "Circularity (Roundness)",
-            QString("%1%2").arg(toDisplayUnit(res.circularity, m_unitSystem), 0, 'f', decimals).arg(unitStr)
+            "Circularity (Roundness)", "",
+            QString("%1%2").arg(toDisplayUnit(res.circularity, m_unitSystem), 0, 'f', decimals).arg(unitStr),
+            "", ""
             });
 
         circleItem->setExpanded(true);
+        m_featureTree->setCurrentItem(circleItem);
         finishFeatureBuffer();
-        statusBar()->showMessage(featName + " solved. Active point buffer reset for next feature.");
+        playSolveChime(true);
+        statusBar()->showMessage(featName + " solved. Double-click row in tree to customize Nominal / Tolerance.");
     }
 
     void MainWindow::onFitLineClicked() {
@@ -880,6 +1293,7 @@ namespace OpenCMM {
         );
 
         if (!res.success) {
+            playSolveChime(false);
             statusBar()->showMessage("2D Line fit failed (coincident points).");
             return;
         }
@@ -899,38 +1313,33 @@ namespace OpenCMM {
             });
 
         const int decimals = (m_unitSystem == UnitSystem::Millimeters) ? 4 : 5;
-        const QString unitStr = (m_unitSystem == UnitSystem::Millimeters) ? " mm" : " in";
 
-        auto* lineItem = new QTreeWidgetItem(m_featureTree, {
-            QString("%1 (%2 pts)").arg(featName).arg(m_recordedHits.size()),
-            QString("Straightness: %1%2").arg(toDisplayUnit(res.straightness, m_unitSystem), 0, 'f', decimals).arg(unitStr)
-            });
+        auto* lineItem = new QTreeWidgetItem(m_featureTree);
+        lineItem->setText(0, QString("%1 Straightness (%2 pts)").arg(featName).arg(m_recordedHits.size()));
+        applyEvaluationToTreeItem(lineItem, res.straightness, true, 0.0, m_defaultTolMm, 0.0);
 
         new QTreeWidgetItem(lineItem, {
-            "Edge Point (X, Y, Z)",
+            "Edge Point (X, Y, Z)", "",
             QString("(%1, %2, %3)")
                 .arg(toDisplayUnit(res.centroid.x(), m_unitSystem), 0, 'f', decimals)
                 .arg(toDisplayUnit(res.centroid.y(), m_unitSystem), 0, 'f', decimals)
-                .arg(toDisplayUnit(res.centroid.z(), m_unitSystem), 0, 'f', decimals)
+                .arg(toDisplayUnit(res.centroid.z(), m_unitSystem), 0, 'f', decimals),
+            "", ""
             });
         new QTreeWidgetItem(lineItem, {
-            "Unit Direction (I, J, K)",
+            "Unit Direction (I, J, K)", "",
             QString("(%1, %2, %3)")
                 .arg(res.direction.x(), 0, 'f', 5)
                 .arg(res.direction.y(), 0, 'f', 5)
-                .arg(res.direction.z(), 0, 'f', 5)
-            });
-        new QTreeWidgetItem(lineItem, {
-            "Outward Edge Normal",
-            QString("(%1, %2, %3)")
-                .arg(res.edgeNormal.x(), 0, 'f', 5)
-                .arg(res.edgeNormal.y(), 0, 'f', 5)
-                .arg(res.edgeNormal.z(), 0, 'f', 5)
+                .arg(res.direction.z(), 0, 'f', 5),
+            "", ""
             });
 
         lineItem->setExpanded(true);
+        m_featureTree->setCurrentItem(lineItem);
         finishFeatureBuffer();
-        statusBar()->showMessage(featName + " solved. Active point buffer reset for next feature.");
+        playSolveChime(true);
+        statusBar()->showMessage(featName + " solved in active workplane.");
     }
 
     void MainWindow::onMeasureRelationClicked() {
@@ -946,11 +1355,11 @@ namespace OpenCMM {
 
         QDialog dlg(this);
         dlg.setWindowTitle("Measure Feature-to-Feature Relation");
-        dlg.setMinimumWidth(360);
+        dlg.setMinimumWidth(380);
         dlg.setStyleSheet(
             "QDialog { background-color: #21252b; color: #e0e0e0; }"
             "QLabel { color: #ffffff; font-size: 13px; font-weight: bold; }"
-            "QComboBox { background-color: #181a1f; color: #ffffff; border: 1px solid #4b5263; border-radius: 3px; padding: 5px 10px; font-size: 13px; font-weight: bold; min-width: 170px; }"
+            "QComboBox, QDoubleSpinBox { background-color: #181a1f; color: #ffffff; border: 1px solid #4b5263; border-radius: 3px; padding: 5px 10px; font-size: 13px; font-weight: bold; min-width: 170px; }"
             "QComboBox QAbstractItemView { background-color: #181a1f; color: #ffffff; selection-background-color: #2d5a88; selection-color: #ffffff; }"
             "QPushButton { background-color: #3a3f4b; color: #ffffff; border: 1px solid #4b5263; border-radius: 3px; padding: 5px 16px; font-weight: bold; }"
             "QPushButton:hover { background-color: #4b5263; }"
@@ -970,8 +1379,23 @@ namespace OpenCMM {
         comboA->setCurrentIndex(static_cast<int>(m_solvedFeatures.size()) - 2);
         comboB->setCurrentIndex(static_cast<int>(m_solvedFeatures.size()) - 1);
 
+        const bool isInch = (m_unitSystem == UnitSystem::Inches);
+        const int decimals = isInch ? 5 : 4;
+        const QString unitStr = isInch ? " in" : " mm";
+
+        auto* nomSpin = new QDoubleSpinBox(&dlg);
+        nomSpin->setRange(0.0, 10000.0);
+        nomSpin->setDecimals(decimals);
+        nomSpin->setSuffix(unitStr);
+
+        const auto& initA = m_solvedFeatures[comboA->currentData().toInt()];
+        const auto& initB = m_solvedFeatures[comboB->currentData().toInt()];
+        FeatureRelationResult previewRel = MetrologyMath::computeFeatureRelation(initA, initB, currentWorkplane());
+        nomSpin->setValue(toDisplayUnit(previewRel.distance2D, m_unitSystem));
+
         form->addRow("Reference Feature A:", comboA);
         form->addRow("Target Feature B:", comboB);
+        form->addRow("Nominal 2D Distance:", nomSpin);
 
         auto* btns = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
         connect(btns, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
@@ -986,50 +1410,55 @@ namespace OpenCMM {
         FeatureRelationResult rel = MetrologyMath::computeFeatureRelation(featA, featB, currentWorkplane());
         if (!rel.success) return;
 
-        const int decimals = (m_unitSystem == UnitSystem::Millimeters) ? 4 : 5;
-        const QString unitStr = (m_unitSystem == UnitSystem::Millimeters) ? " mm" : " in";
+        const double nominalMm = isInch ? (nomSpin->value() * MM_PER_INCH) : nomSpin->value();
 
         const QString relTitle = QString("Dim_%1 [%2 -> %3]")
             .arg(m_featureCounter++)
             .arg(QString::fromStdString(featA.name))
             .arg(QString::fromStdString(featB.name));
 
-        auto* relItem = new QTreeWidgetItem(m_featureTree, {
-            relTitle,
-            QString("2D Dist: %1%2").arg(toDisplayUnit(rel.distance2D, m_unitSystem), 0, 'f', decimals).arg(unitStr)
-            });
+        auto* relItem = new QTreeWidgetItem(m_featureTree);
+        relItem->setText(0, relTitle);
+        applyEvaluationToTreeItem(relItem, rel.distance2D, true, nominalMm, m_defaultTolMm, m_defaultTolMm);
 
         new QTreeWidgetItem(relItem, {
-            "3D Direct Distance",
-            QString("%1%2").arg(toDisplayUnit(rel.distance3D, m_unitSystem), 0, 'f', decimals).arg(unitStr)
+            "3D Direct Distance", "",
+            QString("%1%2").arg(toDisplayUnit(rel.distance3D, m_unitSystem), 0, 'f', decimals).arg(unitStr),
+            "", ""
             });
         new QTreeWidgetItem(relItem, {
-            "Delta (dX, dY, dZ)",
+            "Delta (dX, dY, dZ)", "",
             QString("(%1, %2, %3)")
                 .arg(toDisplayUnit(rel.deltaXYZ.x(), m_unitSystem), 0, 'f', decimals)
                 .arg(toDisplayUnit(rel.deltaXYZ.y(), m_unitSystem), 0, 'f', decimals)
-                .arg(toDisplayUnit(rel.deltaXYZ.z(), m_unitSystem), 0, 'f', decimals)
+                .arg(toDisplayUnit(rel.deltaXYZ.z(), m_unitSystem), 0, 'f', decimals),
+            "", ""
             });
         new QTreeWidgetItem(relItem, {
-            "Perpendicular / Normal Offset",
-            QString("%1%2").arg(toDisplayUnit(rel.normalDistance, m_unitSystem), 0, 'f', decimals).arg(unitStr)
+            "Perpendicular / Normal Offset", "",
+            QString("%1%2").arg(toDisplayUnit(rel.normalDistance, m_unitSystem), 0, 'f', decimals).arg(unitStr),
+            "", ""
             });
         new QTreeWidgetItem(relItem, {
-            "Angle Between Vectors",
-            QString("%1°").arg(rel.angleDegrees, 0, 'f', 4)
+            "Angle Between Vectors", "",
+            QString("%1°").arg(rel.angleDegrees, 0, 'f', 4),
+            "", ""
             });
 
         if (rel.hasIntersection) {
             new QTreeWidgetItem(relItem, {
-                "2D Corner Intersection (X, Y, Z)",
+                "2D Corner Intersection (X, Y, Z)", "",
                 QString("(%1, %2, %3)")
                     .arg(toDisplayUnit(rel.intersectionPoint.x(), m_unitSystem), 0, 'f', decimals)
                     .arg(toDisplayUnit(rel.intersectionPoint.y(), m_unitSystem), 0, 'f', decimals)
-                    .arg(toDisplayUnit(rel.intersectionPoint.z(), m_unitSystem), 0, 'f', decimals)
+                    .arg(toDisplayUnit(rel.intersectionPoint.z(), m_unitSystem), 0, 'f', decimals),
+                "", ""
                 });
         }
 
         relItem->setExpanded(true);
+        m_featureTree->setCurrentItem(relItem);
+        playSolveChime(true);
         statusBar()->showMessage("Computed relation: " + relTitle);
     }
 
@@ -1096,6 +1525,7 @@ namespace OpenCMM {
 
         Alignment321Result res = MetrologyMath::compute321Alignment(*itL, *itR, *itO);
         if (!res.success) {
+            playSolveChime(false);
             QMessageBox::critical(
                 this,
                 "Alignment Failed",
@@ -1108,10 +1538,257 @@ namespace OpenCMM {
         m_isPartAligned = true;
         m_alignStatusBtn->setChecked(true);
         m_alignStatusBtn->setStyleSheet("background-color: #28a745; color: white; padding: 5px 10px; font-weight: bold;");
-        m_alignStatusBtn->setText("Alignment: PCS (Active Part Datum)");
+        m_alignStatusBtn->setText("PCS (Aligned)");
 
         updateDroDisplay();
+        playSolveChime(true);
         statusBar()->showMessage("3-2-1 Part Alignment active! DRO and new probe hits are now in PCS coordinates.");
+    }
+
+    void MainWindow::onEditToleranceClicked() {
+        QTreeWidgetItem* item = m_featureTree->currentItem();
+        if (!item) {
+            QMessageBox::information(this, "Select a Feature Row", "Click or double-click any solved feature row in the Inspection Feature Tree to edit its Nominal and ±Tolerance.");
+            return;
+        }
+        if (item->parent() != nullptr) {
+            item = item->parent();
+        }
+        if (item == m_activePointsGroup || !item->data(0, ROLE_ACTUAL_MM).isValid()) {
+            QMessageBox::information(this, "Select a Solved Feature", "Please select a solved feature or distance row (such as Bore_1, Sphere_1, or Dim_1) to edit its Nominal and Tolerance.");
+            return;
+        }
+
+        const bool isInch = (m_unitSystem == UnitSystem::Inches);
+        const double scale = isInch ? MM_PER_INCH : 1.0;
+        const int decimals = isInch ? 5 : 4;
+        const QString unitStr = isInch ? " in" : " mm";
+
+        const double actualMm = item->data(0, ROLE_ACTUAL_MM).toDouble();
+        const bool hadNom = item->data(0, ROLE_HAS_NOMINAL).toBool();
+        const double currentNomMm = hadNom ? item->data(0, ROLE_NOMINAL_MM).toDouble() : actualMm;
+        const double currentPlusMm = item->data(0, ROLE_PLUS_TOL_MM).toDouble();
+        const double currentMinusMm = item->data(0, ROLE_MINUS_TOL_MM).toDouble();
+
+        QDialog dlg(this);
+        dlg.setWindowTitle("Edit Nominal & Tolerance: " + item->text(0));
+        dlg.setMinimumWidth(360);
+        dlg.setStyleSheet(
+            "QDialog { background-color: #21252b; color: #e0e0e0; }"
+            "QLabel { color: #ffffff; font-size: 13px; font-weight: bold; }"
+            "QDoubleSpinBox { background-color: #181a1f; color: #ffffff; border: 1px solid #4b5263; border-radius: 3px; padding: 5px; font-size: 13px; font-weight: bold; }"
+            "QPushButton { background-color: #3a3f4b; color: #ffffff; border: 1px solid #4b5263; border-radius: 3px; padding: 6px 14px; font-weight: bold; }"
+            "QPushButton:hover { background-color: #4b5263; }"
+        );
+
+        auto* form = new QFormLayout(&dlg);
+        form->setContentsMargins(16, 16, 16, 16);
+        form->setSpacing(12);
+
+        auto* actualLbl = new QLabel(QString("%1%2").arg(toDisplayUnit(actualMm, m_unitSystem), 0, 'f', decimals).arg(unitStr), &dlg);
+        actualLbl->setStyleSheet("color: #61afef; font-family: 'Consolas', monospace; font-size: 14px;");
+
+        auto* nomSpin = new QDoubleSpinBox(&dlg);
+        nomSpin->setRange(-10000.0, 10000.0);
+        nomSpin->setDecimals(decimals);
+        nomSpin->setSuffix(unitStr);
+        nomSpin->setValue(toDisplayUnit(currentNomMm, m_unitSystem));
+
+        auto* plusSpin = new QDoubleSpinBox(&dlg);
+        plusSpin->setRange(0.0, 1000.0);
+        plusSpin->setDecimals(decimals);
+        plusSpin->setSingleStep(isInch ? 0.0005 : 0.0100);
+        plusSpin->setSuffix(unitStr);
+        plusSpin->setValue(toDisplayUnit(currentPlusMm, m_unitSystem));
+
+        auto* minusSpin = new QDoubleSpinBox(&dlg);
+        minusSpin->setRange(0.0, 1000.0);
+        minusSpin->setDecimals(decimals);
+        minusSpin->setSingleStep(isInch ? 0.0005 : 0.0100);
+        minusSpin->setSuffix(unitStr);
+        minusSpin->setValue(toDisplayUnit(currentMinusMm, m_unitSystem));
+
+        form->addRow("Measured (Actual):", actualLbl);
+        form->addRow("Target Nominal:", nomSpin);
+        form->addRow("+Tolerance Upper:", plusSpin);
+        form->addRow("-Tolerance Lower:", minusSpin);
+
+        auto* btns = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+        connect(btns, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+        connect(btns, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+        form->addRow(btns);
+
+        if (dlg.exec() != QDialog::Accepted) return;
+
+        const double newNomMm = nomSpin->value() * scale;
+        const double newPlusMm = plusSpin->value() * scale;
+        const double newMinusMm = minusSpin->value() * scale;
+        m_defaultTolMm = newPlusMm;
+
+        applyEvaluationToTreeItem(item, actualMm, true, newNomMm, newPlusMm, newMinusMm);
+        statusBar()->showMessage("Updated Nominal and Tolerance evaluation for " + item->text(0));
+    }
+
+    void MainWindow::onExportReportClicked() {
+        if (m_featureTree->topLevelItemCount() <= 1) {
+            QMessageBox::information(this, "No Features to Export", "Please measure and solve at least one feature before exporting an inspection report.");
+            return;
+        }
+
+        bool ok = false;
+        QString partName = QInputDialog::getText(
+            this,
+            "Inspection Report Header",
+            "Enter Part / Job Number / Description:",
+            QLineEdit::Normal,
+            "JLS-PART-001",
+            &ok
+        );
+        if (!ok) return;
+        if (partName.trimmed().isEmpty()) partName = "JLS-PART-001";
+
+        QString selectedFilter;
+        QString filePath = QFileDialog::getSaveFileName(
+            this,
+            "Export Inspection Report",
+            partName + "_Inspection_Report.html",
+            "HTML Printable Inspection Report (*.html);;CSV Spreadsheet (*.csv)",
+            &selectedFilter
+        );
+        if (filePath.isEmpty()) return;
+
+        const QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
+        const QString unitName = (m_unitSystem == UnitSystem::Millimeters) ? "Millimeters (mm)" : "Inches (in)";
+        const QString coordMode = (m_isPartAligned && m_alignStatusBtn && m_alignStatusBtn->isChecked())
+            ? "PCS (3-2-1 Datum Aligned)"
+            : "MCS (Machine Coordinates)";
+        const int decimals = (m_unitSystem == UnitSystem::Millimeters) ? 4 : 5;
+        const QString unitShort = (m_unitSystem == UnitSystem::Millimeters) ? "mm" : "in";
+
+        if (filePath.endsWith(".csv", Qt::CaseInsensitive)) {
+            QFile file(filePath);
+            if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+                QMessageBox::critical(this, "Export Error", "Could not write to file: " + filePath);
+                return;
+            }
+            QTextStream out(&file);
+            out << "OpenCMM Precision Inspection Report\n";
+            out << "Part / Job Number," << partName << "\n";
+            out << "Timestamp," << timestamp << "\n";
+            out << "Units," << unitName << "\n";
+            out << "Coordinate System," << coordMode << "\n";
+            out << "Effective Probe Tip Dia," << QString::number(toDisplayUnit(m_effectiveProbeRadius * 2.0, m_unitSystem), 'f', decimals) << " " << unitShort << "\n\n";
+            out << "Feature / Parameter,Sub-Parameter,Nominal,Actual,Tolerance,Deviation / Status\n";
+
+            for (int i = 0; i < m_featureTree->topLevelItemCount(); ++i) {
+                QTreeWidgetItem* top = m_featureTree->topLevelItem(i);
+                if (top == m_activePointsGroup) continue;
+
+                out << "\"" << top->text(0) << "\",\"Primary\","
+                    << "\"" << top->text(1) << "\","
+                    << "\"" << top->text(2) << "\","
+                    << "\"" << top->text(3) << "\","
+                    << "\"" << top->text(4) << "\"\n";
+
+                for (int c = 0; c < top->childCount(); ++c) {
+                    QTreeWidgetItem* child = top->child(c);
+                    out << "\"" << top->text(0) << "\","
+                        << "\"" << child->text(0) << "\","
+                        << "\"" << child->text(1) << "\","
+                        << "\"" << child->text(2) << "\","
+                        << "\"" << child->text(3) << "\","
+                        << "\"" << child->text(4) << "\"\n";
+                }
+            }
+            file.close();
+            statusBar()->showMessage("Exported CSV Inspection Report to: " + filePath);
+            return;
+        }
+
+        // Export Printable HTML Inspection Report
+        QFile file(filePath);
+        if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            QMessageBox::critical(this, "Export Error", "Could not write to file: " + filePath);
+            return;
+        }
+
+        int totalFeatures = 0, passedCount = 0, failedCount = 0;
+        for (int i = 0; i < m_featureTree->topLevelItemCount(); ++i) {
+            QTreeWidgetItem* top = m_featureTree->topLevelItem(i);
+            if (top == m_activePointsGroup) continue;
+            ++totalFeatures;
+            if (top->text(4).contains("FAIL")) ++failedCount;
+            else if (top->text(4).contains("PASS")) ++passedCount;
+        }
+
+        QTextStream out(&file);
+        out << "<!DOCTYPE html><html><head><meta charset='utf-8'>\n"
+            << "<title>Inspection Report - " << partName.toHtmlEscaped() << "</title>\n"
+            << "<style>\n"
+            << "body { font-family: 'Segoe UI', Arial, sans-serif; margin: 28px; color: #1e2227; background: #ffffff; }\n"
+            << "h1 { margin: 0 0 6px 0; font-size: 22px; color: #1a365d; border-bottom: 2px solid #1a365d; padding-bottom: 8px; }\n"
+            << ".meta { display: table; width: 100%; margin: 14px 0 20px 0; border-collapse: collapse; }\n"
+            << ".meta td { padding: 6px 12px; border: 1px solid #cbd5e0; font-size: 13px; }\n"
+            << ".meta td.lbl { font-weight: bold; background: #edf2f7; width: 18%; }\n"
+            << "table.report { width: 100%; border-collapse: collapse; font-size: 13px; }\n"
+            << "table.report th { background: #2d3748; color: white; text-align: left; padding: 8px 10px; border: 1px solid #2d3748; }\n"
+            << "table.report td { padding: 7px 10px; border: 1px solid #cbd5e0; font-family: 'Consolas', monospace; }\n"
+            << "tr.feat-row { background: #f7fafc; font-weight: bold; }\n"
+            << "tr.sub-row td { color: #4a5568; padding-left: 26px; font-weight: normal; }\n"
+            << ".pass { color: #22543d; background: #c6f6d5; font-weight: bold; padding: 2px 8px; border-radius: 4px; }\n"
+            << ".fail { color: #742a2a; background: #fed7d7; font-weight: bold; padding: 2px 8px; border-radius: 4px; }\n"
+            << "@media print { button.print-btn { display: none; } }\n"
+            << "</style></head><body>\n"
+            << "<button class='print-btn' onclick='window.print()' style='float:right;padding:6px 14px;font-weight:bold;cursor:pointer;'>Print / Save PDF</button>\n"
+            << "<h1>QUALITY INSPECTION REPORT</h1>\n"
+            << "<table class='meta'>\n"
+            << "<tr><td class='lbl'>Part / Job ID:</td><td>" << partName.toHtmlEscaped() << "</td>"
+            << "<td class='lbl'>Date / Time:</td><td>" << timestamp << "</td></tr>\n"
+            << "<tr><td class='lbl'>Units:</td><td>" << unitName << "</td>"
+            << "<td class='lbl'>Alignment Datum:</td><td>" << coordMode << "</td></tr>\n"
+            << "<tr><td class='lbl'>Probe Tip Ø:</td><td>" << QString::number(toDisplayUnit(m_effectiveProbeRadius * 2.0, m_unitSystem), 'f', decimals) << " " << unitShort
+            << (m_isProbeCalibrated ? " (Calibrated)" : " (Nominal)") << "</td>"
+            << "<td class='lbl'>Summary:</td><td>Total: " << totalFeatures << " | Passed: " << passedCount << " | Failed: " << failedCount << "</td></tr>\n"
+            << "</table>\n"
+            << "<table class='report'>\n"
+            << "<thead><tr><th>Feature / Parameter</th><th>Nominal</th><th>Actual</th><th>±Tol</th><th>Deviation / Status</th></tr></thead>\n"
+            << "<tbody>\n";
+
+        for (int i = 0; i < m_featureTree->topLevelItemCount(); ++i) {
+            QTreeWidgetItem* top = m_featureTree->topLevelItem(i);
+            if (top == m_activePointsGroup) continue;
+
+            QString statusHtml = top->text(4).toHtmlEscaped();
+            if (statusHtml.contains("FAIL")) {
+                statusHtml = "<span class='fail'>" + statusHtml + "</span>";
+            }
+            else if (statusHtml.contains("PASS")) {
+                statusHtml = "<span class='pass'>" + statusHtml + "</span>";
+            }
+
+            out << "<tr class='feat-row'>"
+                << "<td>" << top->text(0).toHtmlEscaped() << "</td>"
+                << "<td>" << top->text(1).toHtmlEscaped() << "</td>"
+                << "<td>" << top->text(2).toHtmlEscaped() << "</td>"
+                << "<td>" << top->text(3).toHtmlEscaped() << "</td>"
+                << "<td>" << statusHtml << "</td></tr>\n";
+
+            for (int c = 0; c < top->childCount(); ++c) {
+                QTreeWidgetItem* child = top->child(c);
+                out << "<tr class='sub-row'>"
+                    << "<td>↳ " << child->text(0).toHtmlEscaped() << "</td>"
+                    << "<td>" << child->text(1).toHtmlEscaped() << "</td>"
+                    << "<td>" << child->text(2).toHtmlEscaped() << "</td>"
+                    << "<td>" << child->text(3).toHtmlEscaped() << "</td>"
+                    << "<td>" << child->text(4).toHtmlEscaped() << "</td></tr>\n";
+            }
+        }
+
+        out << "</tbody></table></body></html>\n";
+        file.close();
+
+        QDesktopServices::openUrl(QUrl::fromLocalFile(filePath));
+        statusBar()->showMessage("Exported & opened HTML Inspection Report: " + filePath);
     }
 
     void MainWindow::onClearPointsClicked() {
@@ -1121,7 +1798,7 @@ namespace OpenCMM {
         while (m_activePointsGroup->childCount() > 0) {
             delete m_activePointsGroup->takeChild(0);
         }
-        m_activePointsGroup->setText(1, "0 pts");
+        m_activePointsGroup->setText(2, "0 pts");
 
         if (m_viewport) {
             m_viewport->clearHitMarkers();

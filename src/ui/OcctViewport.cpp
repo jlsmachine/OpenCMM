@@ -8,6 +8,7 @@
 #include <QSlider>
 #include <QLabel>
 #include <algorithm>
+#include <cmath>
 
 #include <Aspect_DisplayConnection.hxx>
 #include <OpenGl_GraphicDriver.hxx>
@@ -16,6 +17,9 @@
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepPrimAPI_MakeSphere.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
+#include <BRepBuilderAPI_Transform.hxx>
+#include <BRepBndLib.hxx>
+#include <Bnd_Box.hxx>
 #include <Prs3d_Drawer.hxx>
 #include <Prs3d_LineAspect.hxx>
 #include <TopAbs_ShapeEnum.hxx>
@@ -30,6 +34,7 @@
 #include <gp_Sphere.hxx>
 #include <gp_Trsf.hxx>
 #include <gp_Vec.hxx>
+#include <gp_Ax1.hxx>
 #include <gp_Ax2.hxx>
 #include <Quantity_Color.hxx>
 
@@ -38,6 +43,10 @@
 #endif
 
 namespace OpenCMM {
+
+    namespace {
+        constexpr double DEG_TO_RAD = 3.14159265358979323846 / 180.0;
+    }
 
     OcctViewport::OcctViewport(QWidget* parent) : QWidget(parent) {
         setAttribute(Qt::WA_PaintOnScreen);
@@ -347,11 +356,175 @@ namespace OpenCMM {
 
             m_context->Display(aisShape, AIS_Shaded, 0, Standard_False);
             m_cadShapes.push_back(aisShape);
+            m_originalCadShapes.push_back(shape);
 
             applyVisualStyleToShape(aisShape);
             m_context->Activate(aisShape, AIS_Shape::SelectionMode(TopAbs_FACE));
             m_view->FitAll();
         }
+    }
+
+    bool OcctViewport::getCadBoundingBox(double& xmin, double& ymin, double& zmin,
+        double& xmax, double& ymax, double& zmax) const {
+        if (m_cadShapes.empty()) {
+            return false;
+        }
+
+        Bnd_Box bbox;
+        for (const auto& aisShape : m_cadShapes) {
+            if (!aisShape.IsNull() && !aisShape->Shape().IsNull()) {
+                BRepBndLib::Add(aisShape->Shape(), bbox);
+            }
+        }
+        if (bbox.IsVoid()) {
+            return false;
+        }
+
+        bbox.Get(xmin, ymin, zmin, xmax, ymax, zmax);
+        return true;
+    }
+
+    void OcctViewport::applyTransformToCadModels(const gp_Trsf& trsf) {
+        if (m_context.IsNull() || m_cadShapes.empty()) {
+            return;
+        }
+
+        m_context->ClearSelected(Standard_False);
+        m_lastSelectedFace = CadFaceInfo{};
+
+        for (auto& aisShape : m_cadShapes) {
+            if (aisShape.IsNull() || aisShape->Shape().IsNull()) {
+                continue;
+            }
+            BRepBuilderAPI_Transform xform(aisShape->Shape(), trsf, Standard_True);
+            if (xform.IsDone()) {
+                m_context->Deactivate(aisShape);
+                aisShape->Set(xform.Shape());
+                applyVisualStyleToShape(aisShape);
+                m_context->Activate(aisShape, AIS_Shape::SelectionMode(TopAbs_FACE));
+            }
+        }
+
+        m_context->UpdateCurrentViewer();
+    }
+
+    void OcctViewport::translateCadModels(double dxMm, double dyMm, double dzMm) {
+        gp_Trsf trsf;
+        trsf.SetTranslation(gp_Vec(dxMm, dyMm, dzMm));
+        applyTransformToCadModels(trsf);
+    }
+
+    void OcctViewport::rotateCadModels(double rxDeg, double ryDeg, double rzDeg, bool aroundPartCenter) {
+        gp_Pnt pivot(0.0, 0.0, 0.0);
+        if (aroundPartCenter) {
+            double xmin = 0, ymin = 0, zmin = 0, xmax = 0, ymax = 0, zmax = 0;
+            if (getCadBoundingBox(xmin, ymin, zmin, xmax, ymax, zmax)) {
+                pivot = gp_Pnt(0.5 * (xmin + xmax), 0.5 * (ymin + ymax), 0.5 * (zmin + zmax));
+            }
+        }
+
+        gp_Trsf totalTrsf;
+        if (std::abs(rxDeg) > 1e-6) {
+            gp_Trsf trsfX;
+            trsfX.SetRotation(gp_Ax1(pivot, gp_Dir(1.0, 0.0, 0.0)), rxDeg * DEG_TO_RAD);
+            totalTrsf.Multiply(trsfX);
+        }
+        if (std::abs(ryDeg) > 1e-6) {
+            gp_Trsf trsfY;
+            trsfY.SetRotation(gp_Ax1(pivot, gp_Dir(0.0, 1.0, 0.0)), ryDeg * DEG_TO_RAD);
+            totalTrsf.Multiply(trsfY);
+        }
+        if (std::abs(rzDeg) > 1e-6) {
+            gp_Trsf trsfZ;
+            trsfZ.SetRotation(gp_Ax1(pivot, gp_Dir(0.0, 0.0, 1.0)), rzDeg * DEG_TO_RAD);
+            totalTrsf.Multiply(trsfZ);
+        }
+
+        applyTransformToCadModels(totalTrsf);
+    }
+
+    void OcctViewport::dropCadModelsToGranite(double targetZMinMm) {
+        double xmin = 0, ymin = 0, zmin = 0, xmax = 0, ymax = 0, zmax = 0;
+        if (!getCadBoundingBox(xmin, ymin, zmin, xmax, ymax, zmax)) {
+            return;
+        }
+        translateCadModels(0.0, 0.0, targetZMinMm - zmin);
+    }
+
+    void OcctViewport::centerCadModelsXY(double targetXMm, double targetYMm) {
+        double xmin = 0, ymin = 0, zmin = 0, xmax = 0, ymax = 0, zmax = 0;
+        if (!getCadBoundingBox(xmin, ymin, zmin, xmax, ymax, zmax)) {
+            return;
+        }
+        const double cx = 0.5 * (xmin + xmax);
+        const double cy = 0.5 * (ymin + ymax);
+        translateCadModels(targetXMm - cx, targetYMm - cy, 0.0);
+    }
+
+    void OcctViewport::snapCadMinCornerToOrigin() {
+        double xmin = 0, ymin = 0, zmin = 0, xmax = 0, ymax = 0, zmax = 0;
+        if (!getCadBoundingBox(xmin, ymin, zmin, xmax, ymax, zmax)) {
+            return;
+        }
+        translateCadModels(-xmin, -ymin, -zmin);
+    }
+
+    bool OcctViewport::alignSelectedFaceToZ(bool pointNormalUp) {
+        if (!m_lastSelectedFace.success) {
+            return false;
+        }
+
+        gp_Vec u(m_lastSelectedFace.normalOrAxis);
+        gp_Vec v(0.0, 0.0, pointNormalUp ? 1.0 : -1.0);
+        if (u.Magnitude() < 1e-9) {
+            return false;
+        }
+        u.Normalize();
+
+        gp_Pnt pivot = m_lastSelectedFace.centerOrCentroid;
+        double xmin = 0, ymin = 0, zmin = 0, xmax = 0, ymax = 0, zmax = 0;
+        if (getCadBoundingBox(xmin, ymin, zmin, xmax, ymax, zmax)) {
+            pivot = gp_Pnt(0.5 * (xmin + xmax), 0.5 * (ymin + ymax), 0.5 * (zmin + zmax));
+        }
+
+        const double dotVal = std::clamp(u.Dot(v), -1.0, 1.0);
+        if (dotVal > 0.999999) {
+            return true; // Already aligned
+        }
+
+        gp_Trsf trsf;
+        if (dotVal < -0.999999) {
+            // Opposite direction: rotate 180 degrees around X or Y axis
+            gp_Dir orthoAxis = (std::abs(u.X()) < 0.9) ? gp_Dir(1.0, 0.0, 0.0) : gp_Dir(0.0, 1.0, 0.0);
+            trsf.SetRotation(gp_Ax1(pivot, orthoAxis), 3.14159265358979323846);
+        }
+        else {
+            gp_Vec crossVec = u.Crossed(v);
+            const double angleRad = std::acos(dotVal);
+            trsf.SetRotation(gp_Ax1(pivot, gp_Dir(crossVec)), angleRad);
+        }
+
+        applyTransformToCadModels(trsf);
+        return true;
+    }
+
+    void OcctViewport::resetCadModelsTransform() {
+        if (m_context.IsNull() || m_cadShapes.size() != m_originalCadShapes.size()) {
+            return;
+        }
+
+        m_context->ClearSelected(Standard_False);
+        m_lastSelectedFace = CadFaceInfo{};
+
+        for (size_t i = 0; i < m_cadShapes.size(); ++i) {
+            auto& aisShape = m_cadShapes[i];
+            m_context->Deactivate(aisShape);
+            aisShape->Set(m_originalCadShapes[i]);
+            applyVisualStyleToShape(aisShape);
+            m_context->Activate(aisShape, AIS_Shape::SelectionMode(TopAbs_FACE));
+        }
+
+        m_context->UpdateCurrentViewer();
     }
 
     CadFaceInfo OcctViewport::inspectSelectedCadFace() const {
@@ -374,7 +547,6 @@ namespace OpenCMM {
         BRepAdaptor_Surface surfAdaptor(face, Standard_True);
         GeomAbs_SurfaceType surfType = surfAdaptor.GetType();
 
-        // TopAbs_REVERSED on a cylindrical/spherical B-Rep face indicates an inward-facing normal (internal bore/cavity)
         info.isInternal = (face.Orientation() == TopAbs_REVERSED);
 
         switch (surfType) {
@@ -440,8 +612,11 @@ namespace OpenCMM {
                 m_view->Redraw();
 
                 CadFaceInfo faceInfo = inspectSelectedCadFace();
-                if (faceInfo.success && m_faceSelectedCallback) {
-                    m_faceSelectedCallback(faceInfo);
+                if (faceInfo.success) {
+                    m_lastSelectedFace = faceInfo;
+                    if (m_faceSelectedCallback) {
+                        m_faceSelectedCallback(faceInfo);
+                    }
                 }
             }
         }

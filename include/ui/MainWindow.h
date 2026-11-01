@@ -3,8 +3,10 @@
 #include <QLabel>
 #include <QComboBox>
 #include <QPushButton>
+#include <QCheckBox>
 #include <QTreeWidget>
 #include <vector>
+#include <string>
 #include <Eigen/Dense>
 
 #include "core/Units.h"
@@ -28,6 +30,7 @@ namespace OpenCMM {
         void onZeroAxesClicked();
         void onUnitToggled();
         void onLoadStepClicked();
+        void onTransformCadClicked();
 
         void onSimulateHitClicked();
         void onCalibrateProbeClicked();
@@ -37,6 +40,8 @@ namespace OpenCMM {
         void onFitLineClicked();
         void onMeasureRelationClicked();
         void onRun321AlignmentClicked();
+        void onEditToleranceClicked();
+        void onExportReportClicked();
         void onClearPointsClicked();
 
         void onPositionUpdated(const Position3D& pos);
@@ -52,6 +57,16 @@ namespace OpenCMM {
         void updateProbeStatusDisplay();
         void finishFeatureBuffer();
         void onCadFaceSelected(const CadFaceInfo& faceInfo);
+
+        void applyEvaluationToTreeItem(QTreeWidgetItem* item,
+            double actualMm,
+            bool hasNominal,
+            double nominalMm,
+            double plusTolMm,
+            double minusTolMm);
+        void playHitChime() const;
+        void playSolveChime(bool passed = true) const;
+
         ProbeCompMode currentCompMode() const;
         WorkplaneFrame currentWorkplane() const;
 
@@ -65,6 +80,15 @@ namespace OpenCMM {
         double m_effectiveProbeRadius = 1.5000;
         double m_lastProbeLobingMm = 0.0;
         bool m_isProbeCalibrated = false;
+
+        // Default bilateral tolerance (0.0500 mm / ~0.0020 in)
+        double m_defaultTolMm = 0.0500;
+
+        // Armed CAD Nominal from Phase 4 Face Picking
+        bool m_hasArmedCadNominal = false;
+        double m_armedCadDiameterMm = 0.0;
+        Eigen::Vector3d m_armedCadLocationMm = Eigen::Vector3d::Zero();
+        QString m_armedCadDescription;
 
         WorkplaneFrame m_lastFittedPlaneFrame = WorkplaneFrame::fromStandard(StandardWorkplane::XY_PlusZ);
         bool m_hasCustomPlane = false;
@@ -82,6 +106,7 @@ namespace OpenCMM {
         QComboBox* m_portCombo = nullptr;
         QPushButton* m_connectBtn = nullptr;
         QPushButton* m_unitBtn = nullptr;
+        QCheckBox* m_audioCheck = nullptr;
 
         QComboBox* m_workplaneCombo = nullptr;
         QComboBox* m_compModeCombo = nullptr;

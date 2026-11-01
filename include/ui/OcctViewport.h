@@ -8,11 +8,13 @@
 #include <AIS_InteractiveContext.hxx>
 #include <AIS_Shape.hxx>
 #include <TopoDS_Face.hxx>
+#include <TopoDS_Shape.hxx>
 #include <V3d_View.hxx>
 #include <V3d_Viewer.hxx>
 #include <Graphic3d_GraphicDriver.hxx>
 #include <gp_Pnt.hxx>
 #include <gp_Dir.hxx>
+#include <gp_Trsf.hxx>
 
 class QPushButton;
 class QSlider;
@@ -31,7 +33,7 @@ namespace OpenCMM {
         std::string surfaceType = "Unknown";
         double nominalDiameter = 0.0;
         double nominalRadius = 0.0;
-        bool isInternal = false; // True for internal bores/cavities, false for bosses/planes
+        bool isInternal = false;
         gp_Pnt centerOrCentroid{ 0.0, 0.0, 0.0 };
         gp_Dir normalOrAxis{ 0.0, 0.0, 1.0 };
     };
@@ -45,6 +47,19 @@ namespace OpenCMM {
         Handle(AIS_InteractiveContext) getContext() const { return m_context; }
 
         void loadStepFile(const QString& filepath);
+        bool hasCadModel() const { return !m_cadShapes.empty(); }
+
+        // CAD Model Orientation & Transformation Controls
+        bool getCadBoundingBox(double& xmin, double& ymin, double& zmin,
+            double& xmax, double& ymax, double& zmax) const;
+        void translateCadModels(double dxMm, double dyMm, double dzMm);
+        void rotateCadModels(double rxDeg, double ryDeg, double rzDeg, bool aroundPartCenter = true);
+        void dropCadModelsToGranite(double targetZMinMm = 0.0);
+        void centerCadModelsXY(double targetXMm = 0.0, double targetYMm = 0.0);
+        void snapCadMinCornerToOrigin();
+        bool alignSelectedFaceToZ(bool pointNormalUp = true);
+        void resetCadModelsTransform();
+
         void updateProbePosition(double x, double y, double z);
         void addHitPointMarker(double x, double y, double z);
         void commitActiveHitMarkers();
@@ -56,6 +71,7 @@ namespace OpenCMM {
 
         void setFaceSelectedCallback(std::function<void(const CadFaceInfo&)> cb) { m_faceSelectedCallback = std::move(cb); }
         CadFaceInfo inspectSelectedCadFace() const;
+        const CadFaceInfo& lastSelectedFace() const { return m_lastSelectedFace; }
 
         QPaintEngine* paintEngine() const override { return nullptr; }
 
@@ -74,6 +90,7 @@ namespace OpenCMM {
         void createDemoGraniteScene();
         void createProbeStylus();
         void applyVisualStyleToShape(const Handle(AIS_Shape)& shape);
+        void applyTransformToCadModels(const gp_Trsf& trsf);
 
         Handle(Graphic3d_GraphicDriver) m_graphicDriver;
         Handle(V3d_Viewer) m_viewer;
@@ -82,6 +99,7 @@ namespace OpenCMM {
 
         Handle(AIS_Shape) m_graniteShape;
         std::vector<Handle(AIS_Shape)> m_cadShapes;
+        std::vector<TopoDS_Shape> m_originalCadShapes;
 
         Handle(AIS_Shape) m_probeRuby;
         Handle(AIS_Shape) m_probeStem;
@@ -92,6 +110,7 @@ namespace OpenCMM {
         double m_transparency = 0.0;
         bool m_graniteVisible = true;
 
+        CadFaceInfo m_lastSelectedFace;
         std::function<void(const CadFaceInfo&)> m_faceSelectedCallback;
 
         QWidget* m_hudContainer = nullptr;
