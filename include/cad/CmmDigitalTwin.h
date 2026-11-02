@@ -3,6 +3,7 @@
 #include <QStringList>
 #include <vector>
 #include <string>
+#include <map>
 #include <Eigen/Dense>
 #include <AIS_InteractiveContext.hxx>
 #include <AIS_Shape.hxx>
@@ -11,7 +12,7 @@
 namespace OpenCMM {
 
     struct KinematicPrimitive {
-        std::string type = "box"; // "box" or "cylinder"
+        std::string type = "box";
         Eigen::Vector3d origin = Eigen::Vector3d::Zero();
         Eigen::Vector3d size = Eigen::Vector3d::Zero();
     };
@@ -19,9 +20,10 @@ namespace OpenCMM {
     struct KinematicLinkDef {
         std::string id;
         std::string parentId;
-        std::string axis = "NONE"; // "NONE", "X", "Y", "Z"
+        std::string axis = "NONE";
         Eigen::Vector3d colorRgb{ 0.5, 0.5, 0.5 };
         std::string stepFile;
+        std::map<std::string, Eigen::Vector3d> partColors;
         std::vector<KinematicPrimitive> primitives;
     };
 
@@ -53,7 +55,6 @@ namespace OpenCMM {
         void setMachineVisible(bool visible);
         bool isMachineVisible() const { return m_visible; }
 
-        // Per-component visibility controls
         QStringList getLinkIds() const;
         bool isLinkVisible(const QString& linkId) const;
         void setLinkVisible(const QString& linkId, bool visible);
@@ -63,13 +64,13 @@ namespace OpenCMM {
     private:
         struct RuntimeNode {
             KinematicLinkDef def;
-            Handle(AIS_Shape) aisShape;
+            std::vector<Handle(AIS_Shape)> aisShapes; // Vector of individual solid AIS shapes
             int parentIndex = -1;
             bool visible = true;
         };
 
         bool parseManifestJson(const QByteArray& jsonBytes, const QString& baseDir);
-        TopoDS_Shape buildLinkShape(const KinematicLinkDef& def, const QString& baseDir);
+        TopoDS_Shape buildLinkShape(const KinematicLinkDef& def, const QString& baseDir, std::vector<std::string>& outSolidNames);
         void rebuildAisNodes(const QString& baseDir);
 
         Handle(AIS_InteractiveContext) m_context;

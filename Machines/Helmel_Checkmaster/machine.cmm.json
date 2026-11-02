@@ -3,45 +3,57 @@
   "manufacturer": "Helmel Engineering",
   "controller_type": "PicoSerial",
   "axes": {
-    "scale_mm": [0.0005, 0.0005, 0.0005],
-    "sign": [1, 1, 1],
-    "travel_min_mm": [-150.0, -150.0, -250.0],
-    "travel_max_mm": [150.0, 150.0, 0.0]
+    "scale_mm": [ 0.0005, 0.0005, 0.0005 ],
+    "sign": [ 1, 1, 1 ],
+    "travel_min_mm": [ -150.0, -150.0, -250.0 ],
+    "travel_max_mm": [ 150.0, 150.0, 0.0 ]
   },
-  "probe_mount_offset_mm": [0.0, -93.0, 252.0],
+  "probe_mount_offset_mm": [ 0.0, -93.0, 252.0 ],
   "kinematic_chain": [
     {
       "id": "granite_base",
       "parent": "",
       "axis": "NONE",
-      "color_rgb": [0.22, 0.24, 0.26],
+      "color_rgb": [ 0.22, 0.24, 0.26 ],
       "step_file": "meshes/granite_base.step",
-      "primitives": [
-        { "type": "box", "origin": [-265, -342.5, -100], "size": [530, 685, 100] }
-      ]
+      "part_colors": {
+        "Granite_Surface_Plate": [ 0.22, 0.24, 0.26 ],
+        "Helmel_Front_Badge": [ 0.14, 0.42, 0.72 ]
+      },
+      "primitives": []
     },
     {
       "id": "bridge_y",
       "parent": "granite_base",
       "axis": "Y",
-      "color_rgb": [0.86, 0.88, 0.89],
+      "color_rgb": [ 0.86, 0.88, 0.89 ],
       "step_file": "meshes/bridge_y.step",
+      "part_colors": {
+        "Checkmaster_Blue_Fascia": [ 0.14, 0.42, 0.72 ]
+      },
       "primitives": []
     },
     {
       "id": "carriage_x",
       "parent": "bridge_y",
       "axis": "X",
-      "color_rgb": [0.80, 0.82, 0.84],
+      "color_rgb": [ 0.80, 0.82, 0.84 ],
       "step_file": "meshes/carriage_x.step",
+      "part_colors": {
+        "Housing_Blue_Stripe": [ 0.14, 0.42, 0.72 ]
+      },
       "primitives": []
     },
     {
       "id": "quill_z",
       "parent": "carriage_x",
       "axis": "Z",
-      "color_rgb": [0.82, 0.84, 0.86],
+      "color_rgb": [ 0.82, 0.84, 0.86 ],
       "step_file": "meshes/quill_z.step",
+      "part_colors": {
+        "Renishaw_TP_ES_Body": [ 0.15, 0.16, 0.18 ],
+        "Stylus_Ruby_Tip": [ 0.92, 0.12, 0.18 ]
+      },
       "primitives": []
     }
   ]
