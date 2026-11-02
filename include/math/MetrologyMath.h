@@ -155,7 +155,9 @@ namespace OpenCMM {
 
         static DeviationResult computePointToCadDeviation(
             const Eigen::Vector3d& point,
-            const TopoDS_Shape& cadShape);
+            const TopoDS_Shape& cadShape,
+            double probeRadiusMm = 0.0,
+            ProbeCompMode compMode = ProbeCompMode::External);
     };
 
 } // namespace OpenCMM

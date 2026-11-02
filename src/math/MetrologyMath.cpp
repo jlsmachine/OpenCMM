@@ -4,6 +4,12 @@
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <TopoDS_Vertex.hxx>
 #include <gp_Pnt.hxx>
+// Add these includes at the top of src/math/MetrologyMath.cpp:
+#include <BRepGProp_Face.hxx>
+#include <TopoDS.hxx>
+#include <TopoDS_Face.hxx>
+#include <TopAbs_ShapeEnum.hxx>
+#include <gp_Vec.hxx>
 
 #include <Eigen/SVD>
 #include <Eigen/Dense>
@@ -484,7 +490,9 @@ namespace OpenCMM {
 
     DeviationResult MetrologyMath::computePointToCadDeviation(
         const Eigen::Vector3d& point,
-        const TopoDS_Shape& cadShape) {
+        const TopoDS_Shape& cadShape,
+        double probeRadiusMm,
+        ProbeCompMode compMode) {
 
         DeviationResult res;
         if (cadShape.IsNull()) return res;
@@ -502,10 +510,49 @@ namespace OpenCMM {
         res.measuredPoint = point;
 
         Eigen::Vector3d vDelta = res.measuredPoint - res.nearestCadPoint;
-        res.signedDeviationMm = vDelta.norm();
-        if (vDelta.norm() > 1e-9) {
-            res.surfaceNormal = vDelta.normalized();
+        double rawDist = vDelta.norm();
+
+        Eigen::Vector3d normal(0.0, 0.0, 1.0);
+        if (rawDist > 1e-9) {
+            normal = vDelta / rawDist;
         }
+
+        // Extract true outward CAD face normal if the nearest support is a Face
+        TopoDS_Shape support = dister.SupportOnShape2(1);
+        if (!support.IsNull() && support.ShapeType() == TopAbs_FACE) {
+            Standard_Real u = 0.0, v = 0.0;
+            dister.ParOnFaceS2(1, u, v);
+            TopoDS_Face face = TopoDS::Face(support);
+            BRepGProp_Face prop(face);
+            gp_Pnt surfPt;
+            gp_Vec surfNorm;
+            prop.Normal(u, v, surfPt, surfNorm);
+            if (surfNorm.Magnitude() > 1e-9) {
+                surfNorm.Normalize();
+                normal = Eigen::Vector3d(surfNorm.X(), surfNorm.Y(), surfNorm.Z());
+            }
+        }
+
+        res.surfaceNormal = normal;
+
+        // Project delta onto outward surface normal
+        double signedCenterDist = vDelta.dot(normal);
+
+        // Compensate for probe tip radius along the surface normal
+        double compOffset = 0.0;
+        if (compMode == ProbeCompMode::External) {
+            compOffset = probeRadiusMm;
+        }
+        else if (compMode == ProbeCompMode::Internal) {
+            compOffset = -probeRadiusMm;
+        }
+
+        // If probing approached from the opposite side of a single-sided sheet, flip sign
+        if (signedCenterDist < 0.0 && compMode == ProbeCompMode::External && std::abs(signedCenterDist) >= 0.5 * probeRadiusMm) {
+            signedCenterDist = std::abs(signedCenterDist);
+        }
+
+        res.signedDeviationMm = signedCenterDist - compOffset;
         res.success = true;
         return res;
     }

@@ -37,6 +37,8 @@
 #include <gp_Ax1.hxx>
 #include <gp_Ax2.hxx>
 #include <Quantity_Color.hxx>
+#include <BRep_Builder.hxx>
+#include <TopoDS_Compound.hxx>
 
 #ifdef _WIN32
 #include <WNT_Window.hxx>
@@ -276,7 +278,7 @@ namespace OpenCMM {
 
         aisHit->Attributes()->SetFaceBoundaryDraw(Standard_False);
         m_context->Display(aisHit, AIS_Shaded, -1, Standard_True);
-        m_activeHitMarkers.push_back(aisHit);
+        m_solvedHitMarkers.push_back(aisHit);
     }
 
     void OcctViewport::commitActiveHitMarkers() {
@@ -714,6 +716,24 @@ namespace OpenCMM {
             m_view->SetZoom(zoomFactor, Standard_True);
             m_view->Redraw();
         }
+    }
+    TopoDS_Shape OcctViewport::getCombinedCadShape() const {
+        if (m_cadShapes.empty()) {
+            return TopoDS_Shape();
+        }
+        if (m_cadShapes.size() == 1 && !m_cadShapes[0].IsNull()) {
+            return m_cadShapes[0]->Shape();
+        }
+
+        BRep_Builder builder;
+        TopoDS_Compound comp;
+        builder.MakeCompound(comp);
+        for (const auto& ais : m_cadShapes) {
+            if (!ais.IsNull() && !ais->Shape().IsNull()) {
+                builder.Add(comp, ais->Shape());
+            }
+        }
+        return comp;
     }
 
 } // namespace OpenCMM

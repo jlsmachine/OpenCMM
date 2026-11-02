@@ -50,6 +50,7 @@ namespace OpenCMM {
 
         void loadStepFile(const QString& filepath);
         bool hasCadModel() const { return !m_cadShapes.empty(); }
+        TopoDS_Shape getCombinedCadShape() const;
 
         // Digital Twin Machine Package Controls
         bool loadMachinePackage(const QString& packagePath);
@@ -83,7 +84,7 @@ namespace OpenCMM {
         const CadFaceInfo& lastSelectedFace() const { return m_lastSelectedFace; }
 
         QPaintEngine* paintEngine() const override { return nullptr; }
-
+         
     protected:
         void paintEvent(QPaintEvent* event) override;
         void resizeEvent(QResizeEvent* event) override;

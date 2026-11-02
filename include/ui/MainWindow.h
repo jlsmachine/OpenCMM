@@ -39,6 +39,7 @@ namespace OpenCMM {
         void onFitCircleClicked();
         void onFitLineClicked();
         void onMeasureRelationClicked();
+        void onEvaluateCadDeviationClicked();
         void onRun321AlignmentClicked();
         void onEditToleranceClicked();
         void onExportReportClicked();

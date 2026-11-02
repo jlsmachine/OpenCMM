@@ -95,13 +95,14 @@ namespace OpenCMM {
 
     void MainWindow::setupToolbar() {
         const QString barStyle =
-            "QToolBar { background-color: #21252b; border-bottom: 1px solid #3a3f4b; spacing: 8px; padding: 5px; }"
-            "QPushButton { background-color: #3a3f4b; color: white; border: 1px solid #4b5263; border-radius: 3px; padding: 5px 12px; font-weight: bold; }"
+            "QToolBar { background-color: #21252b; border-bottom: 1px solid #3a3f4b; spacing: 6px; padding: 4px; }"
+            "QPushButton { background-color: #3a3f4b; color: white; border: 1px solid #4b5263; border-radius: 3px; padding: 5px 10px; font-weight: bold; }"
             "QPushButton:hover { background-color: #4b5263; }"
-            "QComboBox { background-color: #1e2227; color: white; border: 1px solid #4b5263; padding: 4px 8px; font-weight: bold; }"
-            "QComboBox QAbstractItemView { background-color: #1e2227; color: white; selection-background-color: #2d5a88; }";
+            "QComboBox { background-color: #1e2227; color: white; border: 1px solid #4b5263; padding: 4px 6px; font-weight: bold; }"
+            "QComboBox QAbstractItemView { background-color: #1e2227; color: white; selection-background-color: #2d5a88; }"
+            "QToolButton#qt_toolbar_ext_button { background-color: #3a3f4b; color: #61afef; border: 1px solid #61afef; border-radius: 3px; min-width: 18px; }";
 
-        // Row 1: Settings, Zero XYZ, CAD Controls, Report Export & Simulator
+        // Row 1: Settings, Zero XYZ, Clear Points, CAD Controls & Simulator
         auto* hwToolbar = addToolBar("Studio & CAD Controls");
         hwToolbar->setMovable(false);
         hwToolbar->setStyleSheet(barStyle);
@@ -121,17 +122,24 @@ namespace OpenCMM {
         connect(zeroBtn, &QPushButton::clicked, this, &MainWindow::onZeroAxesClicked);
         hwToolbar->addWidget(zeroBtn);
 
+        auto* clearBtn = new QPushButton("Clear Points", this);
+        clearBtn->setStyleSheet("background-color: #5c2b29; color: white; padding: 5px 10px; font-weight: bold;");
+        connect(clearBtn, &QPushButton::clicked, this, &MainWindow::onClearPointsClicked);
+        hwToolbar->addWidget(clearBtn);
+
         hwToolbar->addSeparator();
 
         auto* loadStepBtn = new QPushButton("Load STEP CAD", this);
-        loadStepBtn->setStyleSheet("background-color: #2d5a88; color: white; padding: 5px 12px; font-weight: bold;");
+        loadStepBtn->setStyleSheet("background-color: #2d5a88; color: white; padding: 5px 10px; font-weight: bold;");
         connect(loadStepBtn, &QPushButton::clicked, this, &MainWindow::onLoadStepClicked);
         hwToolbar->addWidget(loadStepBtn);
 
         auto* transformCadBtn = new QPushButton("Orient CAD...", this);
-        transformCadBtn->setStyleSheet("background-color: #3b6998; color: white; padding: 5px 12px; font-weight: bold;");
+        transformCadBtn->setStyleSheet("background-color: #3b6998; color: white; padding: 5px 10px; font-weight: bold;");
         connect(transformCadBtn, &QPushButton::clicked, this, &MainWindow::onTransformCadClicked);
         hwToolbar->addWidget(transformCadBtn);
+
+        hwToolbar->addSeparator();
 
         auto* simLabel = new QLabel(" Simulator: ", this);
         simLabel->setStyleSheet("color: #abb2bf; font-weight: bold;");
@@ -147,11 +155,11 @@ namespace OpenCMM {
         hwToolbar->addWidget(m_simTargetCombo);
 
         auto* simHitBtn = new QPushButton("Simulate Probe Hit", this);
-        simHitBtn->setStyleSheet("background-color: #d19a66; color: #1e2227; padding: 5px 12px; font-weight: bold;");
+        simHitBtn->setStyleSheet("background-color: #d19a66; color: #1e2227; padding: 5px 10px; font-weight: bold;");
         connect(simHitBtn, &QPushButton::clicked, this, &MainWindow::onSimulateHitClicked);
         hwToolbar->addWidget(simHitBtn);
 
-        // Row 2: Metrology Workplane, Tip Compensation, Solvers & Alignment
+        // Row 2: Metrology Workplane, Tip Compensation, Solvers, CAD Deviation & Alignment
         addToolBarBreak(Qt::TopToolBarArea);
         auto* metroToolbar = addToolBar("Metrology Feature Solvers");
         metroToolbar->setMovable(false);
@@ -208,6 +216,12 @@ namespace OpenCMM {
         connect(relBtn, &QPushButton::clicked, this, &MainWindow::onMeasureRelationClicked);
         metroToolbar->addWidget(relBtn);
 
+        auto* cadDevBtn = new QPushButton("CAD Surface Dev", this);
+        cadDevBtn->setStyleSheet("background-color: #0d9488; color: white; padding: 5px 10px; font-weight: bold;");
+        cadDevBtn->setToolTip("Project active probe hits onto the loaded STEP CAD model and render a color-mapped deviation heatmap");
+        connect(cadDevBtn, &QPushButton::clicked, this, &MainWindow::onEvaluateCadDeviationClicked);
+        metroToolbar->addWidget(cadDevBtn);
+
         metroToolbar->addSeparator();
 
         auto* alignBtn = new QPushButton("3-2-1 Alignment...", this);
@@ -229,12 +243,6 @@ namespace OpenCMM {
             updateDroDisplay();
             });
         metroToolbar->addWidget(m_alignStatusBtn);
-
-        metroToolbar->addSeparator();
-
-        auto* clearBtn = new QPushButton("Clear Points", this);
-        connect(clearBtn, &QPushButton::clicked, this, &MainWindow::onClearPointsClicked);
-        metroToolbar->addWidget(clearBtn);
     }
 
     void MainWindow::setupDroDock() {
@@ -1821,6 +1829,133 @@ namespace OpenCMM {
         }
 
         statusBar()->showMessage("Active probe point buffer and all 3D hit markers cleared.");
+    }
+    void MainWindow::onEvaluateCadDeviationClicked() {
+        if (m_recordedHits.empty()) {
+            statusBar()->showMessage("Capture at least 1 probe hit before running CAD Surface Deviation.");
+            return;
+        }
+
+        if (!m_viewport || !m_viewport->hasCadModel()) {
+            QMessageBox::information(
+                this,
+                "No STEP CAD Model Loaded",
+                "Please load a STEP CAD model first ('Load STEP CAD') so probe points can be projected onto the nominal CAD surfaces."
+            );
+            return;
+        }
+
+        TopoDS_Shape cadShape = m_viewport->getCombinedCadShape();
+        if (cadShape.IsNull()) return;
+
+        const ProbeCompMode compMode = currentCompMode();
+        const int decimals = (m_unitSystem == UnitSystem::Millimeters) ? 4 : 5;
+        const QString unitStr = (m_unitSystem == UnitSystem::Millimeters) ? " mm" : " in";
+
+        double maxAbsDevMm = 0.0;
+        double minDevMm = 1e9;
+        double maxDevMm = -1e9;
+        double sumSqMm = 0.0;
+        int validCount = 0;
+
+        const int id = m_featureCounter++;
+        const QString featName = QString("SurfDev_%1").arg(id);
+
+        auto* devGroupItem = new QTreeWidgetItem(m_featureTree);
+        devGroupItem->setText(0, QString("%1 Profile (%2 pts)").arg(featName).arg(m_recordedHits.size()));
+
+        for (size_t i = 0; i < m_recordedHits.size(); ++i) {
+            const Eigen::Vector3d& pt = m_recordedHits[i];
+            DeviationResult dev = MetrologyMath::computePointToCadDeviation(
+                pt, cadShape, m_effectiveProbeRadius, compMode
+            );
+            if (!dev.success) continue;
+
+            ++validCount;
+            maxAbsDevMm = std::max(maxAbsDevMm, std::abs(dev.signedDeviationMm));
+            minDevMm = std::min(minDevMm, dev.signedDeviationMm);
+            maxDevMm = std::max(maxDevMm, dev.signedDeviationMm);
+            sumSqMm += dev.signedDeviationMm * dev.signedDeviationMm;
+
+            // Render color-coded heatmap sphere at the nearest CAD surface point
+            m_viewport->addDeviationPointMarker(
+                dev.nearestCadPoint.x(),
+                dev.nearestCadPoint.y(),
+                dev.nearestCadPoint.z(),
+                dev.signedDeviationMm,
+                m_defaultTolMm
+            );
+
+            const double dispDev = toDisplayUnit(dev.signedDeviationMm, m_unitSystem);
+            const QString signStr = (dispDev >= 0.0) ? "+" : "";
+            const bool ptPass = std::abs(dev.signedDeviationMm) <= m_defaultTolMm + 1e-7;
+
+            auto* ptItem = new QTreeWidgetItem(devGroupItem, {
+                QString("Pt #%1").arg(i + 1),
+                QString("(%1, %2, %3)")
+                    .arg(toDisplayUnit(dev.nearestCadPoint.x(), m_unitSystem), 0, 'f', decimals)
+                    .arg(toDisplayUnit(dev.nearestCadPoint.y(), m_unitSystem), 0, 'f', decimals)
+                    .arg(toDisplayUnit(dev.nearestCadPoint.z(), m_unitSystem), 0, 'f', decimals),
+                QString("(%1, %2, %3)")
+                    .arg(toDisplayUnit(dev.measuredPoint.x(), m_unitSystem), 0, 'f', decimals)
+                    .arg(toDisplayUnit(dev.measuredPoint.y(), m_unitSystem), 0, 'f', decimals)
+                    .arg(toDisplayUnit(dev.measuredPoint.z(), m_unitSystem), 0, 'f', decimals),
+                QString("±%1").arg(toDisplayUnit(m_defaultTolMm, m_unitSystem), 0, 'f', decimals),
+                QString("%1%2%3 (%4)")
+                    .arg(signStr)
+                    .arg(dispDev, 0, 'f', decimals)
+                    .arg(unitStr)
+                    .arg(ptPass ? "IN" : (dev.signedDeviationMm > 0.0 ? "HIGH" : "LOW"))
+                });
+            ptItem->setForeground(4, QBrush(QColor(ptPass ? "#98c379" : (dev.signedDeviationMm > 0.0 ? "#e06c75" : "#61afef"))));
+        }
+
+        if (validCount == 0) {
+            delete devGroupItem;
+            playSolveChime(false);
+            statusBar()->showMessage("CAD Deviation projection failed.");
+            return;
+        }
+
+        const double rmsMm = std::sqrt(sumSqMm / validCount);
+
+        // Evaluate worst-case absolute deviation against ±m_defaultTolMm
+        applyEvaluationToTreeItem(devGroupItem, maxAbsDevMm, true, 0.0, m_defaultTolMm, m_defaultTolMm);
+
+        new QTreeWidgetItem(devGroupItem, {
+            "Min / Max Signed Dev", "",
+            QString("[%1, %2]%3")
+                .arg(toDisplayUnit(minDevMm, m_unitSystem), 0, 'f', decimals)
+                .arg(toDisplayUnit(maxDevMm, m_unitSystem), 0, 'f', decimals)
+                .arg(unitStr),
+            "", ""
+            });
+        new QTreeWidgetItem(devGroupItem, {
+            "RMS Surface Deviation", "",
+            QString("%1%2").arg(toDisplayUnit(rmsMm, m_unitSystem), 0, 'f', decimals).arg(unitStr),
+            "", ""
+            });
+
+        devGroupItem->setExpanded(true);
+        m_featureTree->setCurrentItem(devGroupItem);
+
+        // Clear active hit buffer without overwriting the Red/Green/Blue heatmap colors
+        m_recordedHits.clear();
+        m_hitCountLabel->setText("Active Feature Hits: 0");
+        while (m_activePointsGroup->childCount() > 0) {
+            delete m_activePointsGroup->takeChild(0);
+        }
+        m_activePointsGroup->setText(2, "0 pts");
+
+        const bool passed = (maxAbsDevMm <= m_defaultTolMm + 1e-7);
+        playSolveChime(passed);
+        statusBar()->showMessage(
+            QString("%1 evaluated (%2 pts): Max Dev = %3%4 — Color heatmap markers rendered on CAD model.")
+            .arg(featName)
+            .arg(validCount)
+            .arg(toDisplayUnit(maxAbsDevMm, m_unitSystem), 0, 'f', decimals)
+            .arg(unitStr)
+        );
     }
 
 } // namespace OpenCMM

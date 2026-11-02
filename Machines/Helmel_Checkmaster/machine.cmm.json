@@ -1,34 +1,30 @@
 {
-  "machine_name": "Helmel Checkmaster 216-142",
+  "machine_name": "Helmel Checkmaster 112-102",
   "manufacturer": "Helmel Engineering",
   "controller_type": "PicoSerial",
   "axes": {
-    "scale_mm": [ 0.0005, 0.0005, 0.0005 ],
-    "sign": [ 1, 1, 1 ],
-    "travel_min_mm": [ 0.0, 0.0, -350.0 ],
-    "travel_max_mm": [ 400.0, 600.0, 0.0 ]
+    "scale_mm": [0.0005, 0.0005, 0.0005],
+    "sign": [1, 1, 1],
+    "travel_min_mm": [-150.0, -150.0, -250.0],
+    "travel_max_mm": [150.0, 150.0, 0.0]
   },
-  "probe_mount_offset_mm": [ 0.0, 0.0, 0.0 ],
+  "probe_mount_offset_mm": [0.0, -93.0, 250.0],
   "kinematic_chain": [
     {
       "id": "granite_base",
       "parent": "",
       "axis": "NONE",
-      "color_rgb": [ 0.22, 0.24, 0.26 ],
-      "step_file": "",
+      "color_rgb": [0.22, 0.24, 0.26],
+      "step_file": "meshes/granite_base.step",
       "primitives": [
-        {
-          "type": "box",
-          "origin": [ -100, -100, -120 ],
-          "size": [ 600, 800, 120 ]
-        }
+        { "type": "box", "origin": [-265, -342.5, -100], "size": [530, 685, 100] }
       ]
     },
     {
       "id": "bridge_y",
       "parent": "granite_base",
       "axis": "Y",
-      "color_rgb": [ 0.75, 0.77, 0.80 ],
+      "color_rgb": [0.86, 0.88, 0.89],
       "step_file": "meshes/bridge_y.step",
       "primitives": []
     },
@@ -36,7 +32,7 @@
       "id": "carriage_x",
       "parent": "bridge_y",
       "axis": "X",
-      "color_rgb": [ 0.28, 0.32, 0.38 ],
+      "color_rgb": [0.80, 0.82, 0.84],
       "step_file": "meshes/carriage_x.step",
       "primitives": []
     },
@@ -44,7 +40,7 @@
       "id": "quill_z",
       "parent": "carriage_x",
       "axis": "Z",
-      "color_rgb": [ 0.82, 0.84, 0.86 ],
+      "color_rgb": [0.82, 0.84, 0.86],
       "step_file": "meshes/quill_z.step",
       "primitives": []
     }
