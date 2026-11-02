@@ -20,7 +20,23 @@ MyMachine.cmm (ZIP Archive)
 
 ---
 
-## 2. Manifest Schema (`machine.cmm.json`)
+## 2. Setting Up CAD Origins
+
+To ensure your STEP models align and animate correctly in OpenCMM without manual offset tweaking, set up your CAD assembly (in SolidWorks, Fusion 360, Inventor, etc.) using these coordinate conventions before exporting:
+
+### The Granite Table Base
+* **`Z = 0`:** Set this precisely on the **top flat surface of the granite plate**. All part heights and probe tips measure upward from this reference plane.
+* **`X = 0` and `Y = 0`:** Set this at the **center of the granite work area** (allowing symmetric travel limits like $X$: -200 to +200) or at the front-left corner of the usable measuring volume.
+
+### Individual Link STEP Files (`bridge_y.step`, `carriage_x.step`, `quill_z.step`)
+When exporting individual component STEP files, export them relative to the **assembly's global origin** (not individual local part origins) while the machine is at its **home / zero position**:
+* **Bridge / Y-Axis (`bridge_y.step`):** Modeled at its nominal home position along Y travel.
+* **Carriage / X-Axis (`carriage_x.step`):** Modeled centered on the bridge crossbeam at X = 0.
+* **Quill / Z-Axis (`quill_z.step`):** Modeled at its **fully retracted (up) home position** ($Z_{\max}$).
+
+---
+
+## 3. Manifest Schema (`machine.cmm.json`)
 
 The manifest defines the machine's display name, manufacturer, controller type, encoder scaling factors, axis travel limits, and the hierarchical kinematic chain.
 
@@ -78,7 +94,7 @@ The manifest defines the machine's display name, manufacturer, controller type, 
 
 ---
 
-## 3. Key Property Definitions
+## 4. Key Property Definitions
 
 ### Root Properties
 * **`machine_name`** *(string)*: Display name shown in the UI and window title.
@@ -95,25 +111,16 @@ Each physical moving assembly or fixed base is defined as a node in the kinemati
 * **`id`** *(string)*: Unique identifier for the link.
 * **`parent`** *(string)*: The `id` of the parent link this part rides on (leave empty `""` for world/granite base).
 * **`axis`** *(string)*: Motion axis controlled by the DRO (`"NONE"`, `"X"`, `"Y"`, or `"Z"`).
-* **`color_rgb`** *[R, G, B float]*: RGB color values between `0.0` and `1.0` (applied if no STEP file is used or as a base tint).
+* **`color_rgb`** *[R, G, B float]*: RGB color values between `0.0` and `1.0`.
 * **`step_file`** *(string)*: Relative path to an external `.step` or `.stp` CAD file for this link's geometry.
-* **`primitives`** *(array)*: Inline procedural geometry (boxes/cylinders) used as a fallback if no STEP file is specified. Useful for quick prototyping or parametric components.
+* **`primitives`** *(array)*: Inline procedural geometry (boxes/cylinders) used as a fallback if no STEP file is specified.
 
 ---
 
-## 4. How to Package a Machine (.cmm)
+## 5. How to Package and Load a Machine
 
 1. Create a working folder on your computer (e.g., `Helmel_Checkmaster/`).
 2. Place your `machine.cmm.json` file inside the root of that folder.
-3. Create a subfolder named `meshes/` and drop your `.step` files inside.
-4. Select all contents of the folder (`machine.cmm.json` and the `meshes/` directory), right-click, and compress them into a **ZIP archive**.
-5. Rename the file extension from `.zip` to **`.cmm`** (e.g., `Helmel_Checkmaster.cmm`).
-
----
-
-## 5. Loading into OpenCMM
-
-1. Launch OpenCMM and click **⚙ Settings...** in the top-left toolbar.
-2. Go to the **Machine & Hardware** tab.
-3. Click **Browse .cmm...** and select your packed `.cmm` archive (or an unzipped `.cmm.json` file).
-4. Click **OK**—OpenCMM will automatically unpack the archive, load the kinematic hierarchy, display the 3D machine model, and animate it in real time at 60 FPS as you jog or simulate probe hits.
+3. Create a subfolder named `meshes/` and drop your exported STEP files inside.
+4. Select the contents of the folder, compress them into a **ZIP archive**, and rename the extension from `.zip` to **`.cmm`** (e.g., `Helmel_Checkmaster.cmm`).
+5. In OpenCMM, open **⚙ Settings...** $\rightarrow$ **Machine & Hardware**, click **Browse .cmm...**, and select your package.
