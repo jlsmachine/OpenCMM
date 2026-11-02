@@ -20,15 +20,16 @@ set(PROJECT_SOURCES
     src/math/MetrologyMath.cpp
     src/ui/MainWindow.cpp
     src/ui/OcctViewport.cpp
+    src/ui/SettingsDialog.cpp
     include/core/Units.h
     include/hal/ICmmController.h
     include/hal/PicoSerialController.h
     include/math/MetrologyMath.h
     include/ui/MainWindow.h
     include/ui/OcctViewport.h
-)
+ "include/ui/SettingsDialog.h")
 
-add_executable(OpenCMM ${PROJECT_SOURCES})
+add_executable(OpenCMM ${PROJECT_SOURCES} "include/ui/SettingsDialog.h")
 
 target_include_directories(OpenCMM PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include

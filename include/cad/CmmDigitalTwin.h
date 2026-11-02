@@ -2,60 +2,67 @@
 #include <AIS_InteractiveContext.hxx>
 #include <AIS_Shape.hxx>
 #include <gp_Trsf.hxx>
-#include <gp_Vec.hxx>
 #include <QString>
+#include <Eigen/Dense>
+#include <vector>
+#include <string>
 
 namespace OpenCMM {
 
-class CmmDigitalTwin {
-public:
-    void setContext(const Handle(AIS_InteractiveContext)& ctx) { m_ctx = ctx; }
+    enum class KinematicAxis {
+        None,
+        AxisX,
+        AxisY,
+        AxisZ
+    };
 
-    // Load individual STEP components for the Helmel Checkmaster
-    bool loadMachineModels(const QString& baseStepPath,
-                           const QString& bridgeYStepPath,
-                           const QString& carriageXStepPath,
-                           const QString& quillZStepPath,
-                           const QString& probeStepPath);
+    struct KinematicLink {
+        std::string id;
+        std::string parentId;
+        int parentIndex = -1;
+        KinematicAxis axis = KinematicAxis::None;
+        Handle(AIS_Shape) aisShape;
+        gp_Trsf worldTrsf;
+    };
 
-    // Called at 30Hz by PicoSerialController::droUpdated(xMm, yMm, zMm)
-    void updateMachinePosition(double xMm, double yMm, double zMm) {
-        if (m_ctx.IsNull()) return;
+    struct MachinePostConfig {
+        QString machineName = "Generic Bridge CMM";
+        QString manufacturer = "OpenCMM";
+        Eigen::Vector3d encoderScaleMm{ 0.0005, 0.0005, 0.0005 };
+        Eigen::Vector3i axisSign{ 1, 1, 1 };
+        Eigen::Vector3d travelMinMm{ 0.0, 0.0, -350.0 };
+        Eigen::Vector3d travelMaxMm{ 400.0, 600.0, 0.0 };
+    };
 
-        if (!m_bridgeY.IsNull()) {
-            gp_Trsf trsfY;
-            trsfY.SetTranslation(gp_Vec(0.0, yMm, 0.0));
-            m_ctx->SetLocation(m_bridgeY, TopLoc_Location(trsfY));
-        }
+    class CmmDigitalTwin {
+    public:
+        CmmDigitalTwin() = default;
 
-        if (!m_carriageX.IsNull()) {
-            gp_Trsf trsfXY;
-            trsfXY.SetTranslation(gp_Vec(xMm, yMm, 0.0));
-            m_ctx->SetLocation(m_carriageX, TopLoc_Location(trsfXY));
-        }
+        void setContext(const Handle(AIS_InteractiveContext)& ctx) { m_ctx = ctx; }
 
-        if (!m_quillZ.IsNull()) {
-            gp_Trsf trsfXYZ;
-            trsfXYZ.SetTranslation(gp_Vec(xMm, yMm, zMm));
-            m_ctx->SetLocation(m_quillZ, TopLoc_Location(trsfXYZ));
-        }
+        // Load either an unzipped folder/JSON or a packed .cmm zip archive
+        bool loadMachinePackage(const QString& packagePath);
 
-        if (!m_probe.IsNull()) {
-            gp_Trsf trsfXYZ;
-            trsfXYZ.SetTranslation(gp_Vec(xMm, yMm, zMm));
-            m_ctx->SetLocation(m_probe, TopLoc_Location(trsfXYZ));
-        }
+        void buildDefaultBridgeMachine();
+        void updateMachinePosition(double xMm, double yMm, double zMm);
 
-        m_ctx->UpdateCurrentViewer();
-    }
+        void setMachineVisible(bool visible);
+        bool isMachineVisible() const { return m_visible; }
 
-private:
-    Handle(AIS_InteractiveContext) m_ctx;
-    Handle(AIS_Shape) m_base;
-    Handle(AIS_Shape) m_bridgeY;
-    Handle(AIS_Shape) m_carriageX;
-    Handle(AIS_Shape) m_quillZ;
-    Handle(AIS_Shape) m_probe;
-};
+        const MachinePostConfig& config() const { return m_config; }
+
+    private:
+        bool parseJsonConfig(const QByteArray& jsonData, const QString& workingDir);
+        void clearLinks();
+        void resolveParentIndices();
+
+        Handle(AIS_InteractiveContext) m_ctx;
+        MachinePostConfig m_config;
+        std::vector<KinematicLink> m_links;
+        bool m_visible = true;
+        double m_lastX = 0.0;
+        double m_lastY = 0.0;
+        double m_lastZ = 0.0;
+    };
 
 } // namespace OpenCMM

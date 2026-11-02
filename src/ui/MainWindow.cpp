@@ -10,6 +10,7 @@
 
 #include "ui/MainWindow.h"
 #include "ui/OcctViewport.h"
+#include "ui/SettingsDialog.h"
 
 #include <QToolBar>
 #include <QDockWidget>
@@ -66,7 +67,6 @@ namespace OpenCMM {
         connect(m_controller, &PicoSerialController::connectionStatusChanged,
             this, &MainWindow::onConnectionChanged);
 
-        onRefreshPortsClicked();
         updateProbeStatusDisplay();
     }
 
@@ -90,39 +90,30 @@ namespace OpenCMM {
         setCentralWidget(m_viewport);
 
         statusBar()->setStyleSheet("background-color: #007acc; color: white; font-weight: bold;");
-        statusBar()->showMessage("Ready - Probe features, double-click any feature row to edit Nominal/Tolerance, or Export Report.");
+        statusBar()->showMessage("Ready - Click 'Settings...' to configure hardware/units, or probe features to begin inspection.");
     }
 
     void MainWindow::setupToolbar() {
         const QString barStyle =
-            "QToolBar { background-color: #21252b; border-bottom: 1px solid #3a3f4b; spacing: 6px; padding: 5px; }"
-            "QPushButton { background-color: #3a3f4b; color: white; border: 1px solid #4b5263; border-radius: 3px; padding: 5px 10px; font-weight: bold; }"
+            "QToolBar { background-color: #21252b; border-bottom: 1px solid #3a3f4b; spacing: 8px; padding: 5px; }"
+            "QPushButton { background-color: #3a3f4b; color: white; border: 1px solid #4b5263; border-radius: 3px; padding: 5px 12px; font-weight: bold; }"
             "QPushButton:hover { background-color: #4b5263; }"
             "QComboBox { background-color: #1e2227; color: white; border: 1px solid #4b5263; padding: 4px 8px; font-weight: bold; }"
-            "QComboBox QAbstractItemView { background-color: #1e2227; color: white; selection-background-color: #2d5a88; }"
-            "QCheckBox { color: #dcdfe4; font-weight: bold; spacing: 5px; padding: 0 4px; }";
+            "QComboBox QAbstractItemView { background-color: #1e2227; color: white; selection-background-color: #2d5a88; }";
 
-        // Row 1: Hardware, CAD Loader, Audio, Export & Simulator
-        auto* hwToolbar = addToolBar("Hardware & CAD Controls");
+        // Row 1: Settings, Zero XYZ, CAD Controls, Report Export & Simulator
+        auto* hwToolbar = addToolBar("Studio & CAD Controls");
         hwToolbar->setMovable(false);
         hwToolbar->setStyleSheet(barStyle);
 
-        auto* portLabel = new QLabel(" Pico 2: ", this);
-        portLabel->setStyleSheet("color: #abb2bf; font-weight: bold;");
-        hwToolbar->addWidget(portLabel);
-
-        m_portCombo = new QComboBox(this);
-        m_portCombo->setMinimumWidth(120);
-        hwToolbar->addWidget(m_portCombo);
-
-        auto* refreshBtn = new QPushButton("Refresh", this);
-        connect(refreshBtn, &QPushButton::clicked, this, &MainWindow::onRefreshPortsClicked);
-        hwToolbar->addWidget(refreshBtn);
-
-        m_connectBtn = new QPushButton("Connect", this);
-        m_connectBtn->setStyleSheet("background-color: #28a745; color: white; padding: 5px 12px; font-weight: bold;");
-        connect(m_connectBtn, &QPushButton::clicked, this, &MainWindow::onConnectClicked);
-        hwToolbar->addWidget(m_connectBtn);
+        m_settingsBtn = new QPushButton("⚙ Settings...", this);
+        m_settingsBtn->setStyleSheet(
+            "background-color: #282c34; color: #61afef; border: 1px solid #61afef; "
+            "border-radius: 3px; padding: 5px 12px; font-weight: bold;"
+        );
+        m_settingsBtn->setToolTip("Configure Machine Post (.cmm), Pico 2 Serial Port, Units (MM/Inch), Default Tolerances, and Audio");
+        connect(m_settingsBtn, &QPushButton::clicked, this, &MainWindow::onOpenSettingsClicked);
+        hwToolbar->addWidget(m_settingsBtn);
 
         hwToolbar->addSeparator();
 
@@ -130,24 +121,15 @@ namespace OpenCMM {
         connect(zeroBtn, &QPushButton::clicked, this, &MainWindow::onZeroAxesClicked);
         hwToolbar->addWidget(zeroBtn);
 
-        m_unitBtn = new QPushButton("Units: MM", this);
-        connect(m_unitBtn, &QPushButton::clicked, this, &MainWindow::onUnitToggled);
-        hwToolbar->addWidget(m_unitBtn);
-
-        m_audioCheck = new QCheckBox("Audio", this);
-        m_audioCheck->setChecked(true);
-        m_audioCheck->setToolTip("Play eyes-free audio chimes on probe trigger and feature solve");
-        hwToolbar->addWidget(m_audioCheck);
-
         hwToolbar->addSeparator();
 
-        auto* loadStepBtn = new QPushButton("Load CAD", this);
-        loadStepBtn->setStyleSheet("background-color: #2d5a88; color: white; padding: 5px 10px; font-weight: bold;");
+        auto* loadStepBtn = new QPushButton("Load STEP CAD", this);
+        loadStepBtn->setStyleSheet("background-color: #2d5a88; color: white; padding: 5px 12px; font-weight: bold;");
         connect(loadStepBtn, &QPushButton::clicked, this, &MainWindow::onLoadStepClicked);
         hwToolbar->addWidget(loadStepBtn);
 
         auto* transformCadBtn = new QPushButton("Orient CAD...", this);
-        transformCadBtn->setStyleSheet("background-color: #3b6998; color: white; padding: 5px 10px; font-weight: bold;");
+        transformCadBtn->setStyleSheet("background-color: #3b6998; color: white; padding: 5px 12px; font-weight: bold;");
         connect(transformCadBtn, &QPushButton::clicked, this, &MainWindow::onTransformCadClicked);
         hwToolbar->addWidget(transformCadBtn);
 
@@ -159,7 +141,7 @@ namespace OpenCMM {
 
         hwToolbar->addSeparator();
 
-        auto* simLabel = new QLabel(" Sim: ", this);
+        auto* simLabel = new QLabel(" Simulator: ", this);
         simLabel->setStyleSheet("color: #abb2bf; font-weight: bold;");
         hwToolbar->addWidget(simLabel);
 
@@ -172,8 +154,8 @@ namespace OpenCMM {
         m_simTargetCombo->addItem("Left Y-Edge (X=0)", 5);
         hwToolbar->addWidget(m_simTargetCombo);
 
-        auto* simHitBtn = new QPushButton("Sim Hit", this);
-        simHitBtn->setStyleSheet("background-color: #d19a66; color: #1e2227; padding: 5px 10px; font-weight: bold;");
+        auto* simHitBtn = new QPushButton("Simulate Probe Hit", this);
+        simHitBtn->setStyleSheet("background-color: #d19a66; color: #1e2227; padding: 5px 12px; font-weight: bold;");
         connect(simHitBtn, &QPushButton::clicked, this, &MainWindow::onSimulateHitClicked);
         hwToolbar->addWidget(simHitBtn);
 
@@ -384,8 +366,50 @@ namespace OpenCMM {
         addDockWidget(Qt::LeftDockWidgetArea, treeDock);
     }
 
+    void MainWindow::onOpenSettingsClicked() {
+        SettingsDialog dlg(this);
+
+        dlg.setCurrentUnitSystem(m_unitSystem);
+        dlg.setDefaultToleranceMm(m_defaultTolMm);
+        dlg.setAudioChimesEnabled(m_audioEnabled);
+
+        QStringList ports;
+        const auto availablePorts = QSerialPortInfo::availablePorts();
+        for (const QSerialPortInfo& info : availablePorts) {
+            ports.append(info.portName());
+        }
+        if (m_currentPortName.isEmpty() && !ports.isEmpty()) {
+            m_currentPortName = ports.first();
+        }
+        dlg.setAvailableSerialPorts(ports, m_currentPortName);
+
+        connect(&dlg, &SettingsDialog::machinePackageLoaded, this, [this](const QString& path) {
+            m_machinePackagePath = path;
+            statusBar()->showMessage("Loaded machine package: " + path);
+            });
+
+        connect(&dlg, &SettingsDialog::serialPortConnectRequested, this, [this](const QString& portName, int baudRate) {
+            if (!portName.isEmpty() && m_controller) {
+                m_currentPortName = portName;
+                m_controller->connectToPort(portName, baudRate);
+            }
+            });
+
+        if (dlg.exec() != QDialog::Accepted) return;
+
+        UnitSystem newUnits = dlg.getSelectedUnitSystem();
+        if (newUnits != m_unitSystem) {
+            onUnitToggled();
+        }
+
+        m_defaultTolMm = dlg.getDefaultToleranceMm();
+        m_audioEnabled = dlg.areAudioChimesEnabled();
+
+        statusBar()->showMessage("Settings updated successfully.");
+    }
+
     void MainWindow::playHitChime() const {
-        if (!m_audioCheck || !m_audioCheck->isChecked()) return;
+        if (!m_audioEnabled) return;
 #ifdef _WIN32
         std::thread([]() {
             Beep(1250, 35);
@@ -394,7 +418,7 @@ namespace OpenCMM {
     }
 
     void MainWindow::playSolveChime(bool passed) const {
-        if (!m_audioCheck || !m_audioCheck->isChecked()) return;
+        if (!m_audioEnabled) return;
 #ifdef _WIN32
         std::thread([passed]() {
             if (passed) {
@@ -507,45 +531,25 @@ namespace OpenCMM {
         );
     }
 
-    void MainWindow::onRefreshPortsClicked() {
-        m_portCombo->clear();
-        const auto ports = QSerialPortInfo::availablePorts();
-        for (const QSerialPortInfo& info : ports) {
-            QString label = info.portName();
-            if (!info.description().isEmpty()) {
-                label += " (" + info.description() + ")";
-            }
-            m_portCombo->addItem(label, info.portName());
-        }
-        if (m_portCombo->count() == 0) {
-            m_portCombo->addItem("No COM Ports Found", "");
-        }
-    }
-
-    void MainWindow::onConnectClicked() {
-        if (m_controller->isConnected()) {
-            m_controller->disconnectFromPort();
-            return;
-        }
-
-        QString portName = m_portCombo->currentData().toString();
-        if (portName.isEmpty()) {
-            statusBar()->showMessage("No valid COM port selected.");
-            return;
-        }
-
-        m_controller->connectToPort(portName, 115200);
-    }
-
     void MainWindow::onConnectionChanged(bool connected, const QString& message) {
         if (connected) {
-            m_connectBtn->setText("Disconnect");
-            m_connectBtn->setStyleSheet("background-color: #e06c75; color: white; padding: 5px 12px; font-weight: bold;");
+            if (m_settingsBtn) {
+                m_settingsBtn->setText("⚙ Settings (Connected)");
+                m_settingsBtn->setStyleSheet(
+                    "background-color: #1e3a29; color: #98c379; border: 1px solid #98c379; "
+                    "border-radius: 3px; padding: 5px 12px; font-weight: bold;"
+                );
+            }
             statusBar()->setStyleSheet("background-color: #28a745; color: white; font-weight: bold;");
         }
         else {
-            m_connectBtn->setText("Connect");
-            m_connectBtn->setStyleSheet("background-color: #28a745; color: white; padding: 5px 12px; font-weight: bold;");
+            if (m_settingsBtn) {
+                m_settingsBtn->setText("⚙ Settings...");
+                m_settingsBtn->setStyleSheet(
+                    "background-color: #282c34; color: #61afef; border: 1px solid #61afef; "
+                    "border-radius: 3px; padding: 5px 12px; font-weight: bold;"
+                );
+            }
             statusBar()->setStyleSheet("background-color: #007acc; color: white; font-weight: bold;");
         }
         statusBar()->showMessage(message);
@@ -564,13 +568,15 @@ namespace OpenCMM {
     void MainWindow::onUnitToggled() {
         if (m_unitSystem == UnitSystem::Millimeters) {
             m_unitSystem = UnitSystem::Inches;
-            m_unitBtn->setText("Units: INCH");
-            for (auto* lbl : m_unitLabels) lbl->setText("in");
+            for (auto* lbl : m_unitLabels) {
+                if (lbl) lbl->setText("in");
+            }
         }
         else {
             m_unitSystem = UnitSystem::Millimeters;
-            m_unitBtn->setText("Units: MM");
-            for (auto* lbl : m_unitLabels) lbl->setText("mm");
+            for (auto* lbl : m_unitLabels) {
+                if (lbl) lbl->setText("mm");
+            }
         }
         updateDroDisplay();
         updateProbeStatusDisplay();

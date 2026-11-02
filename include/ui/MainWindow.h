@@ -3,8 +3,8 @@
 #include <QLabel>
 #include <QComboBox>
 #include <QPushButton>
-#include <QCheckBox>
 #include <QTreeWidget>
+#include <QString>
 #include <vector>
 #include <string>
 #include <Eigen/Dense>
@@ -12,6 +12,7 @@
 #include "core/Units.h"
 #include "hal/PicoSerialController.h"
 #include "math/MetrologyMath.h"
+#include "ui/SettingsDialog.h"
 
 namespace OpenCMM {
 
@@ -25,12 +26,11 @@ namespace OpenCMM {
         ~MainWindow() override = default;
 
     private slots:
-        void onConnectClicked();
-        void onRefreshPortsClicked();
         void onZeroAxesClicked();
         void onUnitToggled();
         void onLoadStepClicked();
         void onTransformCadClicked();
+        void onOpenSettingsClicked();
 
         void onSimulateHitClicked();
         void onCalibrateProbeClicked();
@@ -75,16 +75,17 @@ namespace OpenCMM {
 
         UnitSystem m_unitSystem = UnitSystem::Millimeters;
         Position3D m_lastPosition{ 0.0, 0.0, 0.0 };
+        QString m_currentPortName;
+        QString m_machinePackagePath;
+        bool m_audioEnabled = true;
 
         double m_certifiedBallDiameterMm = 25.4000;
         double m_effectiveProbeRadius = 1.5000;
         double m_lastProbeLobingMm = 0.0;
         bool m_isProbeCalibrated = false;
 
-        // Default bilateral tolerance (0.0500 mm / ~0.0020 in)
         double m_defaultTolMm = 0.0500;
 
-        // Armed CAD Nominal from Phase 4 Face Picking
         bool m_hasArmedCadNominal = false;
         double m_armedCadDiameterMm = 0.0;
         Eigen::Vector3d m_armedCadLocationMm = Eigen::Vector3d::Zero();
@@ -93,7 +94,6 @@ namespace OpenCMM {
         WorkplaneFrame m_lastFittedPlaneFrame = WorkplaneFrame::fromStandard(StandardWorkplane::XY_PlusZ);
         bool m_hasCustomPlane = false;
 
-        // 3-2-1 Alignment State
         Eigen::Matrix4d m_pcsMatrix = Eigen::Matrix4d::Identity();
         bool m_isPartAligned = false;
         QPushButton* m_alignStatusBtn = nullptr;
@@ -102,30 +102,22 @@ namespace OpenCMM {
         std::vector<MeasuredFeature> m_solvedFeatures;
         int m_featureCounter = 1;
 
-        // Toolbar controls
-        QComboBox* m_portCombo = nullptr;
-        QPushButton* m_connectBtn = nullptr;
-        QPushButton* m_unitBtn = nullptr;
-        QCheckBox* m_audioCheck = nullptr;
-
+        QPushButton* m_settingsBtn = nullptr;
         QComboBox* m_workplaneCombo = nullptr;
         QComboBox* m_compModeCombo = nullptr;
         QComboBox* m_simTargetCombo = nullptr;
 
-        // DRO Labels
         QLabel* m_droX = nullptr;
         QLabel* m_droY = nullptr;
         QLabel* m_droZ = nullptr;
         QLabel* m_unitLabels[3] = { nullptr, nullptr, nullptr };
         QLabel* m_hitCountLabel = nullptr;
 
-        // Active Probe Status Labels
         QLabel* m_probeStatusBadge = nullptr;
         QLabel* m_probeDiamLabel = nullptr;
         QLabel* m_probeRadLabel = nullptr;
         QLabel* m_probeLobingLabel = nullptr;
 
-        // Feature Tree
         QTreeWidget* m_featureTree = nullptr;
         QTreeWidgetItem* m_activePointsGroup = nullptr;
     };
