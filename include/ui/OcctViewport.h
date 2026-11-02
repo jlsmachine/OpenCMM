@@ -16,6 +16,8 @@
 #include <gp_Dir.hxx>
 #include <gp_Trsf.hxx>
 
+#include "cad/CmmDigitalTwin.h"
+
 class QPushButton;
 class QSlider;
 class QLabel;
@@ -49,6 +51,11 @@ namespace OpenCMM {
         void loadStepFile(const QString& filepath);
         bool hasCadModel() const { return !m_cadShapes.empty(); }
 
+        // Digital Twin Machine Package Controls
+        bool loadMachinePackage(const QString& packagePath);
+        void resetDefaultMachine();
+        const MachinePostConfig& machineConfig() const { return m_digitalTwin.config(); }
+
         // CAD Model Orientation & Transformation Controls
         bool getCadBoundingBox(double& xmin, double& ymin, double& zmin,
             double& xmax, double& ymax, double& zmax) const;
@@ -68,6 +75,7 @@ namespace OpenCMM {
         void setModelDisplayMode(ModelDisplayMode mode);
         void setModelTransparency(double transparency);
         void setGraniteVisible(bool visible);
+        void setMachineVisible(bool visible);
 
         void setFaceSelectedCallback(std::function<void(const CadFaceInfo&)> cb) { m_faceSelectedCallback = std::move(cb); }
         CadFaceInfo inspectSelectedCadFace() const;
@@ -97,6 +105,8 @@ namespace OpenCMM {
         Handle(V3d_View) m_view;
         Handle(AIS_InteractiveContext) m_context;
 
+        CmmDigitalTwin m_digitalTwin;
+
         Handle(AIS_Shape) m_graniteShape;
         std::vector<Handle(AIS_Shape)> m_cadShapes;
         std::vector<TopoDS_Shape> m_originalCadShapes;
@@ -118,6 +128,7 @@ namespace OpenCMM {
         QPushButton* m_btnShadedOnly = nullptr;
         QPushButton* m_btnWireframe = nullptr;
         QPushButton* m_btnGranite = nullptr;
+        QPushButton* m_btnMachine = nullptr;
         QSlider* m_verticalSlider = nullptr;
         QLabel* m_sliderValLbl = nullptr;
 

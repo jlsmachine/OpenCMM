@@ -4,10 +4,8 @@
 #include <QFileInfo>
 #include <QDir>
 #include <QTemporaryDir>
+#include <QProcess>
 #include <nlohmann/json.hpp>
-
-// Qt zip support (available via QtGui/QtZipReader if enabled, or standard file IO)
-#include <private/qzipreader_p.h>
 
 #include <STEPControl_Reader.hxx>
 #include <IFSelect_ReturnStatus.hxx>
@@ -17,6 +15,8 @@
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <TopLoc_Location.hxx>
 #include <Quantity_Color.hxx>
+#include <gp_Pnt.hxx>
+#include <gp_Dir.hxx>
 #include <gp_Vec.hxx>
 #include <gp_Ax2.hxx>
 
@@ -47,32 +47,33 @@ namespace OpenCMM {
     }
 
     bool CmmDigitalTwin::loadMachinePackage(const QString& packagePath) {
-        if (m_ctx.IsNull()) return false;
+        if (m_ctx.IsNull() || packagePath.isEmpty()) return false;
 
-        QString workingDir;
         QTemporaryDir tempDir;
+        QString workingDir;
+        QString jsonPath = packagePath;
 
-        // Check if it's a zipped .cmm archive
-        if (packagePath.endsWith(".cmm", Qt::CaseInsensitive)) {
+        // Extract .cmm zip archive into tempDir using Windows system tar
+        if (packagePath.endsWith(".cmm", Qt::CaseInsensitive) ||
+            packagePath.endsWith(".zip", Qt::CaseInsensitive)) {
             if (!tempDir.isValid()) return false;
-            QZipReader zip(packagePath);
-            if (!zip.exists()) return false;
-            zip.extractAll(tempDir.path());
+
+            QProcess proc;
+            proc.start("tar", { "-xf", QDir::toNativeSeparators(packagePath), "-C", QDir::toNativeSeparators(tempDir.path()) });
+            if (!proc.waitForFinished(10000) || proc.exitCode() != 0) {
+                return false;
+            }
+
             workingDir = tempDir.path();
+            QDir dir(workingDir);
+            QStringList foundJson = dir.entryList({ "*.cmm.json", "*.json" }, QDir::Files);
+            if (foundJson.isEmpty()) {
+                return false;
+            }
+            jsonPath = dir.filePath(foundJson.first());
         }
         else {
             workingDir = QFileInfo(packagePath).absolutePath();
-        }
-
-        // Locate the .cmm.json manifest inside the folder or archive
-        QString jsonPath = packagePath;
-        if (packagePath.endsWith(".cmm", Qt::CaseInsensitive)) {
-            QDir dir(workingDir);
-            QStringList filters;
-            filters << "*.cmm.json" << "*.json";
-            QStringList foundFiles = dir.entryList(filters, QDir::Files);
-            if (foundFiles.isEmpty()) return false;
-            jsonPath = dir.filePath(foundFiles.first());
         }
 
         QFile file(jsonPath);
@@ -99,8 +100,8 @@ namespace OpenCMM {
         m_config.machineName = QString::fromStdString(j.value("machine_name", "Custom CMM"));
         m_config.manufacturer = QString::fromStdString(j.value("manufacturer", "OpenCMM"));
 
-        if (j.contains("axes")) {
-            auto& ax = j["axes"];
+        if (j.contains("axes") && j["axes"].is_object()) {
+            const auto& ax = j["axes"];
             if (ax.contains("scale_mm") && ax["scale_mm"].is_array() && ax["scale_mm"].size() == 3) {
                 m_config.encoderScaleMm = Eigen::Vector3d(ax["scale_mm"][0], ax["scale_mm"][1], ax["scale_mm"][2]);
             }
@@ -152,11 +153,11 @@ namespace OpenCMM {
 
                     for (const auto& prim : node["primitives"]) {
                         std::string pType = prim.value("type", "box");
-                        auto orig = prim.value("origin", std::vector<double>{0.0, 0.0, 0.0});
+                        auto orig = prim.value("origin", std::vector<double>{ 0.0, 0.0, 0.0 });
                         if (orig.size() < 3) continue;
 
                         if (pType == "box") {
-                            auto sz = prim.value("size", std::vector<double>{10.0, 10.0, 10.0});
+                            auto sz = prim.value("size", std::vector<double>{ 10.0, 10.0, 10.0 });
                             if (sz.size() == 3) {
                                 TopoDS_Shape box = BRepPrimAPI_MakeBox(
                                     gp_Pnt(orig[0], orig[1], orig[2]), sz[0], sz[1], sz[2]
@@ -177,12 +178,14 @@ namespace OpenCMM {
 
                 if (!linkShape.IsNull()) {
                     link.aisShape = new AIS_Shape(linkShape);
-                    auto rgb = node.value("color_rgb", std::vector<double>{0.5, 0.5, 0.5});
+                    auto rgb = node.value("color_rgb", std::vector<double>{ 0.65, 0.68, 0.72 });
                     if (rgb.size() == 3) {
                         link.aisShape->SetColor(Quantity_Color(rgb[0], rgb[1], rgb[2], Quantity_TOC_RGB));
                     }
                     link.aisShape->Attributes()->SetFaceBoundaryDraw(Standard_True);
-                    m_ctx->Display(link.aisShape, AIS_Shaded, -1, Standard_False);
+                    if (m_visible) {
+                        m_ctx->Display(link.aisShape, AIS_Shaded, -1, Standard_False);
+                    }
                     m_links.push_back(link);
                 }
             }
@@ -190,15 +193,17 @@ namespace OpenCMM {
 
         resolveParentIndices();
         updateMachinePosition(m_lastX, m_lastY, m_lastZ);
-        return true;
+        return !m_links.empty();
     }
 
     void CmmDigitalTwin::buildDefaultBridgeMachine() {
         if (m_ctx.IsNull()) return;
         clearLinks();
 
+        m_config = MachinePostConfig{};
         BRep_Builder builder;
 
+        // 1. Moving Y-Bridge (Left/Right columns + top X-beam)
         {
             KinematicLink bridge;
             bridge.id = "bridge_y";
@@ -214,10 +219,13 @@ namespace OpenCMM {
             bridge.aisShape = new AIS_Shape(comp);
             bridge.aisShape->SetColor(Quantity_Color(0.72, 0.75, 0.78, Quantity_TOC_RGB));
             bridge.aisShape->Attributes()->SetFaceBoundaryDraw(Standard_True);
-            m_ctx->Display(bridge.aisShape, AIS_Shaded, -1, Standard_False);
+            if (m_visible) {
+                m_ctx->Display(bridge.aisShape, AIS_Shaded, -1, Standard_False);
+            }
             m_links.push_back(bridge);
         }
 
+        // 2. X-Carriage riding along the bridge crossbeam
         {
             KinematicLink carriage;
             carriage.id = "carriage_x";
@@ -228,10 +236,13 @@ namespace OpenCMM {
             carriage.aisShape = new AIS_Shape(box);
             carriage.aisShape->SetColor(Quantity_Color(0.25, 0.30, 0.36, Quantity_TOC_RGB));
             carriage.aisShape->Attributes()->SetFaceBoundaryDraw(Standard_True);
-            m_ctx->Display(carriage.aisShape, AIS_Shaded, -1, Standard_False);
+            if (m_visible) {
+                m_ctx->Display(carriage.aisShape, AIS_Shaded, -1, Standard_False);
+            }
             m_links.push_back(carriage);
         }
 
+        // 3. Z-Quill & Probe Head (bottom meets stylus stem at Z = 50.0)
         {
             KinematicLink quill;
             quill.id = "quill_z";
@@ -247,7 +258,9 @@ namespace OpenCMM {
             quill.aisShape = new AIS_Shape(comp);
             quill.aisShape->SetColor(Quantity_Color(0.85, 0.87, 0.90, Quantity_TOC_RGB));
             quill.aisShape->Attributes()->SetFaceBoundaryDraw(Standard_True);
-            m_ctx->Display(quill.aisShape, AIS_Shaded, -1, Standard_False);
+            if (m_visible) {
+                m_ctx->Display(quill.aisShape, AIS_Shaded, -1, Standard_False);
+            }
             m_links.push_back(quill);
         }
 

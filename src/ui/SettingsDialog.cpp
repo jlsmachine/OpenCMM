@@ -13,8 +13,8 @@ namespace OpenCMM {
 
     SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
         setWindowTitle("OpenCMM - Studio Settings");
-        setMinimumWidth(500);
-        setMinimumHeight(380);
+        setMinimumWidth(540);
+        setMinimumHeight(400);
         setStyleSheet(
             "QDialog { background-color: #21252b; color: #e0e0e0; }"
             "QTabWidget::pane { border: 1px solid #3a3f4b; background: #1e2227; border-radius: 4px; }"
@@ -46,19 +46,22 @@ namespace OpenCMM {
         auto* machineLayout = new QVBoxLayout(tabMachine);
         machineLayout->setSpacing(14);
 
-        auto* machineGroup = new QGroupBox("Digital Twin Machine Post (.cmm Archive)", tabMachine);
+        auto* machineGroup = new QGroupBox("Digital Twin Machine Post (.cmm Archive or .cmm.json)", tabMachine);
         auto* machineGrpLayout = new QVBoxLayout(machineGroup);
 
         auto* fileRow = new QHBoxLayout();
         m_machinePathEdit = new QLineEdit(machineGroup);
         m_machinePathEdit->setReadOnly(true);
-        m_machinePathEdit->setPlaceholderText("No custom .cmm package loaded (using default bridge)");
+        m_machinePathEdit->setPlaceholderText("Default Procedural Bridge CMM Active");
 
         auto* browseBtn = new QPushButton("Browse .cmm...", machineGroup);
         browseBtn->setStyleSheet("background-color: #2d5a88; color: white;");
         connect(browseBtn, &QPushButton::clicked, this, [this]() {
             QString filePath = QFileDialog::getOpenFileName(
-                this, "Load Machine Post Package", QString(), "OpenCMM Machine Packages (*.cmm);;All Files (*.*)"
+                this,
+                "Load Machine Post Package",
+                QString(),
+                "CMM Machine Packages (*.cmm *.cmm.json *.json *.zip);;All Files (*.*)"
             );
             if (!filePath.isEmpty()) {
                 m_machinePathEdit->setText(filePath);
@@ -66,8 +69,15 @@ namespace OpenCMM {
             }
             });
 
+        auto* resetMachineBtn = new QPushButton("Reset Default", machineGroup);
+        connect(resetMachineBtn, &QPushButton::clicked, this, [this]() {
+            m_machinePathEdit->clear();
+            emit machinePackageReset();
+            });
+
         fileRow->addWidget(m_machinePathEdit, 1);
         fileRow->addWidget(browseBtn);
+        fileRow->addWidget(resetMachineBtn);
         machineGrpLayout->addLayout(fileRow);
         machineLayout->addWidget(machineGroup);
 
@@ -120,7 +130,7 @@ namespace OpenCMM {
         m_audioCheck = new QCheckBox("Enable Eyes-Free Audio Chimes (Probe hits & feature completion)", prefsGroup);
 
         prefsForm->addRow("Default Unit System:", m_unitCombo);
-        prefsForm->addRow("Default Bilateral Tolerance:", m_defaultTolSpin);
+        prefsForm->addRow("Default Bilateral Tolerance (mm):", m_defaultTolSpin);
         prefsForm->addRow(m_audioCheck);
 
         prefsLayout->addWidget(prefsGroup);
@@ -129,7 +139,6 @@ namespace OpenCMM {
 
         mainLayout->addWidget(tabWidget);
 
-        // Dialog Buttons
         auto* buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
         connect(buttonBox, &QDialogButtonBox::accepted, this, [this]() {
             emit settingsApplied();
@@ -165,6 +174,10 @@ namespace OpenCMM {
 
     void SettingsDialog::setAudioChimesEnabled(bool enabled) {
         m_audioCheck->setChecked(enabled);
+    }
+
+    void SettingsDialog::setSelectedMachinePath(const QString& path) {
+        m_machinePathEdit->setText(path);
     }
 
     void SettingsDialog::setAvailableSerialPorts(const QStringList& ports, const QString& currentPort) {

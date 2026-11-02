@@ -26,12 +26,12 @@ namespace OpenCMM {
     };
 
     struct MachinePostConfig {
-        QString machineName = "Generic Bridge CMM";
+        QString machineName = "Default Moving-Bridge CMM";
         QString manufacturer = "OpenCMM";
         Eigen::Vector3d encoderScaleMm{ 0.0005, 0.0005, 0.0005 };
         Eigen::Vector3i axisSign{ 1, 1, 1 };
-        Eigen::Vector3d travelMinMm{ 0.0, 0.0, -350.0 };
-        Eigen::Vector3d travelMaxMm{ 400.0, 600.0, 0.0 };
+        Eigen::Vector3d travelMinMm{ -250.0, -150.0, -200.0 };
+        Eigen::Vector3d travelMaxMm{ 250.0, 150.0, 200.0 };
     };
 
     class CmmDigitalTwin {
@@ -40,10 +40,13 @@ namespace OpenCMM {
 
         void setContext(const Handle(AIS_InteractiveContext)& ctx) { m_ctx = ctx; }
 
-        // Load either an unzipped folder/JSON or a packed .cmm zip archive
+        // Load either a packed .cmm zip archive or a .cmm.json manifest file
         bool loadMachinePackage(const QString& packagePath);
 
+        // Build the default procedural 3-axis moving-bridge CMM
         void buildDefaultBridgeMachine();
+
+        // Real-time kinematic chain transform update
         void updateMachinePosition(double xMm, double yMm, double zMm);
 
         void setMachineVisible(bool visible);

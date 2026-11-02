@@ -16,6 +16,7 @@ find_package(Qt6 COMPONENTS Core Gui Widgets SerialPort REQUIRED)
 # 2. Source & Header Files (Including Milestone 2 Viewport)
 set(PROJECT_SOURCES
     src/main.cpp
+    src/cad/CmmDigitalTwin.cpp
     src/hal/PicoSerialController.cpp
     src/math/MetrologyMath.cpp
     src/ui/MainWindow.cpp

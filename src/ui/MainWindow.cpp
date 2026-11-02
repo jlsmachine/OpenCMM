@@ -372,6 +372,7 @@ namespace OpenCMM {
         dlg.setCurrentUnitSystem(m_unitSystem);
         dlg.setDefaultToleranceMm(m_defaultTolMm);
         dlg.setAudioChimesEnabled(m_audioEnabled);
+        dlg.setSelectedMachinePath(m_machinePackagePath);
 
         QStringList ports;
         const auto availablePorts = QSerialPortInfo::availablePorts();
@@ -383,9 +384,26 @@ namespace OpenCMM {
         }
         dlg.setAvailableSerialPorts(ports, m_currentPortName);
 
-        connect(&dlg, &SettingsDialog::machinePackageLoaded, this, [this](const QString& path) {
-            m_machinePackagePath = path;
-            statusBar()->showMessage("Loaded machine package: " + path);
+        connect(&dlg, &SettingsDialog::machinePackageLoaded, this, [this, &dlg](const QString& path) {
+            if (m_viewport && m_viewport->loadMachinePackage(path)) {
+                m_machinePackagePath = path;
+                const auto& cfg = m_viewport->machineConfig();
+                setWindowTitle(QString("OpenCMM - %1 (%2)").arg(cfg.machineName, cfg.manufacturer));
+                statusBar()->showMessage(QString("Loaded Machine Post: %1 (%2)").arg(cfg.machineName, path));
+            }
+            else {
+                QMessageBox::warning(&dlg, "Machine Package Load Failed",
+                    "Could not parse the selected .cmm / .cmm.json machine package. Verify the archive contains a valid JSON manifest.");
+            }
+            });
+
+        connect(&dlg, &SettingsDialog::machinePackageReset, this, [this]() {
+            m_machinePackagePath.clear();
+            if (m_viewport) {
+                m_viewport->resetDefaultMachine();
+            }
+            setWindowTitle("OpenCMM - Precision Coordinate Metrology Studio");
+            statusBar()->showMessage("Reset Digital Twin to Default Moving-Bridge CMM.");
             });
 
         connect(&dlg, &SettingsDialog::serialPortConnectRequested, this, [this](const QString& portName, int baudRate) {

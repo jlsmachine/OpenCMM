@@ -108,6 +108,14 @@ namespace OpenCMM {
             });
         hudLayout->addWidget(m_btnGranite);
 
+        m_btnMachine = new QPushButton("Machine Bridge", m_hudContainer);
+        m_btnMachine->setCheckable(true);
+        m_btnMachine->setChecked(true);
+        connect(m_btnMachine, &QPushButton::clicked, this, [this]() {
+            setMachineVisible(m_btnMachine->isChecked());
+            });
+        hudLayout->addWidget(m_btnMachine);
+
         auto* sliderLayout = new QVBoxLayout();
         sliderLayout->setSpacing(3);
         auto* transTitle = new QLabel("Trans: 0%", m_hudContainer);
@@ -171,6 +179,9 @@ namespace OpenCMM {
         createDemoGraniteScene();
         createProbeStylus();
 
+        m_digitalTwin.setContext(m_context);
+        m_digitalTwin.buildDefaultBridgeMachine();
+
         m_view->MustBeResized();
         m_view->FitAll();
     }
@@ -197,6 +208,27 @@ namespace OpenCMM {
         m_context->Display(m_probeStem, AIS_Shaded, -1, Standard_False);
     }
 
+    bool OcctViewport::loadMachinePackage(const QString& packagePath) {
+        if (m_view.IsNull()) {
+            initOcct();
+        }
+        bool ok = m_digitalTwin.loadMachinePackage(packagePath);
+        if (ok && !m_view.IsNull()) {
+            m_view->FitAll();
+        }
+        return ok;
+    }
+
+    void OcctViewport::resetDefaultMachine() {
+        if (m_view.IsNull()) {
+            initOcct();
+        }
+        m_digitalTwin.buildDefaultBridgeMachine();
+        if (!m_view.IsNull()) {
+            m_view->FitAll();
+        }
+    }
+
     void OcctViewport::updateProbePosition(double x, double y, double z) {
         if (m_context.IsNull() || m_probeRuby.IsNull() || m_probeStem.IsNull()) {
             return;
@@ -208,7 +240,7 @@ namespace OpenCMM {
 
         m_context->SetLocation(m_probeRuby, loc);
         m_context->SetLocation(m_probeStem, loc);
-        m_context->UpdateCurrentViewer();
+        m_digitalTwin.updateMachinePosition(x, y, z);
     }
 
     void OcctViewport::addHitPointMarker(double x, double y, double z) {
@@ -318,6 +350,11 @@ namespace OpenCMM {
         else {
             m_context->Erase(m_graniteShape, Standard_True);
         }
+    }
+
+    void OcctViewport::setMachineVisible(bool visible) {
+        if (m_btnMachine) m_btnMachine->setChecked(visible);
+        m_digitalTwin.setMachineVisible(visible);
     }
 
     void OcctViewport::paintEvent(QPaintEvent* /*event*/) {
@@ -489,12 +526,11 @@ namespace OpenCMM {
 
         const double dotVal = std::clamp(u.Dot(v), -1.0, 1.0);
         if (dotVal > 0.999999) {
-            return true; // Already aligned
+            return true;
         }
 
         gp_Trsf trsf;
         if (dotVal < -0.999999) {
-            // Opposite direction: rotate 180 degrees around X or Y axis
             gp_Dir orthoAxis = (std::abs(u.X()) < 0.9) ? gp_Dir(1.0, 0.0, 0.0) : gp_Dir(0.0, 1.0, 0.0);
             trsf.SetRotation(gp_Ax1(pivot, orthoAxis), 3.14159265358979323846);
         }

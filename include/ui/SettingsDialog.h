@@ -23,10 +23,12 @@ namespace OpenCMM {
         void setCurrentUnitSystem(UnitSystem units);
         void setDefaultToleranceMm(double tolMm);
         void setAudioChimesEnabled(bool enabled);
+        void setSelectedMachinePath(const QString& path);
         void setAvailableSerialPorts(const QStringList& ports, const QString& currentPort);
 
     signals:
         void machinePackageLoaded(const QString& packagePath);
+        void machinePackageReset();
         void serialPortConnectRequested(const QString& portName, int baudRate);
         void settingsApplied();
 
