@@ -1,71 +1,82 @@
 #pragma once
-#include <AIS_InteractiveContext.hxx>
-#include <AIS_Shape.hxx>
-#include <gp_Trsf.hxx>
 #include <QString>
-#include <Eigen/Dense>
+#include <QStringList>
 #include <vector>
 #include <string>
+#include <Eigen/Dense>
+#include <AIS_InteractiveContext.hxx>
+#include <AIS_Shape.hxx>
+#include <TopoDS_Shape.hxx>
 
 namespace OpenCMM {
 
-    enum class KinematicAxis {
-        None,
-        AxisX,
-        AxisY,
-        AxisZ
+    struct KinematicPrimitive {
+        std::string type = "box"; // "box" or "cylinder"
+        Eigen::Vector3d origin = Eigen::Vector3d::Zero();
+        Eigen::Vector3d size = Eigen::Vector3d::Zero();
     };
 
-    struct KinematicLink {
+    struct KinematicLinkDef {
         std::string id;
         std::string parentId;
-        int parentIndex = -1;
-        KinematicAxis axis = KinematicAxis::None;
-        Handle(AIS_Shape) aisShape;
-        gp_Trsf worldTrsf;
+        std::string axis = "NONE"; // "NONE", "X", "Y", "Z"
+        Eigen::Vector3d colorRgb{ 0.5, 0.5, 0.5 };
+        std::string stepFile;
+        std::vector<KinematicPrimitive> primitives;
     };
 
     struct MachinePostConfig {
-        QString machineName = "Default Moving-Bridge CMM";
-        QString manufacturer = "OpenCMM";
-        Eigen::Vector3d encoderScaleMm{ 0.0005, 0.0005, 0.0005 };
-        Eigen::Vector3i axisSign{ 1, 1, 1 };
-        Eigen::Vector3d travelMinMm{ -250.0, -150.0, -200.0 };
-        Eigen::Vector3d travelMaxMm{ 250.0, 150.0, 200.0 };
+        std::string machineName = "Default Bridge CMM";
+        std::string manufacturer = "OpenCMM";
+        std::string controllerType = "PicoSerial";
+        Eigen::Vector3d scaleMm{ 0.0005, 0.0005, 0.0005 };
+        Eigen::Vector3i sign{ 1, 1, 1 };
+        Eigen::Vector3d travelMinMm{ -200.0, -200.0, -250.0 };
+        Eigen::Vector3d travelMaxMm{ 200.0, 200.0, 0.0 };
+        Eigen::Vector3d probeMountOffsetMm{ 0.0, 0.0, 0.0 };
+        std::vector<KinematicLinkDef> links;
     };
 
     class CmmDigitalTwin {
     public:
         CmmDigitalTwin() = default;
+        ~CmmDigitalTwin() = default;
 
-        void setContext(const Handle(AIS_InteractiveContext)& ctx) { m_ctx = ctx; }
+        void setContext(const Handle(AIS_InteractiveContext)& ctx) { m_context = ctx; }
 
-        // Load either a packed .cmm zip archive or a .cmm.json manifest file
-        bool loadMachinePackage(const QString& packagePath);
-
-        // Build the default procedural 3-axis moving-bridge CMM
         void buildDefaultBridgeMachine();
+        bool loadMachinePackage(const QString& packagePath);
+        void clearScene();
 
-        // Real-time kinematic chain transform update
         void updateMachinePosition(double xMm, double yMm, double zMm);
 
         void setMachineVisible(bool visible);
         bool isMachineVisible() const { return m_visible; }
 
+        // Per-component visibility controls
+        QStringList getLinkIds() const;
+        bool isLinkVisible(const QString& linkId) const;
+        void setLinkVisible(const QString& linkId, bool visible);
+
         const MachinePostConfig& config() const { return m_config; }
 
     private:
-        bool parseJsonConfig(const QByteArray& jsonData, const QString& workingDir);
-        void clearLinks();
-        void resolveParentIndices();
+        struct RuntimeNode {
+            KinematicLinkDef def;
+            Handle(AIS_Shape) aisShape;
+            int parentIndex = -1;
+            bool visible = true;
+        };
 
-        Handle(AIS_InteractiveContext) m_ctx;
+        bool parseManifestJson(const QByteArray& jsonBytes, const QString& baseDir);
+        TopoDS_Shape buildLinkShape(const KinematicLinkDef& def, const QString& baseDir);
+        void rebuildAisNodes(const QString& baseDir);
+
+        Handle(AIS_InteractiveContext) m_context;
         MachinePostConfig m_config;
-        std::vector<KinematicLink> m_links;
+        std::vector<RuntimeNode> m_nodes;
         bool m_visible = true;
-        double m_lastX = 0.0;
-        double m_lastY = 0.0;
-        double m_lastZ = 0.0;
+        Eigen::Vector3d m_lastPosMm = Eigen::Vector3d::Zero();
     };
 
 } // namespace OpenCMM

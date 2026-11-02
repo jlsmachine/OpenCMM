@@ -21,6 +21,7 @@
 class QPushButton;
 class QSlider;
 class QLabel;
+class QVBoxLayout;
 
 namespace OpenCMM {
 
@@ -78,13 +79,14 @@ namespace OpenCMM {
         void setModelTransparency(double transparency);
         void setGraniteVisible(bool visible);
         void setMachineVisible(bool visible);
+        void setProbeStylusVisible(bool visible);
 
         void setFaceSelectedCallback(std::function<void(const CadFaceInfo&)> cb) { m_faceSelectedCallback = std::move(cb); }
         CadFaceInfo inspectSelectedCadFace() const;
         const CadFaceInfo& lastSelectedFace() const { return m_lastSelectedFace; }
 
         QPaintEngine* paintEngine() const override { return nullptr; }
-         
+
     protected:
         void paintEvent(QPaintEvent* event) override;
         void resizeEvent(QResizeEvent* event) override;
@@ -97,7 +99,7 @@ namespace OpenCMM {
     private:
         void initOcct();
         void setupOverlayHud();
-        void createDemoGraniteScene();
+        void rebuildComponentHudButtons();
         void createProbeStylus();
         void applyVisualStyleToShape(const Handle(AIS_Shape)& shape);
         void applyTransformToCadModels(const gp_Trsf& trsf);
@@ -109,18 +111,18 @@ namespace OpenCMM {
 
         CmmDigitalTwin m_digitalTwin;
 
-        Handle(AIS_Shape) m_graniteShape;
         std::vector<Handle(AIS_Shape)> m_cadShapes;
         std::vector<TopoDS_Shape> m_originalCadShapes;
 
         Handle(AIS_Shape) m_probeRuby;
         Handle(AIS_Shape) m_probeStem;
+        bool m_probeStylusVisible = true;
+
         std::vector<Handle(AIS_Shape)> m_activeHitMarkers;
         std::vector<Handle(AIS_Shape)> m_solvedHitMarkers;
 
         ModelDisplayMode m_displayMode = ModelDisplayMode::ShadedWithEdges;
         double m_transparency = 0.0;
-        bool m_graniteVisible = true;
 
         CadFaceInfo m_lastSelectedFace;
         std::function<void(const CadFaceInfo&)> m_faceSelectedCallback;
@@ -129,8 +131,10 @@ namespace OpenCMM {
         QPushButton* m_btnShadedEdges = nullptr;
         QPushButton* m_btnShadedOnly = nullptr;
         QPushButton* m_btnWireframe = nullptr;
-        QPushButton* m_btnGranite = nullptr;
-        QPushButton* m_btnMachine = nullptr;
+        QPushButton* m_btnProbeStylus = nullptr;
+        QWidget* m_linkButtonsContainer = nullptr;
+        QVBoxLayout* m_linkButtonsLayout = nullptr;
+        std::vector<QPushButton*> m_linkButtons;
         QSlider* m_verticalSlider = nullptr;
         QLabel* m_sliderValLbl = nullptr;
 

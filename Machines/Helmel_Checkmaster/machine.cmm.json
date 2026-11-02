@@ -8,7 +8,7 @@
     "travel_min_mm": [-150.0, -150.0, -250.0],
     "travel_max_mm": [150.0, 150.0, 0.0]
   },
-  "probe_mount_offset_mm": [0.0, -93.0, 250.0],
+  "probe_mount_offset_mm": [0.0, -93.0, 252.0],
   "kinematic_chain": [
     {
       "id": "granite_base",

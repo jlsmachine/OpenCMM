@@ -18,6 +18,8 @@
 #include <BRepPrimAPI_MakeSphere.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
+#include <BRep_Builder.hxx>
+#include <TopoDS_Compound.hxx>
 #include <BRepBndLib.hxx>
 #include <Bnd_Box.hxx>
 #include <Prs3d_Drawer.hxx>
@@ -37,8 +39,6 @@
 #include <gp_Ax1.hxx>
 #include <gp_Ax2.hxx>
 #include <Quantity_Color.hxx>
-#include <BRep_Builder.hxx>
-#include <TopoDS_Compound.hxx>
 
 #ifdef _WIN32
 #include <WNT_Window.hxx>
@@ -64,7 +64,7 @@ namespace OpenCMM {
         m_hudContainer = new QWidget(this);
         m_hudContainer->setStyleSheet(
             "QWidget { background-color: rgba(33, 37, 43, 220); border: 1px solid #3a3f4b; border-radius: 6px; }"
-            "QPushButton { background-color: #282c34; color: #abb2bf; border: 1px solid #4b5263; border-radius: 3px; padding: 5px 8px; font-weight: bold; font-size: 11px; min-width: 105px; }"
+            "QPushButton { background-color: #282c34; color: #abb2bf; border: 1px solid #4b5263; border-radius: 3px; padding: 4px 8px; font-weight: bold; font-size: 11px; min-width: 115px; text-align: left; }"
             "QPushButton:hover { background-color: #3a3f4b; color: white; }"
             "QPushButton:checked { background-color: #2d5a88; color: white; border: 1px solid #61afef; }"
             "QSlider::groove:vertical { background: #1e2227; width: 6px; border-radius: 3px; }"
@@ -74,13 +74,13 @@ namespace OpenCMM {
 
         auto* hudLayout = new QVBoxLayout(m_hudContainer);
         hudLayout->setContentsMargins(8, 8, 8, 8);
-        hudLayout->setSpacing(6);
+        hudLayout->setSpacing(5);
 
-        auto* titleLbl = new QLabel("VIEW HUD", m_hudContainer);
+        auto* titleLbl = new QLabel("CAD DISPLAY", m_hudContainer);
         titleLbl->setAlignment(Qt::AlignCenter);
         hudLayout->addWidget(titleLbl);
 
-        m_btnShadedEdges = new QPushButton("Shaded + Edges", m_hudContainer);
+        m_btnShadedEdges = new QPushButton("✓ Shaded + Edges", m_hudContainer);
         m_btnShadedEdges->setCheckable(true);
         m_btnShadedEdges->setChecked(true);
         connect(m_btnShadedEdges, &QPushButton::clicked, this, [this]() {
@@ -88,48 +88,51 @@ namespace OpenCMM {
             });
         hudLayout->addWidget(m_btnShadedEdges);
 
-        m_btnShadedOnly = new QPushButton("Shaded Only", m_hudContainer);
+        m_btnShadedOnly = new QPushButton("  Shaded Only", m_hudContainer);
         m_btnShadedOnly->setCheckable(true);
         connect(m_btnShadedOnly, &QPushButton::clicked, this, [this]() {
             setModelDisplayMode(ModelDisplayMode::ShadedOnly);
             });
         hudLayout->addWidget(m_btnShadedOnly);
 
-        m_btnWireframe = new QPushButton("Wireframe", m_hudContainer);
+        m_btnWireframe = new QPushButton("  Wireframe", m_hudContainer);
         m_btnWireframe->setCheckable(true);
         connect(m_btnWireframe, &QPushButton::clicked, this, [this]() {
             setModelDisplayMode(ModelDisplayMode::Wireframe);
             });
         hudLayout->addWidget(m_btnWireframe);
 
-        m_btnGranite = new QPushButton("Granite Table", m_hudContainer);
-        m_btnGranite->setCheckable(true);
-        m_btnGranite->setChecked(true);
-        connect(m_btnGranite, &QPushButton::clicked, this, [this]() {
-            setGraniteVisible(m_btnGranite->isChecked());
-            });
-        hudLayout->addWidget(m_btnGranite);
+        auto* compTitle = new QLabel("MACHINE LINKS", m_hudContainer);
+        compTitle->setAlignment(Qt::AlignCenter);
+        hudLayout->addWidget(compTitle);
 
-        m_btnMachine = new QPushButton("Machine Bridge", m_hudContainer);
-        m_btnMachine->setCheckable(true);
-        m_btnMachine->setChecked(true);
-        connect(m_btnMachine, &QPushButton::clicked, this, [this]() {
-            setMachineVisible(m_btnMachine->isChecked());
+        m_linkButtonsContainer = new QWidget(m_hudContainer);
+        m_linkButtonsContainer->setStyleSheet("border: none; background: transparent;");
+        m_linkButtonsLayout = new QVBoxLayout(m_linkButtonsContainer);
+        m_linkButtonsLayout->setContentsMargins(0, 0, 0, 0);
+        m_linkButtonsLayout->setSpacing(4);
+        hudLayout->addWidget(m_linkButtonsContainer);
+
+        m_btnProbeStylus = new QPushButton("✓ Built-in Stylus", m_hudContainer);
+        m_btnProbeStylus->setCheckable(true);
+        m_btnProbeStylus->setChecked(true);
+        connect(m_btnProbeStylus, &QPushButton::clicked, this, [this](bool checked) {
+            setProbeStylusVisible(checked);
             });
-        hudLayout->addWidget(m_btnMachine);
+        hudLayout->addWidget(m_btnProbeStylus);
 
         auto* sliderLayout = new QVBoxLayout();
         sliderLayout->setSpacing(3);
-        auto* transTitle = new QLabel("Trans: 0%", m_hudContainer);
+        auto* transTitle = new QLabel("CAD Trans: 0%", m_hudContainer);
         transTitle->setAlignment(Qt::AlignCenter);
         m_sliderValLbl = transTitle;
 
         m_verticalSlider = new QSlider(Qt::Vertical, m_hudContainer);
         m_verticalSlider->setRange(0, 90);
         m_verticalSlider->setValue(0);
-        m_verticalSlider->setFixedHeight(90);
+        m_verticalSlider->setFixedHeight(75);
         connect(m_verticalSlider, &QSlider::valueChanged, this, [this](int val) {
-            m_sliderValLbl->setText(QString("Trans: %1%").arg(val));
+            m_sliderValLbl->setText(QString("CAD Trans: %1%").arg(val));
             setModelTransparency(static_cast<double>(val) / 100.0);
             });
 
@@ -139,6 +142,38 @@ namespace OpenCMM {
 
         m_hudContainer->adjustSize();
         m_hudContainer->raise();
+    }
+
+    void OcctViewport::rebuildComponentHudButtons() {
+        if (!m_linkButtonsLayout) return;
+
+        for (auto* btn : m_linkButtons) {
+            m_linkButtonsLayout->removeWidget(btn);
+            delete btn;
+        }
+        m_linkButtons.clear();
+
+        const QStringList linkIds = m_digitalTwin.getLinkIds();
+        for (const QString& id : linkIds) {
+            const bool vis = m_digitalTwin.isLinkVisible(id);
+            auto* btn = new QPushButton((vis ? "✓ " : "  ") + id, m_linkButtonsContainer);
+            btn->setCheckable(true);
+            btn->setChecked(vis);
+            connect(btn, &QPushButton::clicked, this, [this, id, btn](bool checked) {
+                m_digitalTwin.setLinkVisible(id, checked);
+                btn->setText((checked ? "✓ " : "  ") + id);
+                });
+            m_linkButtonsLayout->addWidget(btn);
+            m_linkButtons.push_back(btn);
+        }
+
+        if (m_hudContainer) {
+            m_hudContainer->adjustSize();
+            int x = width() - m_hudContainer->width() - 14;
+            int y = 14;
+            m_hudContainer->move(x, y);
+            m_hudContainer->raise();
+        }
     }
 
     void OcctViewport::initOcct() {
@@ -178,22 +213,14 @@ namespace OpenCMM {
             V3d_ZBUFFER
         );
 
-        createDemoGraniteScene();
         createProbeStylus();
 
         m_digitalTwin.setContext(m_context);
         m_digitalTwin.buildDefaultBridgeMachine();
+        rebuildComponentHudButtons();
 
         m_view->MustBeResized();
         m_view->FitAll();
-    }
-
-    void OcctViewport::createDemoGraniteScene() {
-        TopoDS_Shape graniteBox = BRepPrimAPI_MakeBox(gp_Pnt(-300.0, -200.0, -80.0), 600.0, 400.0, 80.0).Shape();
-        m_graniteShape = new AIS_Shape(graniteBox);
-        m_graniteShape->SetColor(Quantity_Color(0.22, 0.24, 0.26, Quantity_TOC_RGB));
-        m_graniteShape->Attributes()->SetFaceBoundaryDraw(Standard_True);
-        m_context->Display(m_graniteShape, AIS_Shaded, -1, Standard_False);
     }
 
     void OcctViewport::createProbeStylus() {
@@ -210,13 +237,39 @@ namespace OpenCMM {
         m_context->Display(m_probeStem, AIS_Shaded, -1, Standard_False);
     }
 
+    void OcctViewport::setProbeStylusVisible(bool visible) {
+        m_probeStylusVisible = visible;
+        if (m_btnProbeStylus) {
+            m_btnProbeStylus->setChecked(visible);
+            m_btnProbeStylus->setText(visible ? "✓ Built-in Stylus" : "  Built-in Stylus");
+        }
+        if (m_context.IsNull() || m_probeRuby.IsNull() || m_probeStem.IsNull()) {
+            return;
+        }
+        if (visible) {
+            m_context->Display(m_probeRuby, AIS_Shaded, -1, Standard_False);
+            m_context->Display(m_probeStem, AIS_Shaded, -1, Standard_True);
+        }
+        else {
+            m_context->Erase(m_probeRuby, Standard_False);
+            m_context->Erase(m_probeStem, Standard_True);
+        }
+    }
+
     bool OcctViewport::loadMachinePackage(const QString& packagePath) {
         if (m_view.IsNull()) {
             initOcct();
         }
         bool ok = m_digitalTwin.loadMachinePackage(packagePath);
-        if (ok && !m_view.IsNull()) {
-            m_view->FitAll();
+        if (ok) {
+            rebuildComponentHudButtons();
+            // If the custom machine package already has a modeled probe offset on its quill,
+            // hide the redundant built-in procedural stylus by default (user can toggle it in HUD)
+            const bool hasModeledStylus = (m_digitalTwin.config().probeMountOffsetMm.norm() > 1e-3);
+            setProbeStylusVisible(!hasModeledStylus);
+            if (!m_view.IsNull()) {
+                m_view->FitAll();
+            }
         }
         return ok;
     }
@@ -226,6 +279,8 @@ namespace OpenCMM {
             initOcct();
         }
         m_digitalTwin.buildDefaultBridgeMachine();
+        rebuildComponentHudButtons();
+        setProbeStylusVisible(true);
         if (!m_view.IsNull()) {
             m_view->FitAll();
         }
@@ -329,9 +384,18 @@ namespace OpenCMM {
 
     void OcctViewport::setModelDisplayMode(ModelDisplayMode mode) {
         m_displayMode = mode;
-        if (m_btnShadedEdges) m_btnShadedEdges->setChecked(mode == ModelDisplayMode::ShadedWithEdges);
-        if (m_btnShadedOnly) m_btnShadedOnly->setChecked(mode == ModelDisplayMode::ShadedOnly);
-        if (m_btnWireframe) m_btnWireframe->setChecked(mode == ModelDisplayMode::Wireframe);
+        if (m_btnShadedEdges) {
+            m_btnShadedEdges->setChecked(mode == ModelDisplayMode::ShadedWithEdges);
+            m_btnShadedEdges->setText((mode == ModelDisplayMode::ShadedWithEdges ? "✓ " : "  ") + QString("Shaded + Edges"));
+        }
+        if (m_btnShadedOnly) {
+            m_btnShadedOnly->setChecked(mode == ModelDisplayMode::ShadedOnly);
+            m_btnShadedOnly->setText((mode == ModelDisplayMode::ShadedOnly ? "✓ " : "  ") + QString("Shaded Only"));
+        }
+        if (m_btnWireframe) {
+            m_btnWireframe->setChecked(mode == ModelDisplayMode::Wireframe);
+            m_btnWireframe->setText((mode == ModelDisplayMode::Wireframe ? "✓ " : "  ") + QString("Wireframe"));
+        }
 
         if (m_context.IsNull()) {
             return;
@@ -339,9 +403,6 @@ namespace OpenCMM {
 
         for (const auto& cad : m_cadShapes) {
             applyVisualStyleToShape(cad);
-        }
-        if (m_cadShapes.empty() && !m_graniteShape.IsNull() && m_graniteVisible) {
-            applyVisualStyleToShape(m_graniteShape);
         }
         m_context->UpdateCurrentViewer();
     }
@@ -355,30 +416,15 @@ namespace OpenCMM {
         for (const auto& cad : m_cadShapes) {
             m_context->SetTransparency(cad, m_transparency, Standard_False);
         }
-        if (m_cadShapes.empty() && !m_graniteShape.IsNull() && m_graniteVisible) {
-            m_context->SetTransparency(m_graniteShape, m_transparency, Standard_False);
-        }
         m_context->UpdateCurrentViewer();
     }
 
     void OcctViewport::setGraniteVisible(bool visible) {
-        m_graniteVisible = visible;
-        if (m_btnGranite) m_btnGranite->setChecked(visible);
-
-        if (m_context.IsNull() || m_graniteShape.IsNull()) {
-            return;
-        }
-
-        if (visible) {
-            m_context->Display(m_graniteShape, AIS_Shaded, -1, Standard_True);
-        }
-        else {
-            m_context->Erase(m_graniteShape, Standard_True);
-        }
+        m_digitalTwin.setLinkVisible("granite_base", visible);
+        rebuildComponentHudButtons();
     }
 
     void OcctViewport::setMachineVisible(bool visible) {
-        if (m_btnMachine) m_btnMachine->setChecked(visible);
         m_digitalTwin.setMachineVisible(visible);
     }
 
@@ -424,6 +470,25 @@ namespace OpenCMM {
             m_context->Activate(aisShape, AIS_Shape::SelectionMode(TopAbs_FACE));
             m_view->FitAll();
         }
+    }
+
+    TopoDS_Shape OcctViewport::getCombinedCadShape() const {
+        if (m_cadShapes.empty()) {
+            return TopoDS_Shape();
+        }
+        if (m_cadShapes.size() == 1 && !m_cadShapes[0].IsNull()) {
+            return m_cadShapes[0]->Shape();
+        }
+
+        BRep_Builder builder;
+        TopoDS_Compound comp;
+        builder.MakeCompound(comp);
+        for (const auto& ais : m_cadShapes) {
+            if (!ais.IsNull() && !ais->Shape().IsNull()) {
+                builder.Add(comp, ais->Shape());
+            }
+        }
+        return comp;
     }
 
     bool OcctViewport::getCadBoundingBox(double& xmin, double& ymin, double& zmin,
@@ -716,24 +781,6 @@ namespace OpenCMM {
             m_view->SetZoom(zoomFactor, Standard_True);
             m_view->Redraw();
         }
-    }
-    TopoDS_Shape OcctViewport::getCombinedCadShape() const {
-        if (m_cadShapes.empty()) {
-            return TopoDS_Shape();
-        }
-        if (m_cadShapes.size() == 1 && !m_cadShapes[0].IsNull()) {
-            return m_cadShapes[0]->Shape();
-        }
-
-        BRep_Builder builder;
-        TopoDS_Compound comp;
-        builder.MakeCompound(comp);
-        for (const auto& ais : m_cadShapes) {
-            if (!ais.IsNull() && !ais->Shape().IsNull()) {
-                builder.Add(comp, ais->Shape());
-            }
-        }
-        return comp;
     }
 
 } // namespace OpenCMM
