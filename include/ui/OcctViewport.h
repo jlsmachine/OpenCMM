@@ -69,6 +69,7 @@ namespace OpenCMM {
 
         void updateProbePosition(double x, double y, double z);
         void addHitPointMarker(double x, double y, double z);
+        void addDeviationPointMarker(double x, double y, double z, double deviationMm, double plusTolMm);
         void commitActiveHitMarkers();
         void clearHitMarkers();
 

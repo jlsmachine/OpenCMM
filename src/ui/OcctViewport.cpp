@@ -256,6 +256,29 @@ namespace OpenCMM {
         m_activeHitMarkers.push_back(aisHit);
     }
 
+    void OcctViewport::addDeviationPointMarker(double x, double y, double z, double deviationMm, double plusTolMm) {
+        if (m_context.IsNull()) {
+            return;
+        }
+
+        TopoDS_Shape hitSphere = BRepPrimAPI_MakeSphere(gp_Pnt(x, y, z), 1.5).Shape();
+        Handle(AIS_Shape) aisHit = new AIS_Shape(hitSphere);
+
+        if (std::abs(deviationMm) <= plusTolMm) {
+            aisHit->SetColor(Quantity_NOC_GREEN1);
+        }
+        else if (deviationMm > plusTolMm) {
+            aisHit->SetColor(Quantity_NOC_RED);
+        }
+        else {
+            aisHit->SetColor(Quantity_NOC_BLUE1);
+        }
+
+        aisHit->Attributes()->SetFaceBoundaryDraw(Standard_False);
+        m_context->Display(aisHit, AIS_Shaded, -1, Standard_True);
+        m_activeHitMarkers.push_back(aisHit);
+    }
+
     void OcctViewport::commitActiveHitMarkers() {
         if (m_context.IsNull()) {
             return;
