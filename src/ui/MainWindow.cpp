@@ -133,14 +133,6 @@ namespace OpenCMM {
         connect(transformCadBtn, &QPushButton::clicked, this, &MainWindow::onTransformCadClicked);
         hwToolbar->addWidget(transformCadBtn);
 
-        auto* exportBtn = new QPushButton("Export Report (Ctrl+E)", this);
-        exportBtn->setStyleSheet("background-color: #1f7a8c; color: white; padding: 5px 12px; font-weight: bold;");
-        exportBtn->setShortcut(QKeySequence("Ctrl+E"));
-        connect(exportBtn, &QPushButton::clicked, this, &MainWindow::onExportReportClicked);
-        hwToolbar->addWidget(exportBtn);
-
-        hwToolbar->addSeparator();
-
         auto* simLabel = new QLabel(" Simulator: ", this);
         simLabel->setStyleSheet("color: #abb2bf; font-weight: bold;");
         hwToolbar->addWidget(simLabel);
