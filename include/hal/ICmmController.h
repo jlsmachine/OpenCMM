@@ -25,5 +25,16 @@ namespace OpenCMM {
         void rawLineReceived(const QString& line);
         void rawCountsUpdated(int32_t rawX, int32_t rawY, int32_t rawZ, bool probeState);
     };
+    // Inside CmmSerialController.h:
+#include <deque>
+#include <QVector3D>
+
+    struct StampedDro {
+        qint64 timestampMs;
+        QVector3D positionMm;
+    };
+
+    std::deque<StampedDro> m_droHistory;
+    double m_effectiveProbeRadiusMm = 1.5; // Default 3.0mm ruby ball (1.5mm radius)
 
 } // namespace OpenCMM
