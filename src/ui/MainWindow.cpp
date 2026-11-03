@@ -413,6 +413,16 @@ namespace OpenCMM {
             }
             });
 
+        // Wire serial diagnostics console and raw encoder count updates
+        if (m_controller) {
+            connect(m_controller, &ICmmController::rawLineReceived,
+                &dlg, &SettingsDialog::appendSerialLog);
+            connect(m_controller, &ICmmController::rawCountsUpdated,
+                &dlg, &SettingsDialog::updateRawDiagnostics);
+            connect(&dlg, &SettingsDialog::sendSerialCommandRequested,
+                m_controller, &ICmmController::sendRawCommand);
+        }
+
         if (dlg.exec() != QDialog::Accepted) return;
 
         UnitSystem newUnits = dlg.getSelectedUnitSystem();

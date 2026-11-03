@@ -14,6 +14,11 @@ namespace OpenCMM {
         disconnectFromPort();
     }
 
+    void PicoSerialController::setAxisCalibration(const Eigen::Vector3d& scaleMm, const Eigen::Vector3i& sign) {
+        m_scaleMm = scaleMm;
+        m_sign = sign;
+    }
+
     bool PicoSerialController::connectToPort(const QString& portName, int baudRate) {
         if (m_serial->isOpen()) {
             m_serial->close();
@@ -28,7 +33,12 @@ namespace OpenCMM {
 
         if (m_serial->open(QIODevice::ReadWrite)) {
             m_serial->setDataTerminalReady(true);
+            m_serial->setRequestToSend(true);
             m_buffer.clear();
+            m_lastHitId = -1;
+
+            m_serial->write("STREAM_ON\n");
+
             emit connectionStatusChanged(true, "Connected to Pico 2 on " + portName);
             return true;
         }
@@ -56,6 +66,16 @@ namespace OpenCMM {
         if (isConnected()) {
             m_serial->write("ZERO\n");
         }
+
+        Position3D zeroPos{ 0.0, 0.0, 0.0 };
+        emit positionUpdated(zeroPos);
+    }
+
+    void PicoSerialController::sendRawCommand(const QString& cmd) {
+        if (!isConnected()) return;
+        QByteArray payload = cmd.trimmed().toUtf8() + "\n";
+        m_serial->write(payload);
+        emit rawLineReceived("TX >> " + cmd.trimmed());
     }
 
     void PicoSerialController::onReadyRead() {
@@ -65,6 +85,7 @@ namespace OpenCMM {
             QByteArray line = m_buffer.left(newlineIdx).trimmed();
             m_buffer.remove(0, newlineIdx + 1);
             if (!line.isEmpty()) {
+                emit rawLineReceived(QString::fromUtf8(line));
                 parseJsonLine(line);
             }
         }
@@ -73,19 +94,38 @@ namespace OpenCMM {
     void PicoSerialController::parseJsonLine(const QByteArray& line) {
         try {
             auto j = nlohmann::json::parse(line.constBegin(), line.constEnd());
-            m_rawX = j.value("x", m_rawX);
-            m_rawY = j.value("y", m_rawY);
-            m_rawZ = j.value("z", m_rawZ);
+
+            const std::string msgType = j.value("type", "");
+            if (msgType == "pong") {
+                return;
+            }
+
+            if (j.contains("x")) m_rawX = j["x"].get<int32_t>();
+            if (j.contains("y")) m_rawY = j["y"].get<int32_t>();
+            if (j.contains("z")) m_rawZ = j["z"].get<int32_t>();
 
             Position3D pos{
-                (m_rawX - m_offsetX) * ENCODER_SCALE_MM,
-                (m_rawY - m_offsetY) * ENCODER_SCALE_MM,
-                (m_rawZ - m_offsetZ) * ENCODER_SCALE_MM
+                (m_rawX - m_offsetX) * m_scaleMm.x() * m_sign.x(),
+                (m_rawY - m_offsetY) * m_scaleMm.y() * m_sign.y(),
+                (m_rawZ - m_offsetZ) * m_scaleMm.z() * m_sign.z()
             };
 
             emit positionUpdated(pos);
 
             bool probeTriggeredNow = false;
+            const std::string eventType = j.value("event", "");
+            if (msgType == "hit" || eventType == "hit") {
+                probeTriggeredNow = true;
+                const int hitId = j.value("id", -1);
+                if (hitId == -1 || hitId != m_lastHitId) {
+                    m_lastHitId = hitId;
+                    emit probeTriggered(pos);
+                }
+                m_lastProbeState = true;
+                emit rawCountsUpdated(m_rawX, m_rawY, m_rawZ, probeTriggeredNow);
+                return;
+            }
+
             if (j.contains("probe")) {
                 if (j["probe"].is_boolean()) {
                     probeTriggeredNow = j["probe"].get<bool>();
@@ -93,15 +133,14 @@ namespace OpenCMM {
                 else if (j["probe"].is_number_integer()) {
                     probeTriggeredNow = (j["probe"].get<int>() != 0);
                 }
-            }
-            else if (j.value("event", "") == "hit") {
-                probeTriggeredNow = true;
+
+                if (probeTriggeredNow && !m_lastProbeState) {
+                    emit probeTriggered(pos);
+                }
+                m_lastProbeState = probeTriggeredNow;
             }
 
-            if (probeTriggeredNow && !m_lastProbeState) {
-                emit probeTriggered(pos);
-            }
-            m_lastProbeState = probeTriggeredNow;
+            emit rawCountsUpdated(m_rawX, m_rawY, m_rawZ, probeTriggeredNow);
         }
         catch (...) {
             // Ignore malformed serial fragments

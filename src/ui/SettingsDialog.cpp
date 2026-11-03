@@ -8,13 +8,17 @@
 #include <QFileDialog>
 #include <QDialogButtonBox>
 #include <QFormLayout>
+#include <QPlainTextEdit>
+#include <QLineEdit>
+#include <QCheckBox>
+#include <QGridLayout>
 
 namespace OpenCMM {
 
     SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
         setWindowTitle("OpenCMM - Studio Settings");
-        setMinimumWidth(540);
-        setMinimumHeight(400);
+        setMinimumWidth(580);
+        setMinimumHeight(540);
         setStyleSheet(
             "QDialog { background-color: #21252b; color: #e0e0e0; }"
             "QTabWidget::pane { border: 1px solid #3a3f4b; background: #1e2227; border-radius: 4px; }"
@@ -40,7 +44,7 @@ namespace OpenCMM {
         auto* tabWidget = new QTabWidget(this);
 
         // ==========================================
-        // TAB 1: Machine Info & Hardware Connection
+        // TAB 1: Machine & Hardware (Digital Twin)
         // ==========================================
         auto* tabMachine = new QWidget(this);
         auto* machineLayout = new QVBoxLayout(tabMachine);
@@ -80,35 +84,110 @@ namespace OpenCMM {
         fileRow->addWidget(resetMachineBtn);
         machineGrpLayout->addLayout(fileRow);
         machineLayout->addWidget(machineGroup);
+        machineLayout->addStretch();
+        tabWidget->addTab(tabMachine, "Machine & Hardware");
 
-        auto* serialGroup = new QGroupBox("Pico 2 Serial Hardware Connection", tabMachine);
-        auto* serialLayout = new QVBoxLayout(serialGroup);
+        // ==========================================
+        // TAB 2: Serial Diagnostics & Console
+        // ==========================================
+        auto* tabDiag = new QWidget(this);
+        auto* diagLayout = new QVBoxLayout(tabDiag);
+        diagLayout->setSpacing(10);
 
-        auto* portRow = new QHBoxLayout();
+        // 1. Connection Group Box (Moved from Tab 1)
+        auto* serialGroup = new QGroupBox("Pico 2 Serial Hardware Connection", tabDiag);
+        auto* serialLayout = new QHBoxLayout(serialGroup);
+
         m_portCombo = new QComboBox(serialGroup);
         m_baudCombo = new QComboBox(serialGroup);
         m_baudCombo->addItems({ "9600", "19200", "38400", "57600", "115200", "230400" });
         m_baudCombo->setCurrentText("115200");
-
-        portRow->addWidget(new QLabel("Port:", serialGroup));
-        portRow->addWidget(m_portCombo, 1);
-        portRow->addWidget(new QLabel("Baud:", serialGroup));
-        portRow->addWidget(m_baudCombo);
 
         auto* connectTestBtn = new QPushButton("Connect Port", serialGroup);
         connectTestBtn->setStyleSheet("background-color: #28a745; color: white;");
         connect(connectTestBtn, &QPushButton::clicked, this, [this]() {
             emit serialPortConnectRequested(m_portCombo->currentData().toString(), m_baudCombo->currentText().toInt());
             });
-        portRow->addWidget(connectTestBtn);
 
-        serialLayout->addLayout(portRow);
-        machineLayout->addWidget(serialGroup);
-        machineLayout->addStretch();
-        tabWidget->addTab(tabMachine, "Machine & Hardware");
+        serialLayout->addWidget(new QLabel("Port:", serialGroup));
+        serialLayout->addWidget(m_portCombo, 1);
+        serialLayout->addWidget(new QLabel("Baud:", serialGroup));
+        serialLayout->addWidget(m_baudCombo);
+        serialLayout->addWidget(connectTestBtn);
+        diagLayout->addWidget(serialGroup);
+
+        // 2. Raw Encoder Counts & Probe Status
+        auto* diagGroup = new QGroupBox("Pico 2 Raw Encoder & Serial Diagnostics", tabDiag);
+        auto* diagGrpLayout = new QVBoxLayout(diagGroup);
+
+        auto* countsGrid = new QGridLayout();
+        m_diagRawXLbl = new QLabel("X Raw: 0 cts", diagGroup);
+        m_diagRawYLbl = new QLabel("Y Raw: 0 cts", diagGroup);
+        m_diagRawZLbl = new QLabel("Z Raw: 0 cts", diagGroup);
+        m_diagProbeLbl = new QLabel("PROBE: SEATED (NC)", diagGroup);
+
+        const QString countStyle = "background-color: #1e2227; color: #61afef; font-family: Consolas, monospace; font-size: 12px; font-weight: bold; padding: 6px; border: 1px solid #3a3f4b; border-radius: 4px;";
+        m_diagRawXLbl->setStyleSheet(countStyle);
+        m_diagRawYLbl->setStyleSheet(countStyle);
+        m_diagRawZLbl->setStyleSheet(countStyle);
+        m_diagProbeLbl->setStyleSheet("background-color: #1e3a2f; color: #98c379; font-family: Consolas, monospace; font-size: 12px; font-weight: bold; padding: 6px; border: 1px solid #2f855a; border-radius: 4px;");
+
+        countsGrid->addWidget(m_diagRawXLbl, 0, 0);
+        countsGrid->addWidget(m_diagRawYLbl, 0, 1);
+        countsGrid->addWidget(m_diagRawZLbl, 0, 2);
+        countsGrid->addWidget(m_diagProbeLbl, 0, 3);
+        diagGrpLayout->addLayout(countsGrid);
+
+        auto* filterRow = new QHBoxLayout();
+        m_pauseStreamCheck = new QCheckBox("Pause Log Scroll", diagGroup);
+        m_filterDroCheck = new QCheckBox("Hide 60Hz 'dro' Packets", diagGroup);
+        auto* pingBtn = new QPushButton("Send PING", diagGroup);
+        auto* zeroPicoBtn = new QPushButton("Send ZERO", diagGroup);
+        auto* clearLogBtn = new QPushButton("Clear Log", diagGroup);
+
+        filterRow->addWidget(m_pauseStreamCheck);
+        filterRow->addWidget(m_filterDroCheck);
+        filterRow->addStretch();
+        filterRow->addWidget(pingBtn);
+        filterRow->addWidget(zeroPicoBtn);
+        filterRow->addWidget(clearLogBtn);
+        diagGrpLayout->addLayout(filterRow);
+
+        m_serialLogView = new QPlainTextEdit(diagGroup);
+        m_serialLogView->setReadOnly(true);
+        m_serialLogView->setMaximumBlockCount(300);
+        m_serialLogView->setMinimumHeight(160);
+        m_serialLogView->setStyleSheet("background-color: #15171c; color: #abb2bf; font-family: Consolas, monospace; font-size: 11px; border: 1px solid #3a3f4b;");
+        diagGrpLayout->addWidget(m_serialLogView);
+
+        auto* cmdRow = new QHBoxLayout();
+        m_cmdInputEdit = new QLineEdit(diagGroup);
+        m_cmdInputEdit->setPlaceholderText("Type Pico 2 command (e.g. PING, ZERO, STREAM_OFF, STREAM_ON)...");
+        auto* sendCmdBtn = new QPushButton("Send", diagGroup);
+        cmdRow->addWidget(m_cmdInputEdit, 1);
+        cmdRow->addWidget(sendCmdBtn);
+        diagGrpLayout->addLayout(cmdRow);
+
+        diagLayout->addWidget(diagGroup);
+        tabWidget->addTab(tabDiag, "Serial Diagnostics");
+
+        connect(pingBtn, &QPushButton::clicked, this, [this]() {
+            emit sendSerialCommandRequested("PING");
+            });
+        connect(zeroPicoBtn, &QPushButton::clicked, this, [this]() {
+            emit sendSerialCommandRequested("ZERO");
+            });
+        connect(clearLogBtn, &QPushButton::clicked, m_serialLogView, &QPlainTextEdit::clear);
+        connect(sendCmdBtn, &QPushButton::clicked, this, [this]() {
+            if (!m_cmdInputEdit->text().trimmed().isEmpty()) {
+                emit sendSerialCommandRequested(m_cmdInputEdit->text().trimmed());
+                m_cmdInputEdit->clear();
+            }
+            });
+        connect(m_cmdInputEdit, &QLineEdit::returnPressed, sendCmdBtn, &QPushButton::click);
 
         // ==========================================
-        // TAB 2: Preferences, Units & Tolerances
+        // TAB 3: Preferences, Units & Tolerances
         // ==========================================
         auto* tabPrefs = new QWidget(this);
         auto* prefsLayout = new QVBoxLayout(tabPrefs);
@@ -148,6 +227,7 @@ namespace OpenCMM {
         mainLayout->addWidget(buttonBox);
     }
 
+    // ... getters, setters, and diagnostic update slots remain identical ...
     UnitSystem SettingsDialog::getSelectedUnitSystem() const {
         return static_cast<UnitSystem>(m_unitCombo->currentData().toInt());
     }
@@ -187,6 +267,33 @@ namespace OpenCMM {
         }
         if (!currentPort.isEmpty()) {
             m_portCombo->setCurrentText(currentPort);
+        }
+    }
+
+    void SettingsDialog::appendSerialLog(const QString& line) {
+        if (!m_serialLogView || (m_pauseStreamCheck && m_pauseStreamCheck->isChecked())) {
+            return;
+        }
+        if (m_filterDroCheck && m_filterDroCheck->isChecked() && line.contains("\"type\":\"dro\"")) {
+            return;
+        }
+        m_serialLogView->appendPlainText(line);
+    }
+
+    void SettingsDialog::updateRawDiagnostics(int32_t rawX, int32_t rawY, int32_t rawZ, bool probeTriggered) {
+        if (m_diagRawXLbl) m_diagRawXLbl->setText(QString("X Raw: %1 cts").arg(rawX));
+        if (m_diagRawYLbl) m_diagRawYLbl->setText(QString("Y Raw: %1 cts").arg(rawY));
+        if (m_diagRawZLbl) m_diagRawZLbl->setText(QString("Z Raw: %1 cts").arg(rawZ));
+
+        if (m_diagProbeLbl) {
+            if (probeTriggered) {
+                m_diagProbeLbl->setText("PROBE: TRIGGERED (HIT)");
+                m_diagProbeLbl->setStyleSheet("background-color: #4b1d1d; color: #ff6b6b; font-family: Consolas, monospace; font-size: 12px; font-weight: bold; padding: 6px; border: 1px solid #e06c75; border-radius: 4px;");
+            }
+            else {
+                m_diagProbeLbl->setText("PROBE: SEATED (NC)");
+                m_diagProbeLbl->setStyleSheet("background-color: #1e3a2f; color: #98c379; font-family: Consolas, monospace; font-size: 12px; font-weight: bold; padding: 6px; border: 1px solid #2f855a; border-radius: 4px;");
+            }
         }
     }
 

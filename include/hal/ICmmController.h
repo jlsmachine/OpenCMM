@@ -1,7 +1,8 @@
 #pragma once
 #include <QObject>
 #include <QString>
-#include "core/Units.h"
+#include <cstdint>
+#include "core/Units.h" // Provides Position3D and ENCODER_SCALE_MM
 
 namespace OpenCMM {
 
@@ -15,11 +16,14 @@ namespace OpenCMM {
         virtual void disconnectFromPort() = 0;
         virtual bool isConnected() const = 0;
         virtual void zeroAxes() = 0;
+        virtual void sendRawCommand(const QString& cmd) {}
 
     signals:
         void positionUpdated(const OpenCMM::Position3D& pos);
         void probeTriggered(const OpenCMM::Position3D& hitPos);
         void connectionStatusChanged(bool connected, const QString& message);
+        void rawLineReceived(const QString& line);
+        void rawCountsUpdated(int32_t rawX, int32_t rawY, int32_t rawZ, bool probeState);
     };
 
 } // namespace OpenCMM

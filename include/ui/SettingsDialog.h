@@ -5,6 +5,8 @@
 #include <QCheckBox>
 #include <QDoubleSpinBox>
 #include <QStringList>
+#include <QLabel>
+#include <QPlainTextEdit>
 #include "core/Units.h"
 
 namespace OpenCMM {
@@ -26,11 +28,15 @@ namespace OpenCMM {
         void setSelectedMachinePath(const QString& path);
         void setAvailableSerialPorts(const QStringList& ports, const QString& currentPort);
 
+        void appendSerialLog(const QString& line);
+        void updateRawDiagnostics(int32_t rawX, int32_t rawY, int32_t rawZ, bool probeTriggered);
+
     signals:
         void machinePackageLoaded(const QString& packagePath);
         void machinePackageReset();
         void serialPortConnectRequested(const QString& portName, int baudRate);
         void settingsApplied();
+        void sendSerialCommandRequested(const QString& cmd);
 
     private:
         void setupUi();
@@ -42,6 +48,15 @@ namespace OpenCMM {
         QComboBox* m_unitCombo = nullptr;
         QDoubleSpinBox* m_defaultTolSpin = nullptr;
         QCheckBox* m_audioCheck = nullptr;
+
+        QLabel* m_diagRawXLbl = nullptr;
+        QLabel* m_diagRawYLbl = nullptr;
+        QLabel* m_diagRawZLbl = nullptr;
+        QLabel* m_diagProbeLbl = nullptr;
+        QPlainTextEdit* m_serialLogView = nullptr;
+        QCheckBox* m_pauseStreamCheck = nullptr;
+        QCheckBox* m_filterDroCheck = nullptr;
+        QLineEdit* m_cmdInputEdit = nullptr;
     };
 
 } // namespace OpenCMM
