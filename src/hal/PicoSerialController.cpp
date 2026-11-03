@@ -79,6 +79,9 @@ namespace OpenCMM {
     }
 
     void PicoSerialController::onReadyRead() {
+        if (!m_serial || !m_serial->isOpen()) {
+            return;
+        }
         m_buffer.append(m_serial->readAll());
         int newlineIdx = -1;
         while ((newlineIdx = m_buffer.indexOf('\n')) != -1) {

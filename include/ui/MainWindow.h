@@ -8,6 +8,7 @@
 #include <vector>
 #include <string>
 #include <Eigen/Dense>
+#include <deque>
 
 #include "core/Units.h"
 #include "hal/PicoSerialController.h"
@@ -23,7 +24,7 @@ namespace OpenCMM {
         Q_OBJECT
     public:
         explicit MainWindow(QWidget* parent = nullptr);
-        ~MainWindow() override = default;
+        ~MainWindow() override;
 
     private slots:
         void onZeroAxesClicked();
@@ -99,8 +100,8 @@ namespace OpenCMM {
         bool m_isPartAligned = false;
         QPushButton* m_alignStatusBtn = nullptr;
 
-        std::vector<Eigen::Vector3d> m_recordedHits;
-        std::vector<MeasuredFeature> m_solvedFeatures;
+        ::std::vector<Eigen::Vector3d> m_recordedHits;
+        ::std::vector<MeasuredFeature> m_solvedFeatures;
         int m_featureCounter = 1;
 
         QPushButton* m_settingsBtn = nullptr;
@@ -121,6 +122,9 @@ namespace OpenCMM {
 
         QTreeWidget* m_featureTree = nullptr;
         QTreeWidgetItem* m_activePointsGroup = nullptr;
+
+        ::std::deque<Eigen::Vector3d> m_droHistory;
+        Eigen::Vector3d m_lastApproachDir{ 0.0, 0.0, -1.0 };
     };
 
 } // namespace OpenCMM

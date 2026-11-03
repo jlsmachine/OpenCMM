@@ -55,6 +55,8 @@ namespace OpenCMM {
         : QMainWindow(parent),
         m_controller(new PicoSerialController(this)) {
 
+
+
         setWindowTitle("OpenCMM - Precision Coordinate Metrology Studio");
         resize(1680, 960);
 
@@ -69,6 +71,7 @@ namespace OpenCMM {
 
         updateProbeStatusDisplay();
     }
+    MainWindow::~MainWindow() = default;
 
     void MainWindow::setupUi() {
         setStyleSheet(
@@ -388,8 +391,10 @@ namespace OpenCMM {
             if (m_viewport && m_viewport->loadMachinePackage(path)) {
                 m_machinePackagePath = path;
                 const auto& cfg = m_viewport->machineConfig();
-                setWindowTitle(QString("OpenCMM - %1 (%2)").arg(cfg.machineName, cfg.manufacturer));
-                statusBar()->showMessage(QString("Loaded Machine Post: %1 (%2)").arg(cfg.machineName, path));
+                const QString mName = QString::fromStdString(cfg.machineName);
+                const QString mMfg = QString::fromStdString(cfg.manufacturer);
+                setWindowTitle(QString("OpenCMM - %1 (%2)").arg(mName, mMfg));
+                statusBar()->showMessage(QString("Loaded Machine Post: %1 (%2)").arg(mName, path));
             }
             else {
                 QMessageBox::warning(&dlg, "Machine Package Load Failed",
@@ -888,6 +893,15 @@ namespace OpenCMM {
 
     void MainWindow::onPositionUpdated(const Position3D& pos) {
         m_lastPosition = pos;
+
+        Eigen::Vector3d currentPt(pos.x, pos.y, pos.z);
+        if (m_droHistory.empty() || (currentPt - m_droHistory.back()).norm() >= 0.05) {
+            m_droHistory.push_back(currentPt);
+            if (m_droHistory.size() > 15) {
+                m_droHistory.pop_front();
+            }
+        }
+
         updateDroDisplay();
         if (m_viewport) {
             m_viewport->updateProbePosition(pos.x, pos.y, pos.z);
@@ -915,6 +929,14 @@ namespace OpenCMM {
 
         m_lastPosition = hitPos;
         updateDroDisplay();
+
+        Eigen::Vector3d rawHit(hitPos.x, hitPos.y, hitPos.z);
+        if (!m_droHistory.empty()) {
+            Eigen::Vector3d travel = rawHit - m_droHistory.front();
+            if (travel.norm() > 0.10) {
+                m_lastApproachDir = travel.normalized();
+            }
+        }
 
         Eigen::Vector3d recordedPt(hitPos.x, hitPos.y, hitPos.z);
         if (m_isPartAligned && m_alignStatusBtn && m_alignStatusBtn->isChecked()) {
