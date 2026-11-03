@@ -31,7 +31,9 @@ namespace OpenCMM {
             "QComboBox QAbstractItemView { background-color: #181a1f; color: #ffffff; selection-background-color: #2d5a88; }"
             "QPushButton { background-color: #3a3f4b; color: #ffffff; border: 1px solid #4b5263; border-radius: 3px; padding: 6px 14px; font-weight: bold; }"
             "QPushButton:hover { background-color: #4b5263; }"
-            "QCheckBox { color: #dcdfe4; font-weight: bold; spacing: 6px; }"
+            "QCheckBox { color: #dcdfe4; font-weight: bold; spacing: 8px; }"
+            "QCheckBox::indicator { width: 16px; height: 16px; background-color: #181a1f; border: 1px solid #61afef; border-radius: 3px; }"
+            "QCheckBox::indicator:checked { background-color: #61afef; image: url(:/qt-project.org/styles/commonstyle/images/standardbutton-apply-16.png); }"
         );
 
         setupUi();
@@ -207,6 +209,14 @@ namespace OpenCMM {
         m_defaultTolSpin->setSingleStep(0.0100);
 
         m_audioCheck = new QCheckBox("Enable Eyes-Free Audio Chimes (Probe hits & feature completion)", prefsGroup);
+        
+
+        // Ensure high-contrast checked indicator styling
+        m_audioCheck->setStyleSheet(
+            "QCheckBox::indicator { width: 16px; height: 16px; background-color: #181a1f; border: 1px solid #61afef; border-radius: 3px; }"
+            "QCheckBox::indicator:checked { background-color: #61afef; border: 1px solid #61afef; }"
+        );
+
 
         prefsForm->addRow("Default Unit System:", m_unitCombo);
         prefsForm->addRow("Default Bilateral Tolerance (mm):", m_defaultTolSpin);

@@ -27,3 +27,6 @@ vcpkg-configuration.json.lock
 *.pdb
 *.ilk
 *.exp
+
+# Kitcad files
+PCB/pico2_carrier_board/
