@@ -46,20 +46,19 @@ namespace OpenCMM {
         auto* tabWidget = new QTabWidget(this);
 
         // ==========================================
-        // TAB 1: Machine & Hardware (Digital Twin)
+        // TAB 1: Machine & Hardware (Digital Twin & Axis Cal)
         // ==========================================
         auto* tabMachine = new QWidget(this);
         auto* machineLayout = new QVBoxLayout(tabMachine);
         machineLayout->setSpacing(14);
 
+        // 1. Digital Twin Machine Post Group
         auto* machineGroup = new QGroupBox("Digital Twin Machine Post (.cmm Archive or .cmm.json)", tabMachine);
         auto* machineGrpLayout = new QVBoxLayout(machineGroup);
-
         auto* fileRow = new QHBoxLayout();
         m_machinePathEdit = new QLineEdit(machineGroup);
         m_machinePathEdit->setReadOnly(true);
         m_machinePathEdit->setPlaceholderText("Default Procedural Bridge CMM Active");
-
         auto* browseBtn = new QPushButton("Browse .cmm...", machineGroup);
         browseBtn->setStyleSheet("background-color: #2d5a88; color: white;");
         connect(browseBtn, &QPushButton::clicked, this, [this]() {
@@ -74,18 +73,48 @@ namespace OpenCMM {
                 emit machinePackageLoaded(filePath);
             }
             });
-
         auto* resetMachineBtn = new QPushButton("Reset Default", machineGroup);
         connect(resetMachineBtn, &QPushButton::clicked, this, [this]() {
             m_machinePathEdit->clear();
             emit machinePackageReset();
             });
-
         fileRow->addWidget(m_machinePathEdit, 1);
         fileRow->addWidget(browseBtn);
         fileRow->addWidget(resetMachineBtn);
         machineGrpLayout->addLayout(fileRow);
         machineLayout->addWidget(machineGroup);
+
+        // 2. Live Axis Calibration Group (Scale & Invert)
+        auto* axisCalGroup = new QGroupBox("Live Axis Scale & Count Direction (mm/count & sign)", tabMachine);
+        auto* axisCalLayout = new QGridLayout(axisCalGroup);
+
+        m_scaleXSpin = new QDoubleSpinBox(axisCalGroup);
+        m_scaleYSpin = new QDoubleSpinBox(axisCalGroup);
+        m_scaleZSpin = new QDoubleSpinBox(axisCalGroup);
+        for (auto* sp : { m_scaleXSpin, m_scaleYSpin, m_scaleZSpin }) {
+            sp->setRange(0.00001, 1.0);
+            sp->setDecimals(6);
+            sp->setSingleStep(0.0001);
+            sp->setValue(0.001000); // Default 1µm per count
+        }
+
+        m_invertXCheck = new QCheckBox("Invert X Direction", axisCalGroup);
+        m_invertYCheck = new QCheckBox("Invert Y Direction", axisCalGroup);
+        m_invertZCheck = new QCheckBox("Invert Z Direction", axisCalGroup);
+
+        axisCalLayout->addWidget(new QLabel("X Scale (mm/ct):", axisCalGroup), 0, 0);
+        axisCalLayout->addWidget(m_scaleXSpin, 0, 1);
+        axisCalLayout->addWidget(m_invertXCheck, 0, 2);
+
+        axisCalLayout->addWidget(new QLabel("Y Scale (mm/ct):", axisCalGroup), 1, 0);
+        axisCalLayout->addWidget(m_scaleYSpin, 1, 1);
+        axisCalLayout->addWidget(m_invertYCheck, 1, 2);
+
+        axisCalLayout->addWidget(new QLabel("Z Scale (mm/ct):", axisCalGroup), 2, 0);
+        axisCalLayout->addWidget(m_scaleZSpin, 2, 1);
+        axisCalLayout->addWidget(m_invertZCheck, 2, 2);
+
+        machineLayout->addWidget(axisCalGroup);
         machineLayout->addStretch();
         tabWidget->addTab(tabMachine, "Machine & Hardware");
 
@@ -96,7 +125,6 @@ namespace OpenCMM {
         auto* diagLayout = new QVBoxLayout(tabDiag);
         diagLayout->setSpacing(10);
 
-        // 1. Connection Group Box (Moved from Tab 1)
         auto* serialGroup = new QGroupBox("Pico 2 Serial Hardware Connection", tabDiag);
         auto* serialLayout = new QHBoxLayout(serialGroup);
 
@@ -118,7 +146,6 @@ namespace OpenCMM {
         serialLayout->addWidget(connectTestBtn);
         diagLayout->addWidget(serialGroup);
 
-        // 2. Raw Encoder Counts & Probe Status
         auto* diagGroup = new QGroupBox("Pico 2 Raw Encoder & Serial Diagnostics", tabDiag);
         auto* diagGrpLayout = new QVBoxLayout(diagGroup);
 
@@ -209,14 +236,10 @@ namespace OpenCMM {
         m_defaultTolSpin->setSingleStep(0.0100);
 
         m_audioCheck = new QCheckBox("Enable Eyes-Free Audio Chimes (Probe hits & feature completion)", prefsGroup);
-        
-
-        // Ensure high-contrast checked indicator styling
         m_audioCheck->setStyleSheet(
             "QCheckBox::indicator { width: 16px; height: 16px; background-color: #181a1f; border: 1px solid #61afef; border-radius: 3px; }"
             "QCheckBox::indicator:checked { background-color: #61afef; border: 1px solid #61afef; }"
         );
-
 
         prefsForm->addRow("Default Unit System:", m_unitCombo);
         prefsForm->addRow("Default Bilateral Tolerance (mm):", m_defaultTolSpin);
@@ -229,10 +252,7 @@ namespace OpenCMM {
         mainLayout->addWidget(tabWidget);
 
         auto* buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
-        connect(buttonBox, &QDialogButtonBox::accepted, this, [this]() {
-            emit settingsApplied();
-            accept();
-            });
+        connect(buttonBox, &QDialogButtonBox::accepted, this, &QDialog::accept);  // Fixed: removed emit settingsApplied()
         connect(buttonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
         mainLayout->addWidget(buttonBox);
     }
@@ -306,5 +326,24 @@ namespace OpenCMM {
             }
         }
     }
+    Eigen::Vector3d SettingsDialog::getAxisScale() const {
+        return Eigen::Vector3d(m_scaleXSpin->value(), m_scaleYSpin->value(), m_scaleZSpin->value());
+    }
 
+    Eigen::Vector3i SettingsDialog::getAxisSign() const {
+        return Eigen::Vector3i(
+            m_invertXCheck->isChecked() ? -1 : 1,
+            m_invertYCheck->isChecked() ? -1 : 1,
+            m_invertZCheck->isChecked() ? -1 : 1
+        );
+    }
+
+    void SettingsDialog::setAxisCalibration(const Eigen::Vector3d& scale, const Eigen::Vector3i& sign) {
+        m_scaleXSpin->setValue(scale.x());
+        m_scaleYSpin->setValue(scale.y());
+        m_scaleZSpin->setValue(scale.z());
+        m_invertXCheck->setChecked(sign.x() < 0);
+        m_invertYCheck->setChecked(sign.y() < 0);
+        m_invertZCheck->setChecked(sign.z() < 0);
+    }
 } // namespace OpenCMM

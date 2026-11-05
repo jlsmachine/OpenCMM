@@ -1,12 +1,14 @@
 #pragma once
 #include <QDialog>
 #include <QComboBox>
-#include <QLineEdit>
-#include <QCheckBox>
 #include <QDoubleSpinBox>
+#include <QCheckBox>
+#include <QLineEdit>
 #include <QStringList>
-#include <QLabel>
 #include <QPlainTextEdit>
+#include <Eigen/Dense>  // <--- Required for Eigen::Vector3d and Eigen::Vector3i
+#include <QLabel>
+
 #include "core/Units.h"
 
 namespace OpenCMM {
@@ -22,12 +24,18 @@ namespace OpenCMM {
         bool areAudioChimesEnabled() const;
         QString getSelectedMachinePath() const;
 
+        Eigen::Vector3d getAxisScale() const;
+        Eigen::Vector3i getAxisSign() const;
+
         void setCurrentUnitSystem(UnitSystem units);
         void setDefaultToleranceMm(double tolMm);
         void setAudioChimesEnabled(bool enabled);
         void setSelectedMachinePath(const QString& path);
+        void setAxisCalibration(const Eigen::Vector3d& scale, const Eigen::Vector3i& sign);
+
         void setAvailableSerialPorts(const QStringList& ports, const QString& currentPort);
 
+    public slots:
         void appendSerialLog(const QString& line);
         void updateRawDiagnostics(int32_t rawX, int32_t rawY, int32_t rawZ, bool probeTriggered);
 
@@ -35,28 +43,33 @@ namespace OpenCMM {
         void machinePackageLoaded(const QString& packagePath);
         void machinePackageReset();
         void serialPortConnectRequested(const QString& portName, int baudRate);
-        void settingsApplied();
         void sendSerialCommandRequested(const QString& cmd);
 
     private:
         void setupUi();
 
-        QLineEdit* m_machinePathEdit = nullptr;
-        QComboBox* m_portCombo = nullptr;
-        QComboBox* m_baudCombo = nullptr;
-
         QComboBox* m_unitCombo = nullptr;
         QDoubleSpinBox* m_defaultTolSpin = nullptr;
         QCheckBox* m_audioCheck = nullptr;
+        QLineEdit* m_machinePathEdit = nullptr;
 
+        QDoubleSpinBox* m_scaleXSpin = nullptr;
+        QDoubleSpinBox* m_scaleYSpin = nullptr;
+        QDoubleSpinBox* m_scaleZSpin = nullptr;
+        QCheckBox* m_invertXCheck = nullptr;
+        QCheckBox* m_invertYCheck = nullptr;
+        QCheckBox* m_invertZCheck = nullptr;
+
+        QComboBox* m_portCombo = nullptr;
+        QComboBox* m_baudCombo = nullptr;
+        QPlainTextEdit* m_serialLogView = nullptr;
+        QLineEdit* m_cmdInputEdit = nullptr;
+        QCheckBox* m_pauseStreamCheck = nullptr;
+        QCheckBox* m_filterDroCheck = nullptr;
         QLabel* m_diagRawXLbl = nullptr;
         QLabel* m_diagRawYLbl = nullptr;
         QLabel* m_diagRawZLbl = nullptr;
         QLabel* m_diagProbeLbl = nullptr;
-        QPlainTextEdit* m_serialLogView = nullptr;
-        QCheckBox* m_pauseStreamCheck = nullptr;
-        QCheckBox* m_filterDroCheck = nullptr;
-        QLineEdit* m_cmdInputEdit = nullptr;
     };
 
 } // namespace OpenCMM

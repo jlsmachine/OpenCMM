@@ -377,6 +377,12 @@ namespace OpenCMM {
         dlg.setAudioChimesEnabled(m_audioEnabled);
         dlg.setSelectedMachinePath(m_machinePackagePath);
 
+        // Pass current controller scale and sign into the settings dialog
+        if (m_controller) {
+            // (Optional: add getScale() / getSign() accessors to ICmmController/PicoSerialController if needed)
+            dlg.setAxisCalibration(Eigen::Vector3d(0.001, 0.001, 0.001), Eigen::Vector3i(1, 1, 1));
+        }
+
         QStringList ports;
         const auto availablePorts = QSerialPortInfo::availablePorts();
         for (const QSerialPortInfo& info : availablePorts) {
@@ -391,6 +397,13 @@ namespace OpenCMM {
             if (m_viewport && m_viewport->loadMachinePackage(path)) {
                 m_machinePackagePath = path;
                 const auto& cfg = m_viewport->machineConfig();
+
+                // Automatically populate scale and sign from loaded .cmm manifest
+                if (m_controller) {
+                    m_controller->setAxisCalibration(cfg.scaleMm, cfg.sign);
+                }
+                dlg.setAxisCalibration(cfg.scaleMm, cfg.sign);
+
                 const QString mName = QString::fromStdString(cfg.machineName);
                 const QString mMfg = QString::fromStdString(cfg.manufacturer);
                 setWindowTitle(QString("OpenCMM - %1 (%2)").arg(mName, mMfg));
@@ -406,6 +419,10 @@ namespace OpenCMM {
             m_machinePackagePath.clear();
             if (m_viewport) {
                 m_viewport->resetDefaultMachine();
+                if (m_controller) {
+                    const auto& cfg = m_viewport->machineConfig();
+                    m_controller->setAxisCalibration(cfg.scaleMm, cfg.sign);
+                }
             }
             setWindowTitle("OpenCMM - Precision Coordinate Metrology Studio");
             statusBar()->showMessage("Reset Digital Twin to Default Moving-Bridge CMM.");
@@ -418,7 +435,6 @@ namespace OpenCMM {
             }
             });
 
-        // Wire serial diagnostics console and raw encoder count updates
         if (m_controller) {
             connect(m_controller, &ICmmController::rawLineReceived,
                 &dlg, &SettingsDialog::appendSerialLog);
@@ -429,6 +445,11 @@ namespace OpenCMM {
         }
 
         if (dlg.exec() != QDialog::Accepted) return;
+
+        // Apply live scale and sign selections from dialog to controller
+        if (m_controller) {
+            m_controller->setAxisCalibration(dlg.getAxisScale(), dlg.getAxisSign());
+        }
 
         UnitSystem newUnits = dlg.getSelectedUnitSystem();
         if (newUnits != m_unitSystem) {
