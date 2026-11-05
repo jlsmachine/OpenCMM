@@ -86,6 +86,20 @@ OpenCMM/
 
 ---
 
-## License
+## License & Copyright
 
-Distributed under the MIT License. See `LICENSE` for more information.
+Copyright (C) 2026 JLS Machine LLC
+
+**OpenCMM** (including the C++ desktop studio and Raspberry Pi Pico 2 firmware) is free software: you can redistribute it and/or modify it under the terms of the **GNU General Public License as published by the Free Software Foundation**, either version 3 of the License, or (at your option) any later version (`GPL-3.0-or-later`).
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the [LICENSE](LICENSE) file for the full license text.
+
+### Machine Post Packages & 3D CAD Assets (`Machines/`)
+The digital twin machine manifests (`.cmm.json`), `.cmm` archives, and 3D STEP meshes located in the `Machines/` directory are licensed under the **Creative Commons Attribution 4.0 International License (CC-BY-4.0)**, allowing anyone to freely share, adapt, and author custom CMM machine packages.
+
+### Third-Party Libraries & Acknowledgments
+OpenCMM dynamically links against and builds upon the following open-source libraries:
+* **Qt 6** (`QWidgets`, `QSerialPort`, `QGui`, `QCore`) — Licensed under the [GNU LGPLv3](https://www.gnu.org/licenses/lgpl-3.0.html) / GPLv3.
+* **OpenCASCADE Technology (OCCT)** — Licensed under the [GNU LGPLv2.1](https://dev.opencascade.org/resources/licensing).
+* **Eigen 3** — Licensed under the [Mozilla Public License 2.0 (MPL-2.0)](https://www.mozilla.org/en-US/MPL/2.0/).
+* **MicroPython** (RP2350 / Pico 2 runtime) — Licensed under the [MIT License](https://opensource.org/licenses/MIT).

@@ -1,3 +1,5 @@
+# Copyright (C) 2026 JLS Machine LLC
+# SPDX-License-Identifier: GPL-3.0-or-later
 import rp2
 from machine import Pin
 import sys

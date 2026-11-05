@@ -1,3 +1,5 @@
+// Copyright (C) 2026 JLS Machine LLC
+// SPDX-License-Identifier: GPL-3.0-or-later
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -229,6 +231,23 @@ namespace OpenCMM {
         m_settingsBtn->setToolTip("Configure Machine Post (.cmm), Pico 2 Serial Port, Axis Scale/Invert, Units, and Audio");
         connect(m_settingsBtn, &QPushButton::clicked, this, &MainWindow::onOpenSettingsClicked);
 
+        // --- New About Button ---
+        auto* aboutBtn = createRibbonButton("ℹ", "About", "#282c34", "#abb2bf", "#abb2bf");
+        aboutBtn->setToolTip("About OpenCMM & GNU GPLv3 License Information");
+        connect(aboutBtn, &QPushButton::clicked, this, [this]() {
+            QMessageBox::about(
+                this,
+                "About OpenCMM",
+                "<h3>OpenCMM — Precision Coordinate Metrology Studio</h3>"
+                "<p><b>Copyright &copy; 2026 JLS Machine LLC</b></p>"
+                "<p>OpenCMM is free open-source software licensed under the "
+                "<b>GNU General Public License v3.0 (GPL-3.0-or-later)</b>.</p>"
+                "<p>Built with Qt 6 (LGPLv3), OpenCASCADE Technology (LGPLv2.1), "
+                "Eigen 3 (MPL-2.0), and Raspberry Pi Pico 2 MicroPython.</p>"
+                "<p>This program comes with ABSOLUTELY NO WARRANTY.</p>"
+            );
+            });
+
         auto* zeroBtn = createRibbonButton("🎯", "Zero XYZ");
         zeroBtn->setToolTip("Zero X, Y, Z encoder counts at current physical position");
         connect(zeroBtn, &QPushButton::clicked, this, &MainWindow::onZeroAxesClicked);
@@ -253,7 +272,7 @@ namespace OpenCMM {
         connect(simHitBtn, &QPushButton::clicked, this, &MainWindow::onSimulateHitClicked);
 
         ribbonTabs->addTab(makeRibbonPage({
-            createRibbonGroup("System & Hardware",{ m_settingsBtn }),
+            createRibbonGroup("System & Hardware",{ m_settingsBtn, aboutBtn }),  // Added aboutBtn here
             createRibbonGroup("Machine DRO",{ zeroBtn, unitsBtn }),
             createRibbonGroup("Point Buffer",{ clearBtn }),
             createRibbonGroup("Offline Simulator",{ makeStackedControl("Virtual Target:", m_simTargetCombo), simHitBtn })
