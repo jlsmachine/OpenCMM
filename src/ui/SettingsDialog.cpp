@@ -78,8 +78,12 @@ namespace OpenCMM {
             if (!filePath.isEmpty()) {
                 m_machinePathEdit->setText(filePath);
 
-                // --- Load & Validate DMIS 5.3 Characterization File (.chf) ---
+                // --- Parse and Validate DMIS 5.3 Characterization File (.chf) ---
+                // Note: Since .cmm files are ZIP archives, in a fully automated pipeline 
+                // you would extract the .chf file first. For local development or uncompressed 
+                // folders, you can point directly to the unpacked .chf file:
                 QString chfPath = "Machines/Helmel_Checkmaster/Helmel_Checkmaster.chf";
+
                 try {
                     OpenCMM::CharacterizationProfile profile = OpenCMM::ChFileParser::loadCheckmasterProfile(chfPath.toStdString());
 
@@ -96,8 +100,8 @@ namespace OpenCMM {
                     QMessageBox::information(this, "DMIS 5.3 Profile Verified", profileInfo);
                 }
                 catch (const std::exception& e) {
-                    // Non-fatal warning if custom machine package doesn't bundle a .chf file
-                    // (Helmel Checkmaster default package uses the built-in path)
+                    // Fallback notice if the .chf file isn't found at the target relative path yet
+                    QMessageBox::warning(this, "ChFile Notice", QString("Machine package loaded, but .chf verification skipped: %1").arg(e.what()));
                 }
 
                 emit machinePackageLoaded(filePath);

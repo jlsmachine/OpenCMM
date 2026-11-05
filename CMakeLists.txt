@@ -62,3 +62,6 @@ if(WIN32)
         VERBATIM
     )
 endif()
+
+# Copy Machines directory to build output
+file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/Machines" DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
