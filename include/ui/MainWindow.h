@@ -4,6 +4,8 @@
 #include <QComboBox>
 #include <QPushButton>
 #include <QTreeWidget>
+#include <QFrame>
+#include <QList>
 #include <QString>
 #include <vector>
 #include <string>
@@ -53,6 +55,12 @@ namespace OpenCMM {
     private:
         void setupUi();
         void setupToolbar();
+        QFrame* createRibbonGroup(const QString& title, const QList<QWidget*>& widgets);
+        QPushButton* createRibbonButton(const QString& iconSymbol,
+            const QString& labelText,
+            const QString& accentBg = "#2c313c",
+            const QString& borderCol = "#3e4451",
+            const QString& textCol = "#dcdfe4");
         void setupDroDock();
         void setupFeatureTreeDock();
         void updateDroDisplay();

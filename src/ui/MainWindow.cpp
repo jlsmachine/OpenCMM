@@ -13,6 +13,7 @@
 #include "ui/SettingsDialog.h"
 
 #include <QToolBar>
+#include <QTabWidget>
 #include <QDockWidget>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -55,8 +56,6 @@ namespace OpenCMM {
         : QMainWindow(parent),
         m_controller(new PicoSerialController(this)) {
 
-
-
         setWindowTitle("OpenCMM - Precision Coordinate Metrology Studio");
         resize(1680, 960);
 
@@ -71,6 +70,7 @@ namespace OpenCMM {
 
         updateProbeStatusDisplay();
     }
+
     MainWindow::~MainWindow() = default;
 
     void MainWindow::setupUi() {
@@ -96,57 +96,150 @@ namespace OpenCMM {
         statusBar()->showMessage("Ready - Click 'Settings...' to configure hardware/units, or probe features to begin inspection.");
     }
 
+    QFrame* MainWindow::createRibbonGroup(const QString& title, const QList<QWidget*>& widgets) {
+        auto* group = new QFrame(this);
+        group->setObjectName("RibbonGroup");
+
+        auto* vLayout = new QVBoxLayout(group);
+        vLayout->setContentsMargins(10, 5, 10, 3);
+        vLayout->setSpacing(3);
+
+        auto* row = new QHBoxLayout();
+        row->setContentsMargins(0, 0, 0, 0);
+        row->setSpacing(6);
+        for (QWidget* w : widgets) {
+            row->addWidget(w);
+        }
+
+        auto* lbl = new QLabel(title.toUpper(), group);
+        lbl->setObjectName("RibbonGroupTitle");
+        lbl->setAlignment(Qt::AlignCenter);
+
+        vLayout->addLayout(row, 1);
+        vLayout->addWidget(lbl, 0);
+        return group;
+    }
+
+    QPushButton* MainWindow::createRibbonButton(const QString& iconSymbol,
+        const QString& labelText,
+        const QString& accentBg,
+        const QString& borderCol,
+        const QString& textCol) {
+        auto* btn = new QPushButton(QString("%1\n%2").arg(iconSymbol, labelText), this);
+        btn->setMinimumSize(78, 56);
+        btn->setMaximumHeight(60);
+        btn->setCursor(Qt::PointingHandCursor);
+        btn->setStyleSheet(QString(
+            "QPushButton { background-color: %1; color: %3; border: 1px solid %2; "
+            "border-radius: 4px; padding: 4px 8px; font-size: 11px; font-weight: bold; }"
+            "QPushButton:hover { background-color: #3e4451; border: 1px solid #61afef; color: #ffffff; }"
+            "QPushButton:pressed { background-color: #181a1f; }"
+        ).arg(accentBg, borderCol, textCol));
+        return btn;
+    }
+
     void MainWindow::setupToolbar() {
-        const QString barStyle =
-            "QToolBar { background-color: #21252b; border-bottom: 1px solid #3a3f4b; spacing: 6px; padding: 4px; }"
-            "QPushButton { background-color: #3a3f4b; color: white; border: 1px solid #4b5263; border-radius: 3px; padding: 5px 10px; font-weight: bold; }"
-            "QPushButton:hover { background-color: #4b5263; }"
-            "QComboBox { background-color: #1e2227; color: white; border: 1px solid #4b5263; padding: 4px 6px; font-weight: bold; }"
-            "QComboBox QAbstractItemView { background-color: #1e2227; color: white; selection-background-color: #2d5a88; }"
-            "QToolButton#qt_toolbar_ext_button { background-color: #3a3f4b; color: #61afef; border: 1px solid #61afef; border-radius: 3px; min-width: 18px; }";
+        auto* ribbonTabs = new QTabWidget(this);
+        ribbonTabs->setObjectName("RibbonBar");
+        ribbonTabs->setFixedHeight(116);
 
-        // Row 1: Settings, Zero XYZ, Clear Points, CAD Controls & Simulator
-        auto* hwToolbar = addToolBar("Studio & CAD Controls");
-        hwToolbar->setMovable(false);
-        hwToolbar->setStyleSheet(barStyle);
-
-        m_settingsBtn = new QPushButton("⚙ Settings...", this);
-        m_settingsBtn->setStyleSheet(
-            "background-color: #282c34; color: #61afef; border: 1px solid #61afef; "
-            "border-radius: 3px; padding: 5px 12px; font-weight: bold;"
+        ribbonTabs->setStyleSheet(
+            "QTabWidget#RibbonBar::pane { "
+            "   background-color: #21252b; "
+            "   border-top: 1px solid #3a3f4b; "
+            "   border-bottom: 2px solid #181a1f; "
+            "}"
+            "QTabWidget#RibbonBar QTabBar::tab { "
+            "   background-color: #181a1f; "
+            "   color: #abb2bf; "
+            "   padding: 6px 20px; "
+            "   font-size: 12px; "
+            "   font-weight: bold; "
+            "   border: 1px solid #2c313a; "
+            "   border-bottom: none; "
+            "   border-top-left-radius: 4px; "
+            "   border-top-right-radius: 4px; "
+            "   margin-right: 3px; "
+            "   margin-top: 2px; "
+            "}"
+            "QTabWidget#RibbonBar QTabBar::tab:hover { "
+            "   background-color: #2c313a; "
+            "   color: #ffffff; "
+            "}"
+            "QTabWidget#RibbonBar QTabBar::tab:selected { "
+            "   background-color: #21252b; "
+            "   color: #61afef; "
+            "   border-top: 2px solid #61afef; "
+            "}"
+            "QFrame#RibbonGroup { "
+            "   border-right: 1px solid #3a3f4b; "
+            "   background: transparent; "
+            "}"
+            "QLabel#RibbonGroupTitle { "
+            "   color: #7f848e; "
+            "   font-size: 9px; "
+            "   font-weight: bold; "
+            "   letter-spacing: 1px; "
+            "}"
+            "QComboBox { "
+            "   background-color: #181a1f; "
+            "   color: #ffffff; "
+            "   border: 1px solid #4b5263; "
+            "   border-radius: 3px; "
+            "   padding: 4px 8px; "
+            "   font-weight: bold; "
+            "   min-width: 145px; "
+            "}"
+            "QComboBox QAbstractItemView { "
+            "   background-color: #181a1f; "
+            "   color: #ffffff; "
+            "   selection-background-color: #2d5a88; "
+            "}"
         );
-        m_settingsBtn->setToolTip("Configure Machine Post (.cmm), Pico 2 Serial Port, Units (MM/Inch), Default Tolerances, and Audio");
+
+        auto makeRibbonPage = [this](const QList<QFrame*>& groups) -> QWidget* {
+            auto* page = new QWidget(this);
+            auto* layout = new QHBoxLayout(page);
+            layout->setContentsMargins(6, 2, 6, 2);
+            layout->setSpacing(2);
+            for (QFrame* grp : groups) {
+                layout->addWidget(grp);
+            }
+            layout->addStretch(1);
+            return page;
+            };
+
+        auto makeStackedControl = [this](const QString& labelText, QWidget* control) -> QWidget* {
+            auto* box = new QWidget(this);
+            auto* v = new QVBoxLayout(box);
+            v->setContentsMargins(2, 2, 2, 2);
+            v->setSpacing(4);
+            auto* lbl = new QLabel(labelText, box);
+            lbl->setStyleSheet("color: #abb2bf; font-size: 10px; font-weight: bold;");
+            v->addWidget(lbl);
+            v->addWidget(control);
+            v->addStretch(1);
+            return box;
+            };
+
+        // =====================================================================
+        // TAB 1: HOME (System, Machine DRO, Point Buffer, Offline Simulator)
+        // =====================================================================
+        m_settingsBtn = createRibbonButton("⚙", "Settings...", "#282c34", "#61afef", "#61afef");
+        m_settingsBtn->setToolTip("Configure Machine Post (.cmm), Pico 2 Serial Port, Axis Scale/Invert, Units, and Audio");
         connect(m_settingsBtn, &QPushButton::clicked, this, &MainWindow::onOpenSettingsClicked);
-        hwToolbar->addWidget(m_settingsBtn);
 
-        hwToolbar->addSeparator();
-
-        auto* zeroBtn = new QPushButton("Zero XYZ", this);
+        auto* zeroBtn = createRibbonButton("🎯", "Zero XYZ");
+        zeroBtn->setToolTip("Zero X, Y, Z encoder counts at current physical position");
         connect(zeroBtn, &QPushButton::clicked, this, &MainWindow::onZeroAxesClicked);
-        hwToolbar->addWidget(zeroBtn);
 
-        auto* clearBtn = new QPushButton("Clear Points", this);
-        clearBtn->setStyleSheet("background-color: #5c2b29; color: white; padding: 5px 10px; font-weight: bold;");
+        auto* unitsBtn = createRibbonButton("📏", "Units (mm/in)");
+        unitsBtn->setToolTip("Toggle live display between Millimeters (mm) and Inches (in)");
+        connect(unitsBtn, &QPushButton::clicked, this, &MainWindow::onUnitToggled);
+
+        auto* clearBtn = createRibbonButton("🗑", "Clear Points", "#5c2b29", "#e06c75", "#ffffff");
+        clearBtn->setToolTip("Clear active probe point buffer and 3D hit markers");
         connect(clearBtn, &QPushButton::clicked, this, &MainWindow::onClearPointsClicked);
-        hwToolbar->addWidget(clearBtn);
-
-        hwToolbar->addSeparator();
-
-        auto* loadStepBtn = new QPushButton("Load STEP CAD", this);
-        loadStepBtn->setStyleSheet("background-color: #2d5a88; color: white; padding: 5px 10px; font-weight: bold;");
-        connect(loadStepBtn, &QPushButton::clicked, this, &MainWindow::onLoadStepClicked);
-        hwToolbar->addWidget(loadStepBtn);
-
-        auto* transformCadBtn = new QPushButton("Orient CAD...", this);
-        transformCadBtn->setStyleSheet("background-color: #3b6998; color: white; padding: 5px 10px; font-weight: bold;");
-        connect(transformCadBtn, &QPushButton::clicked, this, &MainWindow::onTransformCadClicked);
-        hwToolbar->addWidget(transformCadBtn);
-
-        hwToolbar->addSeparator();
-
-        auto* simLabel = new QLabel(" Simulator: ", this);
-        simLabel->setStyleSheet("color: #abb2bf; font-weight: bold;");
-        hwToolbar->addWidget(simLabel);
 
         m_simTargetCombo = new QComboBox(this);
         m_simTargetCombo->addItem("Master Ball Ø25.4mm", 0);
@@ -155,97 +248,142 @@ namespace OpenCMM {
         m_simTargetCombo->addItem("Top Datum Plane (Z=20)", 3);
         m_simTargetCombo->addItem("Front X-Edge (Y=0)", 4);
         m_simTargetCombo->addItem("Left Y-Edge (X=0)", 5);
-        hwToolbar->addWidget(m_simTargetCombo);
 
-        auto* simHitBtn = new QPushButton("Simulate Probe Hit", this);
-        simHitBtn->setStyleSheet("background-color: #d19a66; color: #1e2227; padding: 5px 10px; font-weight: bold;");
+        auto* simHitBtn = createRibbonButton("⚡", "Simulate Hit", "#d19a66", "#e5c07b", "#1e2227");
         connect(simHitBtn, &QPushButton::clicked, this, &MainWindow::onSimulateHitClicked);
-        hwToolbar->addWidget(simHitBtn);
 
-        // Row 2: Metrology Workplane, Tip Compensation, Solvers, CAD Deviation & Alignment
-        addToolBarBreak(Qt::TopToolBarArea);
-        auto* metroToolbar = addToolBar("Metrology Feature Solvers");
-        metroToolbar->setMovable(false);
-        metroToolbar->setStyleSheet(barStyle);
+        ribbonTabs->addTab(makeRibbonPage({
+            createRibbonGroup("System & Hardware",{ m_settingsBtn }),
+            createRibbonGroup("Machine DRO",{ zeroBtn, unitsBtn }),
+            createRibbonGroup("Point Buffer",{ clearBtn }),
+            createRibbonGroup("Offline Simulator",{ makeStackedControl("Virtual Target:", m_simTargetCombo), simHitBtn })
+            }), "Home");
 
-        auto* wpLabel = new QLabel(" Workplane: ", this);
-        wpLabel->setStyleSheet("color: #abb2bf; font-weight: bold;");
-        metroToolbar->addWidget(wpLabel);
-
-        m_workplaneCombo = new QComboBox(this);
-        m_workplaneCombo->addItem("XY (+Z)", static_cast<int>(StandardWorkplane::XY_PlusZ));
-        m_workplaneCombo->addItem("YZ (+X)", static_cast<int>(StandardWorkplane::YZ_PlusX));
-        m_workplaneCombo->addItem("ZX (+Y)", static_cast<int>(StandardWorkplane::ZX_PlusY));
-        m_workplaneCombo->addItem("Last Fitted Plane", static_cast<int>(StandardWorkplane::CustomPlane));
-        metroToolbar->addWidget(m_workplaneCombo);
-
-        auto* compLabel = new QLabel(" Tip Comp: ", this);
-        compLabel->setStyleSheet("color: #abb2bf; font-weight: bold;");
-        metroToolbar->addWidget(compLabel);
-
+        // =====================================================================
+        // TAB 2: PROBE & ALIGNMENT (Stylus Qualification & 3-2-1 PCS Datum)
+        // =====================================================================
         m_compModeCombo = new QComboBox(this);
         m_compModeCombo->addItem("External (-R)", static_cast<int>(ProbeCompMode::External));
         m_compModeCombo->addItem("Internal (+R)", static_cast<int>(ProbeCompMode::Internal));
         m_compModeCombo->addItem("Uncomp (0)", static_cast<int>(ProbeCompMode::Uncompensated));
-        metroToolbar->addWidget(m_compModeCombo);
 
-        auto* calBtn = new QPushButton("Calibrate Probe", this);
-        calBtn->setStyleSheet("background-color: #8957e5; color: white; padding: 5px 10px; font-weight: bold;");
+        auto* calBtn = createRibbonButton("🔴", "Calibrate Tip", "#5a32a3", "#8957e5", "#ffffff");
+        calBtn->setToolTip("Fit 5+ hits on certified Master Ball to lock in Effective Stylus Radius (R_eff)");
         connect(calBtn, &QPushButton::clicked, this, &MainWindow::onCalibrateProbeClicked);
-        metroToolbar->addWidget(calBtn);
 
-        metroToolbar->addSeparator();
-
-        auto* fitSphereBtn = new QPushButton("Fit Sphere", this);
-        connect(fitSphereBtn, &QPushButton::clicked, this, &MainWindow::onFitSphereClicked);
-        metroToolbar->addWidget(fitSphereBtn);
-
-        auto* fitPlaneBtn = new QPushButton("Fit Plane", this);
-        connect(fitPlaneBtn, &QPushButton::clicked, this, &MainWindow::onFitPlaneClicked);
-        metroToolbar->addWidget(fitPlaneBtn);
-
-        auto* fitCircleBtn = new QPushButton("Fit 2D Circle", this);
-        fitCircleBtn->setStyleSheet("background-color: #2b6cb0; color: white; padding: 5px 10px; font-weight: bold;");
-        connect(fitCircleBtn, &QPushButton::clicked, this, &MainWindow::onFitCircleClicked);
-        metroToolbar->addWidget(fitCircleBtn);
-
-        auto* fitLineBtn = new QPushButton("Fit 2D Line", this);
-        fitLineBtn->setStyleSheet("background-color: #2b6cb0; color: white; padding: 5px 10px; font-weight: bold;");
-        connect(fitLineBtn, &QPushButton::clicked, this, &MainWindow::onFitLineClicked);
-        metroToolbar->addWidget(fitLineBtn);
-
-        auto* relBtn = new QPushButton("Measure Distance", this);
-        relBtn->setStyleSheet("background-color: #2f855a; color: white; padding: 5px 10px; font-weight: bold;");
-        connect(relBtn, &QPushButton::clicked, this, &MainWindow::onMeasureRelationClicked);
-        metroToolbar->addWidget(relBtn);
-
-        auto* cadDevBtn = new QPushButton("CAD Surface Dev", this);
-        cadDevBtn->setStyleSheet("background-color: #0d9488; color: white; padding: 5px 10px; font-weight: bold;");
-        cadDevBtn->setToolTip("Project active probe hits onto the loaded STEP CAD model and render a color-mapped deviation heatmap");
-        connect(cadDevBtn, &QPushButton::clicked, this, &MainWindow::onEvaluateCadDeviationClicked);
-        metroToolbar->addWidget(cadDevBtn);
-
-        metroToolbar->addSeparator();
-
-        auto* alignBtn = new QPushButton("3-2-1 Alignment...", this);
-        alignBtn->setStyleSheet("background-color: #d15757; color: white; padding: 5px 10px; font-weight: bold;");
+        auto* alignBtn = createRibbonButton("📐", "3-2-1 Align...", "#9b2c2c", "#e06c75", "#ffffff");
+        alignBtn->setToolTip("Run interactive 3-2-1 Part Coordinate System (PCS) Alignment Wizard");
         connect(alignBtn, &QPushButton::clicked, this, &MainWindow::onRun321AlignmentClicked);
-        metroToolbar->addWidget(alignBtn);
 
-        m_alignStatusBtn = new QPushButton("MCS", this);
+        m_alignStatusBtn = createRibbonButton("🌐", "Coord: MCS", "#3a3f4b", "#e5c07b", "#e5c07b");
         m_alignStatusBtn->setCheckable(true);
         m_alignStatusBtn->setChecked(false);
         m_alignStatusBtn->setToolTip("Toggle between Machine Coordinate System (MCS) and 3-2-1 Part Coordinate System (PCS)");
-        m_alignStatusBtn->setStyleSheet("background-color: #3a3f4b; color: #e5c07b; padding: 5px 10px; font-weight: bold;");
         connect(m_alignStatusBtn, &QPushButton::clicked, this, [this](bool checked) {
             if (!m_isPartAligned && checked) {
                 QMessageBox::warning(this, "No Alignment Active", "Please run a 3-2-1 alignment first.");
                 m_alignStatusBtn->setChecked(false);
                 return;
             }
+            if (checked) {
+                m_alignStatusBtn->setText("🌐\nPCS (Aligned)");
+                m_alignStatusBtn->setStyleSheet(
+                    "QPushButton { background-color: #1e4620; color: #98c379; border: 1px solid #98c379; "
+                    "border-radius: 4px; padding: 4px 8px; font-size: 11px; font-weight: bold; }"
+                );
+            }
+            else {
+                m_alignStatusBtn->setText("🌐\nCoord: MCS");
+                m_alignStatusBtn->setStyleSheet(
+                    "QPushButton { background-color: #3a3f4b; color: #e5c07b; border: 1px solid #e5c07b; "
+                    "border-radius: 4px; padding: 4px 8px; font-size: 11px; font-weight: bold; }"
+                );
+            }
             updateDroDisplay();
             });
-        metroToolbar->addWidget(m_alignStatusBtn);
+
+        auto* clearBtnTab2 = createRibbonButton("🗑", "Clear Hits", "#5c2b29", "#e06c75", "#ffffff");
+        connect(clearBtnTab2, &QPushButton::clicked, this, &MainWindow::onClearPointsClicked);
+
+        ribbonTabs->addTab(makeRibbonPage({
+            createRibbonGroup("Stylus Compensation",{ makeStackedControl("Tip Compensation:", m_compModeCombo), calBtn }),
+            createRibbonGroup("Part Coordinate System (PCS)",{ alignBtn, m_alignStatusBtn }),
+            createRibbonGroup("Quick Buffer",{ clearBtnTab2 })
+            }), "Probe && Alignment");
+
+        // =====================================================================
+        // TAB 3: MEASURE (Workplane, 3D/2D Feature Solvers, Relations)
+        // =====================================================================
+        m_workplaneCombo = new QComboBox(this);
+        m_workplaneCombo->addItem("XY (+Z)", static_cast<int>(StandardWorkplane::XY_PlusZ));
+        m_workplaneCombo->addItem("YZ (+X)", static_cast<int>(StandardWorkplane::YZ_PlusX));
+        m_workplaneCombo->addItem("ZX (+Y)", static_cast<int>(StandardWorkplane::ZX_PlusY));
+        m_workplaneCombo->addItem("Last Fitted Plane", static_cast<int>(StandardWorkplane::CustomPlane));
+
+        auto* fitPlaneBtn = createRibbonButton("▱", "Fit Plane");
+        fitPlaneBtn->setToolTip("Fit 3D Least-Squares Plane & Flatness (Min 3 hits)");
+        connect(fitPlaneBtn, &QPushButton::clicked, this, &MainWindow::onFitPlaneClicked);
+
+        auto* fitSphereBtn = createRibbonButton("🌐", "Fit Sphere");
+        fitSphereBtn->setToolTip("Fit 3D Least-Squares Sphere & Sphericity (Min 4 hits)");
+        connect(fitSphereBtn, &QPushButton::clicked, this, &MainWindow::onFitSphereClicked);
+
+        auto* fitCircleBtn = createRibbonButton("⭕", "Fit 2D Circle", "#2b6cb0", "#61afef", "#ffffff");
+        fitCircleBtn->setToolTip("Fit 2D Bore or Boss in active workplane (Min 3 hits)");
+        connect(fitCircleBtn, &QPushButton::clicked, this, &MainWindow::onFitCircleClicked);
+
+        auto* fitLineBtn = createRibbonButton("╱", "Fit 2D Line", "#2b6cb0", "#61afef", "#ffffff");
+        fitLineBtn->setToolTip("Fit 2D Edge Line & Straightness in active workplane (Min 2 hits)");
+        connect(fitLineBtn, &QPushButton::clicked, this, &MainWindow::onFitLineClicked);
+
+        auto* relBtn = createRibbonButton("↔", "Distance / ∠", "#2f855a", "#98c379", "#ffffff");
+        relBtn->setToolTip("Compute 2D/3D Distance, Angle, and Corner Intersection between solved features");
+        connect(relBtn, &QPushButton::clicked, this, &MainWindow::onMeasureRelationClicked);
+
+        ribbonTabs->addTab(makeRibbonPage({
+            createRibbonGroup("Active Projection",{ makeStackedControl("2D Workplane:", m_workplaneCombo) }),
+            createRibbonGroup("3D Features",{ fitPlaneBtn, fitSphereBtn }),
+            createRibbonGroup("2D Workplane Features",{ fitCircleBtn, fitLineBtn }),
+            createRibbonGroup("Dimensions & Relations",{ relBtn })
+            }), "Measure");
+
+        // =====================================================================
+        // TAB 4: CAD & DEVIATION (STEP Import, Pose Transform, Surface Heatmap)
+        // =====================================================================
+        auto* loadStepBtn = createRibbonButton("📦", "Load STEP", "#2d5a88", "#61afef", "#ffffff");
+        loadStepBtn->setToolTip("Import 3D STEP (.stp/.step) CAD model onto the CMM granite table");
+        connect(loadStepBtn, &QPushButton::clicked, this, &MainWindow::onLoadStepClicked);
+
+        auto* transformCadBtn = createRibbonButton("🧭", "Orient CAD...", "#3b6998", "#61afef", "#ffffff");
+        transformCadBtn->setToolTip("Rotate, translate, level face to +Z, or snap STEP model to granite (Z=0)");
+        connect(transformCadBtn, &QPushButton::clicked, this, &MainWindow::onTransformCadClicked);
+
+        auto* cadDevBtn = createRibbonButton("🌡", "Surface Dev", "#0d9488", "#4fd1c5", "#ffffff");
+        cadDevBtn->setToolTip("Project active probe hits onto the loaded STEP CAD model and render a color-mapped deviation heatmap");
+        connect(cadDevBtn, &QPushButton::clicked, this, &MainWindow::onEvaluateCadDeviationClicked);
+
+        ribbonTabs->addTab(makeRibbonPage({
+            createRibbonGroup("3D CAD Model",{ loadStepBtn, transformCadBtn }),
+            createRibbonGroup("Point Cloud vs. CAD",{ cadDevBtn })
+            }), "CAD && Deviation");
+
+        // =====================================================================
+        // TAB 5: REPORTING & GD&T (Nominal/Tolerance Editor, HTML/CSV Export)
+        // =====================================================================
+        auto* editTolBtn = createRibbonButton("±", "Edit Tol...", "#2d3748", "#e5c07b", "#e5c07b");
+        editTolBtn->setToolTip("Edit Target Nominal and Upper/Lower Tolerance for the selected feature (Ctrl+T)");
+        connect(editTolBtn, &QPushButton::clicked, this, &MainWindow::onEditToleranceClicked);
+
+        auto* exportBtn = createRibbonButton("📄", "Export Report", "#1f7a8c", "#61afef", "#ffffff");
+        exportBtn->setToolTip("Export printable HTML or CSV Quality Inspection Report (Ctrl+E)");
+        connect(exportBtn, &QPushButton::clicked, this, &MainWindow::onExportReportClicked);
+
+        ribbonTabs->addTab(makeRibbonPage({
+            createRibbonGroup("Feature Evaluation",{ editTolBtn }),
+            createRibbonGroup("Quality Documentation",{ exportBtn })
+            }), "Reporting");
+
+        setMenuWidget(ribbonTabs);
     }
 
     void MainWindow::setupDroDock() {
@@ -326,7 +464,6 @@ namespace OpenCMM {
         dockLayout->setContentsMargins(4, 4, 4, 4);
         dockLayout->setSpacing(4);
 
-        // Action bar right above the tree table
         auto* actionBar = new QHBoxLayout();
         actionBar->setSpacing(6);
 
@@ -338,6 +475,7 @@ namespace OpenCMM {
 
         auto* exportDockBtn = new QPushButton("Export Report... (Ctrl+E)", container);
         exportDockBtn->setStyleSheet("background-color: #1f7a8c; color: white; border: 1px solid #4b5263; border-radius: 3px; padding: 4px 10px; font-weight: bold; font-size: 11px;");
+        exportDockBtn->setShortcut(QKeySequence("Ctrl+E"));
         connect(exportDockBtn, &QPushButton::clicked, this, &MainWindow::onExportReportClicked);
         actionBar->addWidget(exportDockBtn);
 
@@ -377,9 +515,7 @@ namespace OpenCMM {
         dlg.setAudioChimesEnabled(m_audioEnabled);
         dlg.setSelectedMachinePath(m_machinePackagePath);
 
-        // Pass current controller scale and sign into the settings dialog
         if (m_controller) {
-            // (Optional: add getScale() / getSign() accessors to ICmmController/PicoSerialController if needed)
             dlg.setAxisCalibration(Eigen::Vector3d(0.001, 0.001, 0.001), Eigen::Vector3i(1, 1, 1));
         }
 
@@ -398,7 +534,6 @@ namespace OpenCMM {
                 m_machinePackagePath = path;
                 const auto& cfg = m_viewport->machineConfig();
 
-                // Automatically populate scale and sign from loaded .cmm manifest
                 if (m_controller) {
                     m_controller->setAxisCalibration(cfg.scaleMm, cfg.sign);
                 }
@@ -446,7 +581,6 @@ namespace OpenCMM {
 
         if (dlg.exec() != QDialog::Accepted) return;
 
-        // Apply live scale and sign selections from dialog to controller
         if (m_controller) {
             m_controller->setAxisCalibration(dlg.getAxisScale(), dlg.getAxisSign());
         }
@@ -588,20 +722,20 @@ namespace OpenCMM {
     void MainWindow::onConnectionChanged(bool connected, const QString& message) {
         if (connected) {
             if (m_settingsBtn) {
-                m_settingsBtn->setText("⚙ Settings (Connected)");
+                m_settingsBtn->setText("⚙\nConnected");
                 m_settingsBtn->setStyleSheet(
-                    "background-color: #1e3a29; color: #98c379; border: 1px solid #98c379; "
-                    "border-radius: 3px; padding: 5px 12px; font-weight: bold;"
+                    "QPushButton { background-color: #1e3a29; color: #98c379; border: 1px solid #98c379; "
+                    "border-radius: 4px; padding: 4px 8px; font-size: 11px; font-weight: bold; }"
                 );
             }
             statusBar()->setStyleSheet("background-color: #28a745; color: white; font-weight: bold;");
         }
         else {
             if (m_settingsBtn) {
-                m_settingsBtn->setText("⚙ Settings...");
+                m_settingsBtn->setText("⚙\nSettings...");
                 m_settingsBtn->setStyleSheet(
-                    "background-color: #282c34; color: #61afef; border: 1px solid #61afef; "
-                    "border-radius: 3px; padding: 5px 12px; font-weight: bold;"
+                    "QPushButton { background-color: #282c34; color: #61afef; border: 1px solid #61afef; "
+                    "border-radius: 4px; padding: 4px 8px; font-size: 11px; font-weight: bold; }"
                 );
             }
             statusBar()->setStyleSheet("background-color: #007acc; color: white; font-weight: bold;");
@@ -1614,8 +1748,11 @@ namespace OpenCMM {
         m_pcsMatrix = res.transformationMatrix;
         m_isPartAligned = true;
         m_alignStatusBtn->setChecked(true);
-        m_alignStatusBtn->setStyleSheet("background-color: #28a745; color: white; padding: 5px 10px; font-weight: bold;");
-        m_alignStatusBtn->setText("PCS (Aligned)");
+        m_alignStatusBtn->setStyleSheet(
+            "QPushButton { background-color: #1e4620; color: #98c379; border: 1px solid #98c379; "
+            "border-radius: 4px; padding: 4px 8px; font-size: 11px; font-weight: bold; }"
+        );
+        m_alignStatusBtn->setText("🌐\nPCS (Aligned)");
 
         updateDroDisplay();
         playSolveChime(true);
@@ -1782,7 +1919,6 @@ namespace OpenCMM {
             return;
         }
 
-        // Export Printable HTML Inspection Report
         QFile file(filePath);
         if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
             QMessageBox::critical(this, "Export Error", "Could not write to file: " + filePath);
@@ -1883,6 +2019,7 @@ namespace OpenCMM {
 
         statusBar()->showMessage("Active probe point buffer and all 3D hit markers cleared.");
     }
+
     void MainWindow::onEvaluateCadDeviationClicked() {
         if (m_recordedHits.empty()) {
             statusBar()->showMessage("Capture at least 1 probe hit before running CAD Surface Deviation.");
@@ -1893,7 +2030,7 @@ namespace OpenCMM {
             QMessageBox::information(
                 this,
                 "No STEP CAD Model Loaded",
-                "Please load a STEP CAD model first ('Load STEP CAD') so probe points can be projected onto the nominal CAD surfaces."
+                "Please load a STEP CAD model first ('Load STEP') so probe points can be projected onto the nominal CAD surfaces."
             );
             return;
         }
@@ -1930,7 +2067,6 @@ namespace OpenCMM {
             maxDevMm = std::max(maxDevMm, dev.signedDeviationMm);
             sumSqMm += dev.signedDeviationMm * dev.signedDeviationMm;
 
-            // Render color-coded heatmap sphere at the nearest CAD surface point
             m_viewport->addDeviationPointMarker(
                 dev.nearestCadPoint.x(),
                 dev.nearestCadPoint.y(),
@@ -1972,7 +2108,6 @@ namespace OpenCMM {
 
         const double rmsMm = std::sqrt(sumSqMm / validCount);
 
-        // Evaluate worst-case absolute deviation against ±m_defaultTolMm
         applyEvaluationToTreeItem(devGroupItem, maxAbsDevMm, true, 0.0, m_defaultTolMm, m_defaultTolMm);
 
         new QTreeWidgetItem(devGroupItem, {
@@ -1992,7 +2127,6 @@ namespace OpenCMM {
         devGroupItem->setExpanded(true);
         m_featureTree->setCurrentItem(devGroupItem);
 
-        // Clear active hit buffer without overwriting the Red/Green/Blue heatmap colors
         m_recordedHits.clear();
         m_hitCountLabel->setText("Active Feature Hits: 0");
         while (m_activePointsGroup->childCount() > 0) {
