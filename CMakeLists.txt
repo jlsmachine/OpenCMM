@@ -28,9 +28,9 @@ set(PROJECT_SOURCES
     include/math/MetrologyMath.h
     include/ui/MainWindow.h
     include/ui/OcctViewport.h
- "include/ui/SettingsDialog.h")
+ "include/ui/SettingsDialog.h" "include/DMIS/DMIS53Parser.h" "src/DMIS/DMIS53Parser.cpp")
 
-add_executable(OpenCMM ${PROJECT_SOURCES} "include/ui/SettingsDialog.h")
+add_executable(OpenCMM ${PROJECT_SOURCES} "include/ui/SettingsDialog.h" "include/DMIS/DMIS53Parser.h" "src/DMIS/DMIS53Parser.cpp" "src/DMIS/DMIS53ParserTest.cpp" "include/DMIS/ChFileParser.h" "src/DMIS/ChFileParser.cpp")
 
 target_include_directories(OpenCMM PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include

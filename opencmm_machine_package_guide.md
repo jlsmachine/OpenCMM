@@ -1,6 +1,6 @@
 # OpenCMM Machine Package Specification (`.cmm`)
 
-OpenCMM uses a modular, CAM-style machine definition architecture. A `.cmm` package is a standard **ZIP archive** (renamed to `.cmm`) containing a JSON manifest (`machine.cmm.json`), optional STEP 3D link meshes, and configuration metadata. This allows you to swap physical CMM configurations, axis travels, and kinematic hierarchies without modifying any C++ code.
+OpenCMM uses a modular, CAM-style machine definition architecture. A `.cmm` package is a standard **ZIP archive** (renamed to `.cmm`) containing a JSON manifest (`machine.cmm.json`), optional STEP 3D link meshes, configuration metadata, and a **DMIS 5.3 Characterization File (`.chf`)**. This allows you to swap physical CMM configurations, axis travels, kinematic hierarchies, and metrology standards support without modifying any C++ code.
 
 ---
 
@@ -11,8 +11,9 @@ When you create a `.cmm` package (which is just a `.zip` file renamed to `.cmm`)
 ```text
 MyMachine.cmm (ZIP Archive)
 │
-├── machine.cmm.json       <-- Main manifest (required)
-└── meshes/                <-- Folder for 3D link geometry (optional)
+├── machine.cmm.json           <-- Main manifest (required)
+├── Helmel_Checkmaster.chf     <-- DMIS 5.3 characterization file (required for metrology)
+└── meshes/                    <-- Folder for 3D link geometry (optional)
     ├── granite_base.step
     ├── bridge_y.step
     ├── carriage_x.step
@@ -111,7 +112,111 @@ When exporting individual component STEP files, export them relative to the **as
 
 ---
 
-## 4. Key Property Definitions
+## 4. DMIS 5.3 Characterization File (`.chf`)
+
+In compliance with **DMIS 5.3 Conformance specifications (Clause 5.5)**, machine packages include a characterization file declaring supported EBNF command subsets, machine-dependent algorithms (`ALGDEF`), error handling profiles (`ERROR`), and persistent identifier rules (`QIF` / `QPId`).
+
+### Example Characterization File (`Helmel_Checkmaster.chf`)
+```text
+CHFILE/INPUT
+$$ =====================================================================
+$$ OpenCMM - Helmel Checkmaster 1112-102 Characterization File (DMIS 5.3)
+$$ Copyright (C) 2026 JLS Machine LLC
+$$ SPDX-License-Identifier: GPL-3.0-or-later
+$$ =====================================================================
+
+CHFIL1
+(*-------------------------------------------------------------*)
+(* DMIS 5.3 INPUT Grammar Subset supported by OpenCMM          *)
+(*-------------------------------------------------------------*)
+inputFile = dmisFirstStatement , [dmisStatementList] , endfilStm ;
+dmisFirstStatement = dmismnStm ;
+
+dmisStatement = 
+  aclratStm     (* FULL *)
+  | assignStm   (* FULL *)
+  | boundStm    (* FULL *)
+  | calibStm    (* FULL *)
+  | clearStm    (* FULL *)
+  | constStm    (* PART *)
+  | datdefStm   (* FULL *)
+  | datsetStm   (* FULL *)
+  | declStm     (* FULL *)
+  | displyStm   (* FULL *)
+  | dmisStm     (* FULL *)
+  | endmesStm   (* FULL *)
+  | endfilStm   (* FULL *)
+  | evalStm     (* FULL *)
+  | featStm     (* PART *)
+  | fedratStm   (* FULL *)
+  | filnamStm   (* FULL *)
+  | gotoStm     (* FULL *)
+  | ifStm       (* FULL *)
+  | measStm     (* FULL *)
+  | modeStm     (* FULL *)
+  | outputStm   (* FULL *)
+  | ptmeasStm   (* FULL *)
+  | refidStm    (* EXTENSION - DMIS 5.3 QPId / REFID *)
+  | rotateStm   (* FULL *)
+  | saveStm     (* FULL *)
+  | snsdefStm   (* PART *)
+  | snslctStm   (* FULL *)
+  | tecompStm   (* FULL *)
+  | textStm     (* FULL *)
+  | tolStm      (* PART *)
+  | transStm    (* FULL *)
+  | unitsStm    (* FULL *)
+  | wkplanStm   (* FULL *)
+  ;
+ENDCH1
+
+CHFIL2
+$$ Machine-dependent parameters for OpenCMM & Helmel Checkmaster Hardware
+ALGDEF/CODE,INTGR
+  1, 'Least Squares (LSTSQR)'
+  2, 'Min-Max (MINMAX)'
+  3, 'Maximum Inscribed (MAXINS)'
+  4, 'Minimum Circumscribed (MINCIR)'
+ENDAT
+
+ERROR/CODE,INTGR
+  101, 'ILLEGALTOUCH: Unexpected or unintended probe trigger'
+  102, 'NOTOUCH: Probe failed to trigger within search distance'
+  103, 'ENCODER_COMM_ERROR: Pico 2 serial communications lost'
+ENDAT
+
+FILDEF/CODE,INTGR
+  1, 'DEFAULT_FILTER'
+ENDAT
+ENDCH2
+
+CHFIL3
+$$ User-defined extensions and QIF 2.1 interoperability metadata
+QIF_SUPPORT = TRUE
+QPID_SUPPORT = TRUE
+MAX_IDENTIFIER_LENGTH = 64
+ENDCH3
+
+ENDCHF
+
+
+CHFILE/OUTPUT
+CHFIL1
+outputFile = dmisProg ;
+dmisProg = filnamStm , [dmisOutputList] , endfilStm ;
+dmisOutputList = [dmisOutputList] , dmisOutputStatement ;
+dmisOutputStatement = 
+  faFeatureStatement
+  | taToleranceStatement
+  | textResStatement
+  ;
+ENDCH1
+ENDCHF
+```
+
+---
+
+## 5. Key Property Definitions
 
 ### Root Properties
 * **`machine_name`** *(string)*: Display name shown in the UI and window title.
@@ -136,10 +241,10 @@ Each physical moving assembly or fixed base is defined as a node in the kinemati
 
 ---
 
-## 5. How to Package and Load a Machine
+## 6. How to Package and Load a Machine
 
 1. Create a working folder on your computer (e.g., `Helmel_Checkmaster/`).
-2. Place your `machine.cmm.json` file inside the root of that folder.
+2. Place your `machine.cmm.json` manifest and your `Helmel_Checkmaster.chf` characterization file inside the root of that folder.
 3. Create a subfolder named `meshes/` and drop your exported STEP files inside.
 4. Select the contents of the folder, compress them into a **ZIP archive**, and rename the extension from `.zip` to **`.cmm`** (e.g., `Helmel_Checkmaster.cmm`).
-5. In OpenCMM, open **⚙ Settings...** $\rightarrow$ **Machine & Hardware**, click **Browse .cmm...**, and select your package.
+5. In OpenCMM, open **⚙ Settings...** $\rightarrow$ **Machine & Hardware**, click **Browse .cmm...**, and select your package. OpenCMM will automatically parse the archive, load the kinematic digital twin, and validate the DMIS 5.3 characterization profile.

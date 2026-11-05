@@ -1,0 +1,97 @@
+CHFILE/INPUT
+$$ =====================================================================
+$$ OpenCMM - Helmel Checkmaster 1112-102 Characterization File (DMIS 5.3)
+$$ Copyright (C) 2026 JLS Machine LLC
+$$ SPDX-License-Identifier: GPL-3.0-or-later
+$$ =====================================================================
+
+CHFIL1
+(*-------------------------------------------------------------*)
+(* DMIS 5.3 INPUT Grammar Subset supported by OpenCMM          *)
+(*-------------------------------------------------------------*)
+inputFile = dmisFirstStatement , [dmisStatementList] , endfilStm ;
+dmisFirstStatement = dmismnStm ;
+
+dmisStatement = 
+  aclratStm     (* FULL *)
+  | assignStm   (* FULL *)
+  | boundStm    (* FULL *)
+  | calibStm    (* FULL *)
+  | clearStm    (* FULL *)
+  | constStm    (* PART *)
+  | datdefStm   (* FULL *)
+  | datsetStm   (* FULL *)
+  | declStm     (* FULL *)
+  | displyStm   (* FULL *)
+  | dmisStm     (* FULL *)
+  | endmesStm   (* FULL *)
+  | endfilStm   (* FULL *)
+  | evalStm     (* FULL *)
+  | featStm     (* PART *)
+  | fedratStm   (* FULL *)
+  | filnamStm   (* FULL *)
+  | gotoStm     (* FULL *)
+  | ifStm       (* FULL *)
+  | measStm     (* FULL *)
+  | modeStm     (* FULL *)
+  | outputStm   (* FULL *)
+  | ptmeasStm   (* FULL *)
+  | refidStm    (* EXTENSION - DMIS 5.3 QPId / REFID *)
+  | rotateStm   (* FULL *)
+  | saveStm     (* FULL *)
+  | snsdefStm   (* PART *)
+  | snslctStm   (* FULL *)
+  | tecompStm   (* FULL *)
+  | textStm     (* FULL *)
+  | tolStm      (* PART *)
+  | transStm    (* FULL *)
+  | unitsStm    (* FULL *)
+  | wkplanStm   (* FULL *)
+  ;
+ENDCH1
+
+CHFIL2
+$$ Machine-dependent parameters for OpenCMM & Helmel Checkmaster Hardware
+ALGDEF/CODE,INTGR
+  1, 'Least Squares (LSTSQR)'
+  2, 'Min-Max (MINMAX)'
+  3, 'Maximum Inscribed (MAXINS)'
+  4, 'Minimum Circumscribed (MINCIR)'
+ENDAT
+
+ERROR/CODE,INTGR
+  101, 'ILLEGALTOUCH: Unexpected or unintended probe trigger'
+  102, 'NOTOUCH: Probe failed to trigger within search distance'
+  103, 'ENCODER_COMM_ERROR: Pico 2 serial communications lost'
+ENDAT
+
+FILDEF/CODE,INTGR
+  1, 'DEFAULT_FILTER'
+ENDAT
+ENDCH2
+
+CHFIL3
+$$ User-defined extensions and QIF 2.1 interoperability metadata
+QIF_SUPPORT = TRUE
+QPID_SUPPORT = TRUE
+MAX_IDENTIFIER_LENGTH = 64
+ENDCH3
+
+ENDCHF
+
+
+CHFILE/OUTPUT
+$$ =====================================================================
+$$ OpenCMM Output Characterization File
+$$ =====================================================================
+CHFIL1
+outputFile = dmisProg ;
+dmisProg = filnamStm , [dmisOutputList] , endfilStm ;
+dmisOutputList = [dmisOutputList] , dmisOutputStatement ;
+dmisOutputStatement = 
+  faFeatureStatement
+  | taToleranceStatement
+  | textResStatement
+  ;
+ENDCH1
+ENDCHF
