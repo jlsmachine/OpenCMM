@@ -13,24 +13,41 @@ find_package(nlohmann_json CONFIG REQUIRED)
 find_package(OpenCASCADE CONFIG REQUIRED)
 find_package(Qt6 COMPONENTS Core Gui Widgets SerialPort REQUIRED)
 
-# 2. Source & Header Files (Including Milestone 2 Viewport)
+# 2. Consolidated Source & Header Files
 set(PROJECT_SOURCES
+    # Core & Main Entry
     src/main.cpp
-    src/cad/CmmDigitalTwin.cpp
-    src/hal/PicoSerialController.cpp
-    src/math/MetrologyMath.cpp
-    src/ui/MainWindow.cpp
-    src/ui/OcctViewport.cpp
-    src/ui/SettingsDialog.cpp
+    src/core/AppSettings.cpp
+    include/core/AppSettings.h
     include/core/Units.h
+
+    # Hardware Abstraction Layer (HAL)
+    src/hal/PicoSerialController.cpp
     include/hal/ICmmController.h
     include/hal/PicoSerialController.h
-    include/math/MetrologyMath.h
-    include/ui/MainWindow.h
-    include/ui/OcctViewport.h
- "include/ui/SettingsDialog.h" "include/DMIS/DMIS53Parser.h" "src/DMIS/DMIS53Parser.cpp")
 
-add_executable(OpenCMM ${PROJECT_SOURCES} "include/ui/SettingsDialog.h" "include/DMIS/DMIS53Parser.h" "src/DMIS/DMIS53Parser.cpp" "src/DMIS/DMIS53ParserTest.cpp" "include/DMIS/ChFileParser.h" "src/DMIS/ChFileParser.cpp")
+    # Metrology Math & CAD Twin
+    src/math/MetrologyMath.cpp
+    include/math/MetrologyMath.h
+    src/cad/CmmDigitalTwin.cpp
+
+    # DMIS 5.3 & Characterization Parsers
+    src/dmis/DMIS53Parser.cpp
+    include/dmis/DMIS53Parser.h
+    #src/dmis/DMIS53ParserTest.cpp
+    src/dmis/ChFileParser.cpp
+    include/dmis/ChFileParser.h
+
+    # User Interface & Viewports
+    src/ui/MainWindow.cpp
+    include/ui/MainWindow.h
+    src/ui/OcctViewport.cpp
+    include/ui/OcctViewport.h
+    src/ui/SettingsDialog.cpp
+    include/ui/SettingsDialog.h
+)
+
+add_executable(OpenCMM ${PROJECT_SOURCES})
 
 target_include_directories(OpenCMM PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -65,3 +82,24 @@ endif()
 
 # Copy Machines directory to build output
 file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/Machines" DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
+
+# Enable testing framework support
+enable_testing()
+
+# Define the DMIS parser test executable (incorporating your test runner source)
+add_executable(dmis_parser_test
+    src/dmis/DMIS53Parser.cpp
+    include/dmis/DMIS53Parser.h
+    src/dmis/DMIS53ParserTest.cpp
+)
+
+target_include_directories(dmis_parser_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(dmis_parser_test PRIVATE
+    Qt6::Core
+)
+
+# Register the test executable with CTest using the --test-dmis flag
+add_test(NAME DMIS53ParserValidationTest COMMAND dmis_parser_test --test-dmis)

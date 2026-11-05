@@ -16,8 +16,11 @@ namespace OpenCMM {
 
     class DMIS53Parser {
     public:
+        DMIS53Parser();
+        ~DMIS53Parser();
         static std::string validateAndTrimIdentifier(const std::string& rawIdent);
         static RefIdMapping parseRefIdStatement(const std::string& statement);
+        static bool runSelfTest();
     };
-
+    
 } // namespace OpenCMM
