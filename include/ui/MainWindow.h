@@ -53,7 +53,9 @@ namespace OpenCMM {
         void onPositionUpdated(const Position3D& pos);
         void onProbeHit(const Position3D& hitPos);
         void onConnectionChanged(bool connected, const QString& message);
-
+        void onThemeToggled(bool dark);
+    protected:
+        void closeEvent(QCloseEvent* event) override;
     private:
         void setupUi();
         void setupToolbar();
@@ -135,6 +137,15 @@ namespace OpenCMM {
 
         ::std::deque<Eigen::Vector3d> m_droHistory;
         Eigen::Vector3d m_lastApproachDir{ 0.0, 0.0, -1.0 };
+
+        QComboBox* m_featureRenderCombo = nullptr;
+
+        void onFeatureTreeContextMenuRequested(const QPoint& pos);
+        void onDeleteSelectedFeature();
+        void onClearAllFeaturesClicked();
+        bool m_isDarkMode = true;
+        QWidget* m_droContainer = nullptr;
+        QWidget* m_treeContainer = nullptr;
     };
 
 } // namespace OpenCMM

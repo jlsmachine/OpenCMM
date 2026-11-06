@@ -37,6 +37,10 @@ namespace OpenCMM {
 
         void setAvailableSerialPorts(const QStringList& ports, const QString& currentPort);
 
+        // Inside public: section of SettingsDialog
+        bool isDarkModeEnabled() const;
+        void setDarkModeEnabled(bool dark);
+
     public slots:
         void appendSerialLog(const QString& line);
         void updateRawDiagnostics(int32_t rawX, int32_t rawY, int32_t rawZ, bool probeTriggered);
@@ -46,6 +50,7 @@ namespace OpenCMM {
         void machinePackageReset();
         void serialPortConnectRequested(const QString& portName, int baudRate);
         void sendSerialCommandRequested(const QString& cmd);
+        void factoryResetRequested();
 
     private:
         void setupUi();
@@ -72,6 +77,8 @@ namespace OpenCMM {
         QLabel* m_diagRawYLbl = nullptr;
         QLabel* m_diagRawZLbl = nullptr;
         QLabel* m_diagProbeLbl = nullptr;
+        // Inside private: section of SettingsDialog
+        QComboBox* m_themeCombo = nullptr;
     };
 
 } // namespace OpenCMM

@@ -89,9 +89,33 @@ namespace OpenCMM {
 
         QPaintEngine* paintEngine() const override { return nullptr; }
 
+        // Inside public: section of OcctViewport (below clearHitMarkers();)
+        void addFittedPlaneVisual(int featureId,
+            double cx, double cy, double cz,
+            double nx, double ny, double nz,
+            double sizeMm = 60.0);
+        void addFittedSphereVisual(int featureId,
+            double cx, double cy, double cz,
+            double radiusMm);
+        void addFittedCircleVisual(int featureId,
+            double cx, double cy, double cz,
+            double nx, double ny, double nz,
+            double radiusMm);
+        void addFittedLineVisual(int featureId,
+            double x1, double y1, double z1,
+            double x2, double y2, double z2);
+        void highlightFittedFeature(int featureId);
+        void setFittedFeaturesWireframe(bool wireframe);
+        bool areFittedFeaturesWireframe() const { return m_fittedFeaturesWireframe; }
+        void clearFittedFeatures();
+        void setBackgroundColor(bool dark);
+        void setTheme(bool dark);
+        
+
     protected:
         void paintEvent(QPaintEvent* event) override;
         void resizeEvent(QResizeEvent* event) override;
+        void showEvent(QShowEvent* event) override;
 
         void mousePressEvent(QMouseEvent* event) override;
         void mouseReleaseEvent(QMouseEvent* event) override;
@@ -144,6 +168,24 @@ namespace OpenCMM {
         QPoint m_pressMousePos;
         bool m_isPanning = false;
         bool m_isRotating = false;
+
+        // Inside private: section of OcctViewport
+        struct FittedFeatureEntry {
+            int featureId = -1;
+            Handle(AIS_Shape) shape;
+            Quantity_Color baseColor;
+
+            std::vector<FittedFeatureEntry> m_fittedFeatureShapes;
+            bool m_fittedFeaturesWireframe = false;
+            bool m_isDarkMode = true;
+        
+        };
+
+        void displayFittedFeatureShape(int featureId, const TopoDS_Shape& shape, const Quantity_Color& color);
+
+        std::vector<FittedFeatureEntry> m_fittedFeatureShapes;
+        bool m_fittedFeaturesWireframe = false;
+        bool m_isDarkMode = true;
     };
 
 } // namespace OpenCMM

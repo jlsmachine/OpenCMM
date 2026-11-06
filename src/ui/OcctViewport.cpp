@@ -41,9 +41,21 @@
 #include <gp_Ax1.hxx>
 #include <gp_Ax2.hxx>
 #include <Quantity_Color.hxx>
+#include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepBuilderAPI_MakeWire.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepPrimAPI_MakeSphere.hxx>
+#include <BRepPrimAPI_MakeCylinder.hxx>
+#include <gp_Pln.hxx>
+#include <gp_Ax2.hxx>
+#include <gp_Circ.hxx>
+#include <Prs3d_IsoAspect.hxx>
+#include <Prs3d_LineAspect.hxx>
+#include <Aspect_TypeOfLine.hxx>
 
 #ifdef _WIN32
 #include <WNT_Window.hxx>
+
 #endif
 
 namespace OpenCMM {
@@ -52,7 +64,8 @@ namespace OpenCMM {
         constexpr double DEG_TO_RAD = 3.14159265358979323846 / 180.0;
     }
 
-    OcctViewport::OcctViewport(QWidget* parent) : QWidget(parent) {
+    OcctViewport::OcctViewport(QWidget* parent)
+        : QWidget(parent) {
         setAttribute(Qt::WA_PaintOnScreen);
         setAttribute(Qt::WA_NoSystemBackground);
         setAttribute(Qt::WA_NativeWindow);
@@ -64,9 +77,11 @@ namespace OpenCMM {
 
     void OcctViewport::setupOverlayHud() {
         m_hudContainer = new QWidget(this);
+        m_hudContainer->setMinimumWidth(180);
+        m_hudContainer->setMinimumHeight(260); // Force full expanded height on startup
         m_hudContainer->setStyleSheet(
             "QWidget { background-color: rgba(33, 37, 43, 220); border: 1px solid #3a3f4b; border-radius: 6px; }"
-            "QPushButton { background-color: #282c34; color: #abb2bf; border: 1px solid #4b5263; border-radius: 3px; padding: 4px 8px; font-weight: bold; font-size: 11px; min-width: 115px; text-align: left; }"
+            "QPushButton { background-color: #282c34; color: #abb2bf; border: 1px solid #4b5263; border-radius: 3px; padding: 5px 10px; min-width: 150px; min-height: 24px; font-weight: bold; font-size: 11px; text-align: left; }"
             "QPushButton:hover { background-color: #3a3f4b; color: white; }"
             "QPushButton:checked { background-color: #2d5a88; color: white; border: 1px solid #61afef; }"
             "QSlider::groove:vertical { background: #1e2227; width: 6px; border-radius: 3px; }"
@@ -109,7 +124,12 @@ namespace OpenCMM {
         hudLayout->addWidget(compTitle);
 
         m_linkButtonsContainer = new QWidget(m_hudContainer);
-        m_linkButtonsContainer->setStyleSheet("border: none; background: transparent;");
+        m_linkButtonsContainer->setStyleSheet(
+            "QWidget { border: none; background: transparent; }"
+            "QPushButton { background-color: #282c34; color: #abb2bf; border: 1px solid #4b5263; border-radius: 3px; padding: 5px 10px; min-width: 150px; min-height: 24px; font-weight: bold; font-size: 11px; text-align: left; }"
+            "QPushButton:hover { background-color: #3a3f4b; color: white; }"
+            "QPushButton:checked { background-color: #2d5a88; color: white; border: 1px solid #61afef; }"
+        );
         m_linkButtonsLayout = new QVBoxLayout(m_linkButtonsContainer);
         m_linkButtonsLayout->setContentsMargins(0, 0, 0, 0);
         m_linkButtonsLayout->setSpacing(4);
@@ -141,9 +161,22 @@ namespace OpenCMM {
         sliderLayout->addWidget(transTitle);
         sliderLayout->addWidget(m_verticalSlider, 0, Qt::AlignHCenter);
         hudLayout->addLayout(sliderLayout);
-
+        // --- Populate machine link buttons immediately so initial size is correct ---
+        rebuildComponentHudButtons();
         m_hudContainer->adjustSize();
         m_hudContainer->raise();
+    }
+
+    void OcctViewport::showEvent(QShowEvent* event) {
+        QWidget::showEvent(event);
+        if (m_hudContainer) {
+            m_hudContainer->layout()->invalidate();
+            m_hudContainer->adjustSize();
+            int x = width() - m_hudContainer->width() - 14;
+            int y = 14;
+            m_hudContainer->move(x, y);
+            m_hudContainer->raise();
+        }
     }
 
     void OcctViewport::rebuildComponentHudButtons() {
@@ -159,17 +192,38 @@ namespace OpenCMM {
         for (const QString& id : linkIds) {
             const bool vis = m_digitalTwin.isLinkVisible(id);
             auto* btn = new QPushButton((vis ? "✓ " : "  ") + id, m_linkButtonsContainer);
+
+            // --- Make button checkable so it triggers checked styles ---
             btn->setCheckable(true);
             btn->setChecked(vis);
+
+            btn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+            btn->setMinimumHeight(26);
+
+            QFontMetrics fm(btn->font());
+            int textWidth = fm.horizontalAdvance(btn->text()) + 28;
+            btn->setMinimumWidth(std::max(165, textWidth));
+
             connect(btn, &QPushButton::clicked, this, [this, id, btn](bool checked) {
                 m_digitalTwin.setLinkVisible(id, checked);
                 btn->setText((checked ? "✓ " : "  ") + id);
+
+                QFontMetrics fm2(btn->font());
+                int newWidth = fm2.horizontalAdvance(btn->text()) + 28;
+                btn->setMinimumWidth(std::max(165, newWidth));
+
+                if (m_hudContainer) {
+                    m_hudContainer->layout()->invalidate();
+                    m_hudContainer->adjustSize();
+                }
                 });
+
             m_linkButtonsLayout->addWidget(btn);
             m_linkButtons.push_back(btn);
         }
 
         if (m_hudContainer) {
+            m_hudContainer->layout()->invalidate();
             m_hudContainer->adjustSize();
             int x = width() - m_hudContainer->width() - 14;
             int y = 14;
@@ -198,7 +252,6 @@ namespace OpenCMM {
         );
 
         m_view = m_viewer->CreateView();
-        m_view->SetBackgroundColor(Quantity_NOC_GRAY15);
 
 #ifdef _WIN32
         Handle(WNT_Window) wntWindow = new WNT_Window(reinterpret_cast<Aspect_Handle>(winId()));
@@ -210,7 +263,7 @@ namespace OpenCMM {
 
         m_view->TriedronDisplay(
             Aspect_TOTP_LEFT_LOWER,
-            Quantity_NOC_WHITE,
+            m_isDarkMode ? Quantity_NOC_WHITE : Quantity_NOC_BLACK,
             0.1,
             V3d_ZBUFFER
         );
@@ -220,6 +273,20 @@ namespace OpenCMM {
         m_digitalTwin.setContext(m_context);
         m_digitalTwin.buildDefaultBridgeMachine();
         rebuildComponentHudButtons();
+
+
+        // Apply saved theme to the newly created 3D view and HUD
+        setTheme(m_isDarkMode);
+
+        // --- Force layout recalculation pass for the HUD overlay ---
+        if (m_hudContainer) {
+            m_hudContainer->layout()->activate();
+            m_hudContainer->adjustSize();
+            int x = width() - m_hudContainer->width() - 14;
+            int y = 14;
+            m_hudContainer->move(x, y);
+            m_hudContainer->raise();
+        }
 
         m_view->MustBeResized();
         m_view->FitAll();
@@ -434,6 +501,19 @@ namespace OpenCMM {
         if (m_view.IsNull()) {
             initOcct();
         }
+
+        // Ensure HUD layout is fully expanded and positioned on initial paint passes
+        if (m_hudContainer) {
+            m_hudContainer->layout()->activate();
+            m_hudContainer->adjustSize();
+            int x = width() - m_hudContainer->width() - 14;
+            int y = 14;
+            if (m_hudContainer->pos() != QPoint(x, y) || m_hudContainer->height() < 200) {
+                m_hudContainer->move(x, y);
+                m_hudContainer->raise();
+            }
+        }
+
         if (!m_view.IsNull()) {
             m_view->Redraw();
         }
@@ -784,5 +864,184 @@ namespace OpenCMM {
             m_view->Redraw();
         }
     }
+    void OcctViewport::displayFittedFeatureShape(int featureId, const TopoDS_Shape& shape, const Quantity_Color& color) {
+        if (m_context.IsNull() || shape.IsNull()) return;
+
+        Handle(AIS_Shape) ais = new AIS_Shape(shape);
+        ais->SetColor(color);
+        ais->SetMaterial(Graphic3d_NOM_PLASTIC);
+
+        Handle(Prs3d_Drawer) drawer = ais->Attributes();
+        drawer->SetUIsoAspect(new Prs3d_IsoAspect(color, Aspect_TOL_SOLID, 1.0, 6));
+        drawer->SetVIsoAspect(new Prs3d_IsoAspect(color, Aspect_TOL_SOLID, 1.0, 6));
+        drawer->SetFaceBoundaryDraw(Standard_True);
+        drawer->SetFaceBoundaryAspect(new Prs3d_LineAspect(color, Aspect_TOL_SOLID, 2.0));
+        drawer->SetWireAspect(new Prs3d_LineAspect(color, Aspect_TOL_SOLID, 2.0));
+
+        const int dispMode = m_fittedFeaturesWireframe ? 0 : 1; // 0 = Wireframe, 1 = Shaded
+        ais->SetTransparency(m_fittedFeaturesWireframe ? 0.0 : 0.35);
+
+        m_context->Display(ais, dispMode, -1, Standard_False);
+        m_fittedFeatureShapes.push_back({ featureId, ais, color });
+        m_view->Redraw();
+    }
+
+    void OcctViewport::addFittedPlaneVisual(int featureId,
+        double cx, double cy, double cz,
+        double nx, double ny, double nz,
+        double sizeMm) {
+        gp_Pnt center(cx, cy, cz);
+        gp_Dir normal(nx, ny, nz);
+        gp_Pln pln(center, normal);
+
+        const double half = std::max(10.0, sizeMm * 0.5);
+        TopoDS_Face face = BRepBuilderAPI_MakeFace(pln, -half, half, -half, half);
+        displayFittedFeatureShape(featureId, face, Quantity_Color(0.38, 0.69, 0.94, Quantity_TOC_RGB));
+    }
+
+    void OcctViewport::addFittedSphereVisual(int featureId,
+        double cx, double cy, double cz,
+        double radiusMm) {
+        if (radiusMm <= 1e-4) return;
+        TopoDS_Shape sphere = BRepPrimAPI_MakeSphere(gp_Pnt(cx, cy, cz), radiusMm).Shape();
+        displayFittedFeatureShape(featureId, sphere, Quantity_Color(0.60, 0.76, 0.47, Quantity_TOC_RGB));
+    }
+
+    void OcctViewport::addFittedCircleVisual(int featureId,
+        double cx, double cy, double cz,
+        double nx, double ny, double nz,
+        double radiusMm) {
+        if (radiusMm <= 1e-4) return;
+        gp_Ax2 ax(gp_Pnt(cx, cy, cz), gp_Dir(nx, ny, nz));
+        gp_Circ circ(ax, radiusMm);
+
+        TopoDS_Edge edge = BRepBuilderAPI_MakeEdge(circ);
+        TopoDS_Wire wire = BRepBuilderAPI_MakeWire(edge);
+        TopoDS_Face diskFace = BRepBuilderAPI_MakeFace(wire, Standard_True);
+        displayFittedFeatureShape(featureId, diskFace, Quantity_Color(0.90, 0.75, 0.48, Quantity_TOC_RGB));
+    }
+
+    void OcctViewport::addFittedLineVisual(int featureId,
+        double x1, double y1, double z1,
+        double x2, double y2, double z2) {
+        gp_Pnt p1(x1, y1, z1);
+        gp_Pnt p2(x2, y2, z2);
+        const double len = p1.Distance(p2);
+        if (len <= 1e-4) return;
+
+        gp_Dir dir(gp_Vec(p1, p2));
+        gp_Ax2 ax(p1, dir);
+
+        TopoDS_Shape rod = BRepPrimAPI_MakeCylinder(ax, 0.45, len).Shape();
+        displayFittedFeatureShape(featureId, rod, Quantity_Color(0.88, 0.42, 0.46, Quantity_TOC_RGB));
+    }
+
+    void OcctViewport::highlightFittedFeature(int featureId) {
+        if (m_context.IsNull()) return;
+
+        const Quantity_Color highlightCol(1.0, 0.92, 0.23, Quantity_TOC_RGB); // Bright Inspection Yellow
+
+        for (auto& entry : m_fittedFeatureShapes) {
+            if (entry.shape.IsNull()) continue;
+
+            const bool isSelected = (entry.featureId == featureId && featureId > 0);
+            const Quantity_Color& col = isSelected ? highlightCol : entry.baseColor;
+            const double lineWidth = isSelected ? 3.5 : 2.0;
+            const double isoWidth = isSelected ? 2.0 : 1.0;
+
+            entry.shape->SetColor(col);
+            entry.shape->SetTransparency(m_fittedFeaturesWireframe ? 0.0 : (isSelected ? 0.10 : 0.35));
+
+            Handle(Prs3d_Drawer) drawer = entry.shape->Attributes();
+            drawer->SetUIsoAspect(new Prs3d_IsoAspect(col, Aspect_TOL_SOLID, isoWidth, 6));
+            drawer->SetVIsoAspect(new Prs3d_IsoAspect(col, Aspect_TOL_SOLID, isoWidth, 6));
+            drawer->SetFaceBoundaryAspect(new Prs3d_LineAspect(col, Aspect_TOL_SOLID, lineWidth));
+            drawer->SetWireAspect(new Prs3d_LineAspect(col, Aspect_TOL_SOLID, lineWidth));
+
+            m_context->Redisplay(entry.shape, Standard_False);
+        }
+        m_context->UpdateCurrentViewer();
+    }
+
+    void OcctViewport::setFittedFeaturesWireframe(bool wireframe) {
+        m_fittedFeaturesWireframe = wireframe;
+        if (m_context.IsNull()) return;
+
+        const int dispMode = m_fittedFeaturesWireframe ? 0 : 1;
+        for (const auto& entry : m_fittedFeatureShapes) {
+            if (!entry.shape.IsNull()) {
+                entry.shape->SetTransparency(m_fittedFeaturesWireframe ? 0.0 : 0.35);
+                m_context->SetDisplayMode(entry.shape, dispMode, Standard_False);
+            }
+        }
+        m_context->UpdateCurrentViewer();
+    }
+
+    void OcctViewport::clearFittedFeatures() {
+        if (m_context.IsNull()) return;
+        for (const auto& entry : m_fittedFeatureShapes) {
+            if (!entry.shape.IsNull()) {
+                m_context->Remove(entry.shape, Standard_False);
+            }
+        }
+        m_fittedFeatureShapes.clear();
+        m_context->UpdateCurrentViewer();
+    }
+    void OcctViewport::setBackgroundColor(bool dark) {
+        m_isDarkMode = dark;
+        if (m_view.IsNull()) return;
+
+        if (dark) {
+            m_view->SetBackgroundColor(Quantity_Color(0.1176, 0.1333, 0.1529, Quantity_TOC_RGB)); // #1e2227
+        }
+        else {
+            m_view->SetBackgroundColor(Quantity_Color(0.9451, 0.9608, 0.9765, Quantity_TOC_RGB)); // #f1f5f9
+        }
+        m_view->Redraw();
+    }
+
+    void OcctViewport::setTheme(bool dark) {
+        m_isDarkMode = dark;
+
+        // 1. Always style the HUD container immediately, even if m_view is not created yet
+        if (m_hudContainer) {
+            if (dark) {
+                m_hudContainer->setStyleSheet(
+                    "QWidget { background-color: rgba(33, 37, 43, 220); border: 1px solid #3a3f4b; border-radius: 6px; }"
+                    "QPushButton { background-color: #282c34; color: #abb2bf; border: 1px solid #4b5263; border-radius: 3px; padding: 4px 8px; font-weight: bold; font-size: 11px; min-width: 115px; text-align: left; }"
+                    "QPushButton:hover { background-color: #3a3f4b; color: white; }"
+                    "QPushButton:checked { background-color: #2d5a88; color: white; border: 1px solid #61afef; }"
+                    "QSlider::groove:vertical { background: #1e2227; width: 6px; border-radius: 3px; }"
+                    "QSlider::handle:vertical { background: #61afef; height: 16px; margin: 0 -5px; border-radius: 3px; }"
+                    "QLabel { color: #abb2bf; font-size: 10px; font-weight: bold; background: transparent; border: none; }"
+                );
+            }
+            else {
+                m_hudContainer->setStyleSheet(
+                    "QWidget { background-color: rgba(255, 255, 255, 230); border: 1px solid #cbd5e1; border-radius: 6px; }"
+                    "QPushButton { background-color: #f1f5f9; color: #334155; border: 1px solid #94a3b8; border-radius: 3px; padding: 4px 8px; font-weight: bold; font-size: 11px; min-width: 115px; text-align: left; }"
+                    "QPushButton:hover { background-color: #e2e8f0; color: #0f172a; }"
+                    "QPushButton:checked { background-color: #0284c7; color: white; border: 1px solid #0284c7; }"
+                    "QSlider::groove:vertical { background: #cbd5e1; width: 6px; border-radius: 3px; }"
+                    "QSlider::handle:vertical { background: #0284c7; height: 16px; margin: 0 -5px; border-radius: 3px; }"
+                    "QLabel { color: #475569; font-size: 10px; font-weight: bold; background: transparent; border: none; }"
+                );
+            }
+        }
+
+        // 2. Update the 3D OpenCASCADE view if it has been initialized
+        if (!m_view.IsNull()) {
+            if (dark) {
+                m_view->SetBackgroundColor(Quantity_Color(0.1176, 0.1333, 0.1529, Quantity_TOC_RGB)); // #1e2227
+                m_view->TriedronDisplay(Aspect_TOTP_LEFT_LOWER, Quantity_NOC_WHITE, 0.1, V3d_ZBUFFER);
+            }
+            else {
+                m_view->SetBackgroundColor(Quantity_Color(0.9451, 0.9608, 0.9765, Quantity_TOC_RGB)); // #f1f5f9
+                m_view->TriedronDisplay(Aspect_TOTP_LEFT_LOWER, Quantity_NOC_BLACK, 0.1, V3d_ZBUFFER);
+            }
+            m_view->Redraw();
+        }
+    }
+   
 
 } // namespace OpenCMM

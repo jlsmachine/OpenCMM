@@ -45,9 +45,11 @@ set(PROJECT_SOURCES
     include/ui/OcctViewport.h
     src/ui/SettingsDialog.cpp
     include/ui/SettingsDialog.h
+    src/dmis/QifExporter.cpp       # <--- Add this line
+    include/dmis/QifExporter.h
 )
 
-add_executable(OpenCMM ${PROJECT_SOURCES})
+add_executable(OpenCMM ${PROJECT_SOURCES} "include/DMIS/QifExporter.h")
 
 target_include_directories(OpenCMM PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -91,7 +93,7 @@ add_executable(dmis_parser_test
     src/dmis/DMIS53Parser.cpp
     include/dmis/DMIS53Parser.h
     src/dmis/DMIS53ParserTest.cpp
-)
+ "include/DMIS/QifExporter.h")
 
 target_include_directories(dmis_parser_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include

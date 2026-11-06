@@ -264,6 +264,10 @@ namespace OpenCMM {
         m_unitCombo->addItem("Millimeters (mm)", static_cast<int>(UnitSystem::Millimeters));
         m_unitCombo->addItem("Inches (in)", static_cast<int>(UnitSystem::Inches));
 
+        m_themeCombo = new QComboBox(prefsGroup);
+        m_themeCombo->addItem("Dark Metrology Theme (Default)", true);
+        m_themeCombo->addItem("Light Inspection Theme", false);
+
         m_defaultTolSpin = new QDoubleSpinBox(prefsGroup);
         m_defaultTolSpin->setRange(0.0001, 10.0);
         m_defaultTolSpin->setDecimals(4);
@@ -276,6 +280,7 @@ namespace OpenCMM {
         );
 
         prefsForm->addRow("Default Unit System:", m_unitCombo);
+        prefsForm->addRow("Studio UI Theme:", m_themeCombo);
         prefsForm->addRow("Default Bilateral Tolerance (mm):", m_defaultTolSpin);
         prefsForm->addRow(m_audioCheck);
 
@@ -285,13 +290,58 @@ namespace OpenCMM {
 
         mainLayout->addWidget(tabWidget);
 
+        auto* bottomRow = new QHBoxLayout();
+        auto* factoryResetBtn = new QPushButton("⚠ Reset to Factory Settings...", this);
+        factoryResetBtn->setCursor(Qt::PointingHandCursor);
+        factoryResetBtn->setStyleSheet(
+            "QPushButton { background-color: #5c2b29; color: #ffffff; border: 1px solid #e06c75; "
+            "border-radius: 4px; padding: 6px 14px; font-weight: bold; }"
+            "QPushButton:hover { background-color: #742a2a; }"
+        );
+
+        connect(factoryResetBtn, &QPushButton::clicked, this, [this]() {
+            const auto resp = QMessageBox::warning(
+                this,
+                "Reset to Factory Settings",
+                "Are you sure you want to reset all OpenCMM preferences, encoder calibrations, "
+                "machine packages, and theme settings back to factory defaults?",
+                QMessageBox::Yes | QMessageBox::No,
+                QMessageBox::No
+            );
+            if (resp != QMessageBox::Yes) return;
+
+            setCurrentUnitSystem(UnitSystem::Millimeters);
+            setDefaultToleranceMm(0.025);
+            setAudioChimesEnabled(true);
+            setDarkModeEnabled(true);
+            setSelectedMachinePath("");
+            setAxisCalibration(Eigen::Vector3d(0.001, 0.001, 0.001), Eigen::Vector3i(1, 1, 1));
+
+            emit machinePackageReset();
+            emit factoryResetRequested();
+            });
+
         auto* buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
-        connect(buttonBox, &QDialogButtonBox::accepted, this, &QDialog::accept);  // Fixed: removed emit settingsApplied()
+        connect(buttonBox, &QDialogButtonBox::accepted, this, &QDialog::accept);
         connect(buttonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
-        mainLayout->addWidget(buttonBox);
+
+        bottomRow->addWidget(factoryResetBtn);
+        bottomRow->addStretch();
+        bottomRow->addWidget(buttonBox);
+        mainLayout->addLayout(bottomRow);
+    } // End of setupUi()
+
+    // --- Theme Getters & Setters ---
+    bool SettingsDialog::isDarkModeEnabled() const {
+        return m_themeCombo ? m_themeCombo->currentData().toBool() : true;
     }
 
-    // ... getters, setters, and diagnostic update slots remain identical ...
+    void SettingsDialog::setDarkModeEnabled(bool dark) {
+        if (m_themeCombo) {
+            m_themeCombo->setCurrentIndex(dark ? 0 : 1);
+        }
+    }
+
     UnitSystem SettingsDialog::getSelectedUnitSystem() const {
         return static_cast<UnitSystem>(m_unitCombo->currentData().toInt());
     }
@@ -360,6 +410,7 @@ namespace OpenCMM {
             }
         }
     }
+
     Eigen::Vector3d SettingsDialog::getAxisScale() const {
         return Eigen::Vector3d(m_scaleXSpin->value(), m_scaleYSpin->value(), m_scaleZSpin->value());
     }
@@ -381,3 +432,4 @@ namespace OpenCMM {
         m_invertZCheck->setChecked(sign.z() < 0);
     }
 } // namespace OpenCMM
+

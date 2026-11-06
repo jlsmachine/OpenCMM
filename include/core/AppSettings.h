@@ -11,13 +11,30 @@ namespace OpenCMM {
 
     class AppSettings {
     public:
-        static void loadSettings(QString& machinePath, QString& serialPort, int& baudRate,
-            Eigen::Vector3d& axisScale, Eigen::Vector3i& axisSign,
-            UnitSystem& units, double& defaultTol, bool& audioEnabled);
+        static void loadSettings(
+            QString& machinePath,
+            QString& port,
+            int& baud,
+            Eigen::Vector3d& scale,
+            Eigen::Vector3i& sign,
+            UnitSystem& units,
+            double& defaultTol,
+            bool& audioEnabled,
+            bool& isDarkMode
+        );
 
-        static void saveSettings(const QString& machinePath, const QString& serialPort, int baudRate,
-            const Eigen::Vector3d& axisScale, const Eigen::Vector3i& axisSign,
-            UnitSystem units, double defaultTol, bool audioEnabled);
+        static void saveSettings(
+            const QString& machinePath,
+            const QString& port,
+            int baud,
+            const Eigen::Vector3d& scale,
+            const Eigen::Vector3i& sign,
+            UnitSystem units,
+            double defaultTol,
+            bool audioEnabled,
+            bool isDarkMode
+        );
+        static void resetToDefaults();
     };
 
 } // namespace OpenCMM
