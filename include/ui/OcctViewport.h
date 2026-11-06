@@ -43,6 +43,12 @@ namespace OpenCMM {
         gp_Dir normalOrAxis{ 0.0, 0.0, 1.0 };
     };
 
+    struct CadSurfaceHit {
+        bool success = false;
+        gp_Pnt surfacePoint{ 0.0, 0.0, 0.0 };
+        gp_Dir surfaceNormal{ 0.0, 0.0, 1.0 };
+    };
+
     class OcctViewport : public QWidget {
         Q_OBJECT
     public:
@@ -77,6 +83,13 @@ namespace OpenCMM {
         void commitActiveHitMarkers();
         void clearHitMarkers();
 
+        // DMIS 5.3 Guided Target & Approach Vector Visuals
+        void setProgramTargetMarkers(const std::vector<gp_Pnt>& surfacePts,
+            const std::vector<gp_Dir>& normals,
+            int activeIndex,
+            double probeRadiusMm = 1.5);
+        void clearProgramTargetMarkers();
+
         void setModelDisplayMode(ModelDisplayMode mode);
         void setModelTransparency(double transparency);
         void setGraniteVisible(bool visible);
@@ -84,8 +97,12 @@ namespace OpenCMM {
         void setProbeStylusVisible(bool visible);
 
         void setFaceSelectedCallback(std::function<void(const CadFaceInfo&)> cb) { m_faceSelectedCallback = std::move(cb); }
-        CadFaceInfo inspectSelectedCadFace() const;
+        void setSurfaceHitCallback(std::function<void(const CadSurfaceHit&)> cb) { m_surfaceHitCallback = std::move(cb); }
+        CadFaceInfo inspectSelectedCadFace();
         const CadFaceInfo& lastSelectedFace() const { return m_lastSelectedFace; }
+        bool hasSelectedCadFace() const { return m_lastSelectedFace.success && !m_lastSelectedTopoFace.IsNull(); }
+        CadSurfaceHit pickSurfacePointOnSelectedFace(int screenX, int screenY) const;
+        std::vector<CadSurfaceHit> sampleSelectedCadFace(int numPoints = 0) const;
 
         QPaintEngine* paintEngine() const override { return nullptr; }
 
@@ -146,12 +163,15 @@ namespace OpenCMM {
 
         std::vector<Handle(AIS_Shape)> m_activeHitMarkers;
         std::vector<Handle(AIS_Shape)> m_solvedHitMarkers;
+        std::vector<Handle(AIS_Shape)> m_programTargetMarkers;
 
         ModelDisplayMode m_displayMode = ModelDisplayMode::ShadedWithEdges;
         double m_transparency = 0.0;
 
         CadFaceInfo m_lastSelectedFace;
+        TopoDS_Face m_lastSelectedTopoFace;
         std::function<void(const CadFaceInfo&)> m_faceSelectedCallback;
+        std::function<void(const CadSurfaceHit&)> m_surfaceHitCallback;
 
         QWidget* m_hudContainer = nullptr;
         QPushButton* m_btnShadedEdges = nullptr;

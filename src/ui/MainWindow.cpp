@@ -116,6 +116,10 @@ namespace OpenCMM {
         updateDroDisplay();
         updateProbeStatusDisplay();
 
+        m_dmisPlaybackTimer = new QTimer(this);
+        m_dmisPlaybackTimer->setInterval(35);
+        connect(m_dmisPlaybackTimer, &QTimer::timeout, this, &MainWindow::onDmisPlaybackTick);
+
         connect(m_controller, &PicoSerialController::positionUpdated,
             this, &MainWindow::onPositionUpdated);
         connect(m_controller, &PicoSerialController::probeTriggered,
@@ -170,6 +174,9 @@ namespace OpenCMM {
         m_viewport = new OcctViewport(this);
         m_viewport->setFaceSelectedCallback([this](const CadFaceInfo& faceInfo) {
             onCadFaceSelected(faceInfo);
+            });
+        m_viewport->setSurfaceHitCallback([this](const CadSurfaceHit& hit) {
+            onCadSurfaceProbed(hit);
             });
         setCentralWidget(m_viewport);
 
@@ -321,11 +328,24 @@ namespace OpenCMM {
         auto* simHitBtn = createRibbonButton("⚡", "Simulate Hit", "#d19a66", "#e5c07b", "#1e2227");
         connect(simHitBtn, &QPushButton::clicked, this, &MainWindow::onSimulateHitClicked);
 
+        auto* autoProbeCadBtn = createRibbonButton("🎯", "Auto-Probe CAD", "#2b6cb0", "#61afef", "#ffffff");
+        autoProbeCadBtn->setToolTip("Automatically sample and solve the currently selected 3D CAD face (or Ctrl+Left-Click on CAD to probe individual points)");
+        connect(autoProbeCadBtn, &QPushButton::clicked, this, &MainWindow::onAutoProbeCadFaceClicked);
+
+        auto* loadDmisHomeBtn = createRibbonButton("📂", "Load DMIS", "#1f7a8c", "#61afef", "#ffffff");
+        loadDmisHomeBtn->setToolTip("Load a DMIS 5.3 (.dmis) inspection program and display 3D target guide markers");
+        connect(loadDmisHomeBtn, &QPushButton::clicked, this, &MainWindow::onLoadDmisProgramClicked);
+
+        m_autoRunDmisBtnHome = createRibbonButton("▶", "Run DMIS", "#2f855a", "#98c379", "#ffffff");
+        m_autoRunDmisBtnHome->setToolTip("Animate the Digital Twin CMM through all loaded DMIS target points offline");
+        connect(m_autoRunDmisBtnHome, &QPushButton::clicked, this, &MainWindow::onToggleAutoRunDmisClicked);
+
         ribbonTabs->addTab(makeRibbonPage({
             createRibbonGroup("System & Hardware",{ m_settingsBtn, aboutBtn }),
             createRibbonGroup("Machine DRO",{ zeroBtn, unitsBtn }),
             createRibbonGroup("Point Buffer",{ clearBtn }),
-            createRibbonGroup("Offline Simulator",{ makeStackedControl("Virtual Target:", m_simTargetCombo), simHitBtn })
+            createRibbonGroup("Offline Simulator & CAD",{ makeStackedControl("Virtual Target:", m_simTargetCombo), simHitBtn, autoProbeCadBtn }),
+            createRibbonGroup("DMIS 5.3 Execution",{ loadDmisHomeBtn, m_autoRunDmisBtnHome })
             }), "Home");
 
         // --- Probe & Alignment Tab ---
@@ -417,11 +437,18 @@ namespace OpenCMM {
         connect(loadStepBtn, &QPushButton::clicked, this, &MainWindow::onLoadStepClicked);
         auto* transformCadBtn = createRibbonButton("🧭", "Orient CAD...", "#3b6998", "#61afef", "#ffffff");
         connect(transformCadBtn, &QPushButton::clicked, this, &MainWindow::onTransformCadClicked);
+        auto* autoProbeTabBtn = createRibbonButton("🎯", "Auto-Probe Face", "#2b6cb0", "#61afef", "#ffffff");
+        connect(autoProbeTabBtn, &QPushButton::clicked, this, &MainWindow::onAutoProbeCadFaceClicked);
+        auto* loadDmisCadBtn = createRibbonButton("📂", "Load DMIS", "#1f7a8c", "#61afef", "#ffffff");
+        connect(loadDmisCadBtn, &QPushButton::clicked, this, &MainWindow::onLoadDmisProgramClicked);
+        m_autoRunDmisBtnCad = createRibbonButton("▶", "Run DMIS", "#2f855a", "#98c379", "#ffffff");
+        connect(m_autoRunDmisBtnCad, &QPushButton::clicked, this, &MainWindow::onToggleAutoRunDmisClicked);
         auto* cadDevBtn = createRibbonButton("🌡", "Surface Dev", "#0d9488", "#4fd1c5", "#ffffff");
         connect(cadDevBtn, &QPushButton::clicked, this, &MainWindow::onEvaluateCadDeviationClicked);
 
         ribbonTabs->addTab(makeRibbonPage({
             createRibbonGroup("3D CAD Model",{ loadStepBtn, transformCadBtn }),
+            createRibbonGroup("Offline CAD Authoring",{ autoProbeTabBtn, loadDmisCadBtn, m_autoRunDmisBtnCad }),
             createRibbonGroup("Point Cloud vs. CAD",{ cadDevBtn })
             }), "CAD & Deviation");
 
@@ -446,6 +473,7 @@ namespace OpenCMM {
 
     void MainWindow::setupDroDock() {
         auto* droDock = new QDockWidget("LIVE CMM DRO & PROBE STATUS", this);
+        droDock->setObjectName("LiveDroDock");
         m_droContainer = new QWidget(droDock);
         m_droContainer->setStyleSheet(m_isDarkMode ? "background-color: #181a1f;" : "background-color: #f8fafc;");
         auto* layout = new QVBoxLayout(m_droContainer);
@@ -495,6 +523,7 @@ namespace OpenCMM {
 
     void MainWindow::setupFeatureTreeDock() {
         auto* treeDock = new QDockWidget("INSPECTION FEATURE TREE", this);
+        treeDock->setObjectName("FeatureTreeDock");
         m_treeContainer = new QWidget(treeDock);
         m_treeContainer->setStyleSheet(m_isDarkMode ? "background-color: #181a1f;" : "background-color: #f8fafc;");
         auto* dockLayout = new QVBoxLayout(m_treeContainer);
@@ -904,24 +933,56 @@ namespace OpenCMM {
             faceInfo.centerOrCentroid.Y(),
             faceInfo.centerOrCentroid.Z()
         );
+        m_armedCadNormalMm = Eigen::Vector3d(
+            faceInfo.normalOrAxis.X(),
+            faceInfo.normalOrAxis.Y(),
+            faceInfo.normalOrAxis.Z()
+        ).normalized();
+        m_armedCadIsInternal = faceInfo.isInternal;
         m_armedCadDescription = QString::fromStdString(faceInfo.surfaceType);
 
-        if (m_compModeCombo && faceInfo.nominalDiameter > 0.0) {
-            m_compModeCombo->setCurrentIndex(faceInfo.isInternal ? 1 : 0);
+        if (m_compModeCombo) {
+            if (faceInfo.nominalDiameter > 0.0) {
+                m_compModeCombo->setCurrentIndex(faceInfo.isInternal ? 1 : 0);
+            }
+            else {
+                m_compModeCombo->setCurrentIndex(0); // External (-R) for planar surfaces
+            }
+        }
+
+        // Automatically align active 2D Workplane to the selected CAD Cylinder axis or Plane normal
+        if (m_workplaneCombo && (m_armedCadDescription.contains("Cylinder") || m_armedCadDescription.contains("Plane"))) {
+            const double ax = std::abs(m_armedCadNormalMm.x());
+            const double ay = std::abs(m_armedCadNormalMm.y());
+            const double az = std::abs(m_armedCadNormalMm.z());
+            if (az >= 0.999) {
+                m_workplaneCombo->setCurrentIndex(0); // XY (+Z)
+            }
+            else if (ax >= 0.999) {
+                m_workplaneCombo->setCurrentIndex(1); // YZ (+X)
+            }
+            else if (ay >= 0.999) {
+                m_workplaneCombo->setCurrentIndex(2); // ZX (+Y)
+            }
+            else {
+                m_lastFittedPlaneFrame = WorkplaneFrame::fromPlane(m_armedCadLocationMm, m_armedCadNormalMm);
+                m_hasCustomPlane = true;
+                m_workplaneCombo->setCurrentIndex(3); // Custom Plane aligned to tilted feature
+            }
         }
 
         const int decimals = (m_unitSystem == UnitSystem::Millimeters) ? 4 : 5;
         const QString unitStr = (m_unitSystem == UnitSystem::Millimeters) ? " mm" : " in";
 
         if (faceInfo.nominalDiameter > 0.0) {
-            statusBar()->showMessage(QString("Selected CAD %1 — Armed Nominal Ø: %2%3 (%4)")
+            statusBar()->showMessage(QString("Selected CAD %1 — Nominal Ø: %2%3 (%4) | Ctrl+Click to probe or click 'Auto-Probe CAD'")
                 .arg(m_armedCadDescription)
                 .arg(toDisplayUnit(faceInfo.nominalDiameter, m_unitSystem), 0, 'f', decimals)
                 .arg(unitStr)
                 .arg(faceInfo.isInternal ? "Internal Bore" : "External Boss"));
         }
         else {
-            statusBar()->showMessage(QString("Selected CAD %1 at (%2, %3, %4)%5")
+            statusBar()->showMessage(QString("Selected CAD %1 at (%2, %3, %4)%5 | Ctrl+Click to probe or click 'Auto-Probe CAD'")
                 .arg(m_armedCadDescription)
                 .arg(toDisplayUnit(m_armedCadLocationMm.x(), m_unitSystem), 0, 'f', decimals)
                 .arg(toDisplayUnit(m_armedCadLocationMm.y(), m_unitSystem), 0, 'f', decimals)
@@ -930,10 +991,424 @@ namespace OpenCMM {
         }
     }
 
+    void MainWindow::onCadSurfaceProbed(const CadSurfaceHit& hit) {
+        if (!hit.success) return;
+
+        const Eigen::Vector3d surfPt(hit.surfacePoint.X(), hit.surfacePoint.Y(), hit.surfacePoint.Z());
+        const Eigen::Vector3d surfNorm(hit.surfaceNormal.X(), hit.surfaceNormal.Y(), hit.surfaceNormal.Z());
+
+        // Offset contact point along outward material-free normal by effective ruby radius
+        const double rProbe = (currentCompMode() == ProbeCompMode::Uncompensated) ? 0.0 : m_effectiveProbeRadius;
+        const Eigen::Vector3d rubyCenter = surfPt + surfNorm * rProbe;
+
+        m_lastApproachDir = -surfNorm;
+        m_recordedDmisHits.push_back({ surfPt, surfNorm });
+
+        Position3D rubyPos{ rubyCenter.x(), rubyCenter.y(), rubyCenter.z() };
+        onProbeHit(rubyPos);
+
+        // Annotate the latest tree item with the DMIS surface normal vector (I, J, K)
+        if (m_activePointsGroup && m_activePointsGroup->childCount() > 0) {
+            QTreeWidgetItem* lastItem = m_activePointsGroup->child(m_activePointsGroup->childCount() - 1);
+            if (lastItem) {
+                lastItem->setText(1, QString("N(%1, %2, %3)")
+                    .arg(surfNorm.x(), 0, 'f', 3)
+                    .arg(surfNorm.y(), 0, 'f', 3)
+                    .arg(surfNorm.z(), 0, 'f', 3));
+                lastItem->setText(4, "CAD PTMEAS");
+            }
+        }
+    }
+
+    void MainWindow::onAutoProbeCadFaceClicked() {
+        if (!m_viewport || !m_viewport->hasCadModel()) {
+            QMessageBox::information(this, "No STEP Model Loaded",
+                "Please load a 3D STEP model first ('Load STEP' in the CAD & Deviation tab).");
+            return;
+        }
+        if (!m_viewport->hasSelectedCadFace()) {
+            QMessageBox::information(this, "Select a CAD Face",
+                "Please left-click a face (Plane, Bore, Boss, or Sphere) on the 3D CAD model first, then click 'Auto-Probe CAD'.\n\n"
+                "Tip: You can also hold Ctrl + Left-Click directly on any CAD surface to probe individual points.");
+            return;
+        }
+
+        const CadFaceInfo& faceInfo = m_viewport->lastSelectedFace();
+        const QString surfType = QString::fromStdString(faceInfo.surfaceType);
+
+        int defaultPts = 4;
+        if (surfType.contains("Cylinder") || surfType.contains("Sphere")) {
+            defaultPts = 5;
+        }
+
+        std::vector<CadSurfaceHit> sampledHits = m_viewport->sampleSelectedCadFace(defaultPts);
+        if (sampledHits.empty()) {
+            QMessageBox::warning(this, "Sampling Failed",
+                "Could not find valid interior UV sample points on the selected CAD face.");
+            return;
+        }
+
+        finishFeatureBuffer();
+        m_suppressDmisStepAdvance = true;
+
+        for (const auto& hit : sampledHits) {
+            onCadSurfaceProbed(hit);
+        }
+
+        m_suppressDmisStepAdvance = false;
+
+        if (surfType.contains("Plane") && m_recordedHits.size() >= 3) {
+            onFitPlaneClicked();
+        }
+        else if (surfType.contains("Cylinder") && m_recordedHits.size() >= 3) {
+            onFitCircleClicked();
+        }
+        else if (surfType.contains("Sphere") && m_recordedHits.size() >= 4) {
+            onFitSphereClicked();
+        }
+        else {
+            statusBar()->showMessage(QString("Sampled %1 points on %2 — click 'Surface Dev' or a Fit tool to evaluate.")
+                .arg(sampledHits.size())
+                .arg(surfType));
+        }
+    }
+
+    void MainWindow::onLoadDmisProgramClicked() {
+        stopDmisAutoRun();
+
+        QString filePath = QFileDialog::getOpenFileName(
+            this,
+            "Load DMIS 5.3 Inspection Program",
+            QString(),
+            "DMIS 5.3 Programs (*.dmis *.dmi *.dms *.txt);;All Files (*.*)"
+        );
+        if (filePath.isEmpty()) return;
+
+        DmisProgramData prog = DMIS53Parser::parseDmisProgramFile(filePath.toStdString());
+        if (!prog.valid || prog.features.empty()) {
+            QMessageBox::warning(
+                this,
+                "DMIS 5.3 Load Error",
+                QString("Could not parse executable features from:\n%1\n\nDetails: %2")
+                    .arg(filePath, QString::fromStdString(prog.errorMessage))
+            );
+            return;
+        }
+
+        // Clear previous inspection tree items and visuals
+        finishFeatureBuffer();
+        m_solvedFeatures.clear();
+        m_featureDmisHits.clear();
+        m_featureRefIds.clear();
+        m_featureCounter = 1;
+        m_plannedDmisTreeItems.clear();
+        m_activeDmisTreeItem = nullptr;
+
+        for (int i = m_featureTree->topLevelItemCount() - 1; i >= 0; --i) {
+            QTreeWidgetItem* top = m_featureTree->topLevelItem(i);
+            if (top != m_activePointsGroup) {
+                delete m_featureTree->takeTopLevelItem(i);
+            }
+        }
+        if (m_viewport) {
+            m_viewport->clearFittedFeatures();
+            m_viewport->clearHitMarkers();
+            m_viewport->clearProgramTargetMarkers();
+        }
+
+        if (prog.stylusDiameterMm > 0.1) {
+            m_effectiveProbeRadius = 0.5 * prog.stylusDiameterMm;
+            updateProbeStatusDisplay();
+        }
+
+        m_dmisProgram = prog;
+        m_isDmisProgramActive = true;
+
+        const int decimals = (m_unitSystem == UnitSystem::Millimeters) ? 4 : 5;
+        const QString unitStr = (m_unitSystem == UnitSystem::Millimeters) ? " mm" : " in";
+
+        // Populate Inspection Feature Tree with PLANNED DMIS features
+        for (size_t i = 0; i < m_dmisProgram.features.size(); ++i) {
+            const auto& df = m_dmisProgram.features[i];
+            const QString featTitle = QString("%1 (%2)")
+                .arg(QString::fromStdString(df.label), QString::fromStdString(df.featureType));
+            const double nomVal = (df.featureType == "CIRCLE" || df.featureType == "CYLNDR" || df.featureType == "CYL" || df.featureType == "SPHERE")
+                ? df.nominalDiameter : 0.0;
+
+            auto* item = new QTreeWidgetItem(m_featureTree, {
+                featTitle,
+                QString("%1%2").arg(toDisplayUnit(nomVal, m_unitSystem), 0, 'f', decimals).arg(unitStr),
+                "--",
+                QString("±%1").arg(toDisplayUnit(m_defaultTolMm, m_unitSystem), 0, 'f', decimals),
+                QString("PLANNED (0/%1 pts)").arg(df.points.size())
+            });
+            item->setForeground(4, QBrush(QColor("#e5c07b")));
+            m_plannedDmisTreeItems.push_back(item);
+        }
+
+        startDmisGuidedFeature(0);
+    }
+
+    void MainWindow::startDmisGuidedFeature(int featureIndex) {
+        if (!m_isDmisProgramActive || featureIndex < 0 || featureIndex >= static_cast<int>(m_dmisProgram.features.size())) {
+            m_isDmisProgramActive = false;
+            m_activeDmisFeatureIdx = -1;
+            m_activeDmisTreeItem = nullptr;
+            m_activeDmisFeatureName.clear();
+            m_activeDmisRefId.clear();
+            stopDmisAutoRun();
+            if (m_viewport) {
+                m_viewport->clearProgramTargetMarkers();
+            }
+            statusBar()->showMessage(QString("DMIS 5.3 Program Execution Complete — All %1 features measured and evaluated!")
+                .arg(m_dmisProgram.features.size()));
+            return;
+        }
+
+        m_activeDmisFeatureIdx = featureIndex;
+        const auto& df = m_dmisProgram.features[featureIndex];
+        m_activeDmisTreeItem = (featureIndex < static_cast<int>(m_plannedDmisTreeItems.size()))
+            ? m_plannedDmisTreeItems[featureIndex] : nullptr;
+        m_activeDmisFeatureName = QString("%1 (%2)")
+            .arg(QString::fromStdString(df.label), QString::fromStdString(df.featureType));
+        m_activeDmisRefId = QString::fromStdString(df.refId);
+
+        if (m_activeDmisTreeItem) {
+            m_featureTree->setCurrentItem(m_activeDmisTreeItem);
+            m_activeDmisTreeItem->setText(4, QString("ACTIVE (0/%1 pts)").arg(df.points.size()));
+            m_activeDmisTreeItem->setForeground(4, QBrush(QColor("#61afef")));
+        }
+
+        // Arm nominal diameter and compensation mode for the active DMIS feature
+        m_hasArmedCadNominal = true;
+        m_armedCadDiameterMm = df.nominalDiameter;
+        m_armedCadLocationMm = Eigen::Vector3d(df.nomX, df.nomY, df.nomZ);
+        m_armedCadNormalMm = Eigen::Vector3d(df.nomI, df.nomJ, df.nomK).normalized();
+
+        const bool isInternal = (df.boundarySub == "INNER" || df.boundarySub == "BORE");
+        m_armedCadIsInternal = isInternal;
+        if (m_compModeCombo) {
+            if (df.featureType == "CIRCLE" || df.featureType == "CYLNDR" || df.featureType == "CYL" || df.featureType == "SPHERE") {
+                m_compModeCombo->setCurrentIndex(isInternal ? 1 : 0);
+            }
+            else {
+                m_compModeCombo->setCurrentIndex(0);
+            }
+        }
+
+        // Align 2D Workplane to the DMIS feature's normal/axis
+        if (m_workplaneCombo && (df.featureType == "CIRCLE" || df.featureType == "CYLNDR" || df.featureType == "CYL" || df.featureType == "PLANE" || df.featureType == "LINE")) {
+            const double ax = std::abs(m_armedCadNormalMm.x());
+            const double ay = std::abs(m_armedCadNormalMm.y());
+            const double az = std::abs(m_armedCadNormalMm.z());
+            if (az >= 0.999) m_workplaneCombo->setCurrentIndex(0);
+            else if (ax >= 0.999) m_workplaneCombo->setCurrentIndex(1);
+            else if (ay >= 0.999) m_workplaneCombo->setCurrentIndex(2);
+            else {
+                m_lastFittedPlaneFrame = WorkplaneFrame::fromPlane(m_armedCadLocationMm, m_armedCadNormalMm);
+                m_hasCustomPlane = true;
+                m_workplaneCombo->setCurrentIndex(3);
+            }
+        }
+
+        updateDmisTargetVisuals();
+    }
+
+    void MainWindow::updateDmisTargetVisuals() {
+        if (!m_isDmisProgramActive || m_activeDmisFeatureIdx < 0 ||
+            m_activeDmisFeatureIdx >= static_cast<int>(m_dmisProgram.features.size())) {
+            return;
+        }
+
+        const auto& df = m_dmisProgram.features[m_activeDmisFeatureIdx];
+        const int activePtIdx = static_cast<int>(m_recordedHits.size());
+
+        std::vector<gp_Pnt> surfPts;
+        std::vector<gp_Dir> surfNorms;
+        for (const auto& pt : df.points) {
+            surfPts.emplace_back(pt.x, pt.y, pt.z);
+            const double len = std::hypot(pt.i, std::hypot(pt.j, pt.k));
+            if (len > 1e-9) {
+                surfNorms.emplace_back(pt.i / len, pt.j / len, pt.k / len);
+            }
+            else {
+                surfNorms.emplace_back(0.0, 0.0, 1.0);
+            }
+        }
+
+        if (m_viewport) {
+            const double rProbe = (currentCompMode() == ProbeCompMode::Uncompensated) ? 0.0 : m_effectiveProbeRadius;
+            m_viewport->setProgramTargetMarkers(surfPts, surfNorms, activePtIdx, rProbe);
+        }
+
+        if (activePtIdx < static_cast<int>(df.points.size())) {
+            const auto& tgt = df.points[activePtIdx];
+            const int decimals = (m_unitSystem == UnitSystem::Millimeters) ? 3 : 4;
+            const QString unitStr = (m_unitSystem == UnitSystem::Millimeters) ? "mm" : "in";
+            statusBar()->showMessage(QString("[DMIS Feature %1/%2: %3] Touch Gold Target Pt #%4/%5 at (%6, %7, %8) %9 — or click 'Simulate Hit' / 'Run DMIS'")
+                .arg(m_activeDmisFeatureIdx + 1)
+                .arg(m_dmisProgram.features.size())
+                .arg(QString::fromStdString(df.label))
+                .arg(activePtIdx + 1)
+                .arg(df.points.size())
+                .arg(toDisplayUnit(tgt.x, m_unitSystem), 0, 'f', decimals)
+                .arg(toDisplayUnit(tgt.y, m_unitSystem), 0, 'f', decimals)
+                .arg(toDisplayUnit(tgt.z, m_unitSystem), 0, 'f', decimals)
+                .arg(unitStr));
+        }
+    }
+
+    void MainWindow::stopDmisAutoRun() {
+        if (m_dmisPlaybackTimer && m_dmisPlaybackTimer->isActive()) {
+            m_dmisPlaybackTimer->stop();
+        }
+        m_playbackPhase = 0;
+        m_playbackSubStep = 0;
+        if (m_autoRunDmisBtnHome) m_autoRunDmisBtnHome->setText("▶\nRun DMIS");
+        if (m_autoRunDmisBtnCad) m_autoRunDmisBtnCad->setText("▶\nRun DMIS");
+    }
+
+    void MainWindow::onToggleAutoRunDmisClicked() {
+        if (m_dmisPlaybackTimer && m_dmisPlaybackTimer->isActive()) {
+            stopDmisAutoRun();
+            statusBar()->showMessage("Paused DMIS 5.3 offline trajectory playback.");
+            return;
+        }
+
+        if (!m_isDmisProgramActive || m_dmisProgram.features.empty()) {
+            onLoadDmisProgramClicked();
+            if (!m_isDmisProgramActive || m_dmisProgram.features.empty()) {
+                return;
+            }
+        }
+
+        m_playbackPhase = 0;
+        m_playbackSubStep = 0;
+        m_playbackStartPos = Eigen::Vector3d(m_lastPosition.x, m_lastPosition.y, m_lastPosition.z);
+
+        if (m_autoRunDmisBtnHome) m_autoRunDmisBtnHome->setText("⏹\nStop DMIS");
+        if (m_autoRunDmisBtnCad) m_autoRunDmisBtnCad->setText("⏹\nStop DMIS");
+
+        m_dmisPlaybackTimer->start();
+    }
+
+    void MainWindow::onDmisPlaybackTick() {
+        if (!m_isDmisProgramActive || m_activeDmisFeatureIdx < 0 ||
+            m_activeDmisFeatureIdx >= static_cast<int>(m_dmisProgram.features.size())) {
+            stopDmisAutoRun();
+            return;
+        }
+
+        const auto& df = m_dmisProgram.features[m_activeDmisFeatureIdx];
+        const int ptIdx = static_cast<int>(m_recordedHits.size());
+        if (ptIdx >= static_cast<int>(df.points.size())) {
+            stopDmisAutoRun();
+            return;
+        }
+
+        const auto& tgt = df.points[ptIdx];
+        const Eigen::Vector3d surfPt(tgt.x, tgt.y, tgt.z);
+        Eigen::Vector3d surfNorm(tgt.i, tgt.j, tgt.k);
+        if (surfNorm.norm() > 1e-9) surfNorm.normalize();
+        else surfNorm = Eigen::Vector3d::UnitZ();
+
+        const double rProbe = (currentCompMode() == ProbeCompMode::Uncompensated) ? 0.0 : m_effectiveProbeRadius;
+        const Eigen::Vector3d touchPos = surfPt + surfNorm * rProbe;
+        const Eigen::Vector3d standoffPos = surfPt + surfNorm * (rProbe + 18.0);
+
+        if (m_playbackPhase == 0) {
+            // Phase 0: Move to standoff approach point (via clearance Z if first point of feature)
+            const int totalSteps = (ptIdx == 0) ? 10 : 6;
+            if (m_playbackSubStep == 0) {
+                m_playbackStartPos = Eigen::Vector3d(m_lastPosition.x, m_lastPosition.y, m_lastPosition.z);
+            }
+            m_playbackSubStep++;
+            const double t = std::clamp(static_cast<double>(m_playbackSubStep) / totalSteps, 0.0, 1.0);
+            Eigen::Vector3d interp = m_playbackStartPos + t * (standoffPos - m_playbackStartPos);
+            if (ptIdx == 0) {
+                // Arc through clearance plane Z on feature transitions
+                const double zClear = std::max(m_dmisProgram.clearanceZMm, std::max(m_playbackStartPos.z(), standoffPos.z()) + 15.0);
+                interp.z() += 4.0 * t * (1.0 - t) * (zClear - 0.5 * (m_playbackStartPos.z() + standoffPos.z()));
+            }
+            onPositionUpdated({ interp.x(), interp.y(), interp.z() });
+
+            if (m_playbackSubStep >= totalSteps) {
+                m_playbackPhase = 1;
+                m_playbackSubStep = 0;
+                m_playbackStartPos = standoffPos;
+            }
+        }
+        else if (m_playbackPhase == 1) {
+            // Phase 1: Probing approach along normal vector into surface contact
+            const int totalSteps = 5;
+            m_playbackSubStep++;
+            const double t = std::clamp(static_cast<double>(m_playbackSubStep) / totalSteps, 0.0, 1.0);
+            const Eigen::Vector3d interp = standoffPos + t * (touchPos - standoffPos);
+            onPositionUpdated({ interp.x(), interp.y(), interp.z() });
+
+            if (m_playbackSubStep >= totalSteps) {
+                m_playbackPhase = 2;
+                m_playbackSubStep = 0;
+                m_playbackStartPos = touchPos;
+                m_playbackEndPos = standoffPos;
+
+                // Trigger the virtual probe hit at the exact surface point & normal
+                CadSurfaceHit simHit;
+                simHit.success = true;
+                simHit.surfacePoint = gp_Pnt(surfPt.x(), surfPt.y(), surfPt.z());
+                simHit.surfaceNormal = gp_Dir(surfNorm.x(), surfNorm.y(), surfNorm.z());
+                onCadSurfaceProbed(simHit);
+            }
+        }
+        else if (m_playbackPhase == 2) {
+            // Phase 2: Retract along normal back to standoff position
+            const int totalSteps = 4;
+            m_playbackSubStep++;
+            const double t = std::clamp(static_cast<double>(m_playbackSubStep) / totalSteps, 0.0, 1.0);
+            const Eigen::Vector3d interp = m_playbackStartPos + t * (m_playbackEndPos - m_playbackStartPos);
+            onPositionUpdated({ interp.x(), interp.y(), interp.z() });
+
+            if (m_playbackSubStep >= totalSteps) {
+                m_playbackPhase = 0;
+                m_playbackSubStep = 0;
+            }
+        }
+    }
+
     void MainWindow::onPositionUpdated(const Position3D& pos) {
         m_lastPosition = pos;
         updateDroDisplay();
         if (m_viewport) { m_viewport->updateProbePosition(pos.x, pos.y, pos.z); }
+
+        // Live shop-floor proximity guidance when a DMIS 5.3 program is active (and not in auto-playback)
+        if (m_isDmisProgramActive && (!m_dmisPlaybackTimer || !m_dmisPlaybackTimer->isActive()) &&
+            m_activeDmisFeatureIdx >= 0 && m_activeDmisFeatureIdx < static_cast<int>(m_dmisProgram.features.size())) {
+            const auto& df = m_dmisProgram.features[m_activeDmisFeatureIdx];
+            const int ptIdx = static_cast<int>(m_recordedHits.size());
+            if (ptIdx < static_cast<int>(df.points.size())) {
+                const auto& tgt = df.points[ptIdx];
+                const double rProbe = (currentCompMode() == ProbeCompMode::Uncompensated) ? 0.0 : m_effectiveProbeRadius;
+                const Eigen::Vector3d targetRuby(
+                    tgt.x + tgt.i * rProbe,
+                    tgt.y + tgt.j * rProbe,
+                    tgt.z + tgt.k * rProbe
+                );
+                const Eigen::Vector3d delta = targetRuby - Eigen::Vector3d(pos.x, pos.y, pos.z);
+                const double distMm = delta.norm();
+                const int decimals = (m_unitSystem == UnitSystem::Millimeters) ? 3 : 4;
+                const QString unitStr = (m_unitSystem == UnitSystem::Millimeters) ? "mm" : "in";
+
+                statusBar()->showMessage(QString("[DMIS %1 — Pt #%2/%3] Guide to Target: dX=%4  dY=%5  dZ=%6 %7  (3D Dist: %8 %7)")
+                    .arg(QString::fromStdString(df.label))
+                    .arg(ptIdx + 1)
+                    .arg(df.points.size())
+                    .arg(toDisplayUnit(delta.x(), m_unitSystem), 0, 'f', decimals)
+                    .arg(toDisplayUnit(delta.y(), m_unitSystem), 0, 'f', decimals)
+                    .arg(toDisplayUnit(delta.z(), m_unitSystem), 0, 'f', decimals)
+                    .arg(unitStr)
+                    .arg(toDisplayUnit(distMm, m_unitSystem), 0, 'f', decimals));
+            }
+        }
     }
 
     void MainWindow::updateDroDisplay() {
@@ -951,7 +1426,27 @@ namespace OpenCMM {
         playHitChime();
         m_lastPosition = hitPos;
         updateDroDisplay();
-        m_recordedHits.push_back(Eigen::Vector3d(hitPos.x, hitPos.y, hitPos.z));
+        const Eigen::Vector3d hitVec(hitPos.x, hitPos.y, hitPos.z);
+        m_recordedHits.push_back(hitVec);
+
+        if (m_recordedDmisHits.size() < m_recordedHits.size()) {
+            Eigen::Vector3d hitNorm = -m_lastApproachDir.normalized();
+            Eigen::Vector3d surfContact = hitVec;
+
+            // If guided DMIS mode is active and this was a physical CMM hit, use the planned target's nominal normal
+            if (m_isDmisProgramActive && m_activeDmisFeatureIdx >= 0 &&
+                m_activeDmisFeatureIdx < static_cast<int>(m_dmisProgram.features.size())) {
+                const auto& df = m_dmisProgram.features[m_activeDmisFeatureIdx];
+                const size_t idx = m_recordedHits.size() - 1;
+                if (idx < df.points.size()) {
+                    hitNorm = Eigen::Vector3d(df.points[idx].i, df.points[idx].j, df.points[idx].k).normalized();
+                    const double rProbe = (currentCompMode() == ProbeCompMode::Uncompensated) ? 0.0 : m_effectiveProbeRadius;
+                    surfContact = hitVec - hitNorm * rProbe;
+                }
+            }
+            m_recordedDmisHits.push_back({ surfContact, hitNorm });
+        }
+
         const int count = static_cast<int>(m_recordedHits.size());
         m_hitCountLabel->setText(QString("Active Feature Hits: %1").arg(count));
         m_activePointsGroup->setText(2, QString("%1 pts").arg(count));
@@ -979,10 +1474,41 @@ namespace OpenCMM {
             m_viewport->updateProbePosition(hitPos.x, hitPos.y, hitPos.z);
             m_viewport->addHitPointMarker(hitPos.x, hitPos.y, hitPos.z);
         }
+
+        // --- Guided DMIS 5.3 Execution Progression ---
+        if (m_isDmisProgramActive && !m_suppressDmisStepAdvance &&
+            m_activeDmisFeatureIdx >= 0 && m_activeDmisFeatureIdx < static_cast<int>(m_dmisProgram.features.size())) {
+            const auto& df = m_dmisProgram.features[m_activeDmisFeatureIdx];
+            const int targetCount = static_cast<int>(df.points.size());
+
+            if (count < targetCount) {
+                if (m_activeDmisTreeItem) {
+                    m_activeDmisTreeItem->setText(4, QString("MEASURING (%1/%2 pts)").arg(count).arg(targetCount));
+                }
+                updateDmisTargetVisuals();
+            }
+            else if (count >= targetCount && targetCount > 0) {
+                const std::string fType = df.featureType;
+                if (fType == "PLANE" && count >= 3) {
+                    onFitPlaneClicked();
+                }
+                else if ((fType == "CIRCLE" || fType == "CYLNDR" || fType == "CYL") && count >= 3) {
+                    onFitCircleClicked();
+                }
+                else if (fType == "SPHERE" && count >= 4) {
+                    onFitSphereClicked();
+                }
+                else if (fType == "LINE" && count >= 2) {
+                    onFitLineClicked();
+                }
+                startDmisGuidedFeature(m_activeDmisFeatureIdx + 1);
+            }
+        }
     }
 
     void MainWindow::finishFeatureBuffer() {
         m_recordedHits.clear();
+        m_recordedDmisHits.clear();
         m_hitCountLabel->setText("Active Feature Hits: 0");
         while (m_activePointsGroup->childCount() > 0) {
             delete m_activePointsGroup->takeChild(0);
@@ -1011,12 +1537,111 @@ namespace OpenCMM {
         QString selectedFilter;
         QString filePath = QFileDialog::getSaveFileName(
             this,
-            "Export Inspection Report",
+            "Export Inspection Report or DMIS 5.3 Program",
             partName + "_Inspection_Report.html",
-            "HTML Printable Inspection Report (*.html);;CSV Spreadsheet (*.csv);;QIF 2.1 Quality Information Framework (*.qif)",
+            "HTML Printable Inspection Report (*.html);;DMIS 5.3 Inspection Program (*.dmis);;QIF 2.1 Quality Information Framework (*.qif);;CSV Spreadsheet (*.csv)",
             &selectedFilter
         );
         if (filePath.isEmpty()) return;
+
+        // --- 0. DMIS 5.3 Program Export (.dmis) ---
+        if (filePath.endsWith(".dmis", Qt::CaseInsensitive)) {
+            QFile dmisFile(filePath);
+            if (!dmisFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
+                QMessageBox::critical(this, "Export Error", "Could not write DMIS 5.3 file to: " + filePath);
+                return;
+            }
+            QTextStream dmis(&dmisFile);
+            const QString timestamp = QDateTime::currentDateTime().toString(Qt::ISODate);
+
+            double zClearMm = 100.0;
+            double xmin = 0, ymin = 0, zmin = 0, xmax = 0, ymax = 0, zmax = 0;
+            if (m_viewport && m_viewport->getCadBoundingBox(xmin, ymin, zmin, xmax, ymax, zmax)) {
+                zClearMm = zmax + 25.0;
+            }
+
+            dmis << "DMISMN/'OpenCMM Offline Inspection Program', 05.3\n"
+                 << "$$ Generated by OpenCMM Studio (JLS Machine LLC) on " << timestamp << "\n"
+                 << "FILNAM/'" << partName << "', 05.3\n"
+                 << "UNITS/MM, ANGDEC\n"
+                 << "WKPLAN/XYPLAN\n"
+                 << "MODE/PROG, MAN\n"
+                 << "SNSTYP/INDEX, 1, " << QString::number(m_effectiveProbeRadius * 2.0, 'f', 4) << "\n"
+                 << "CLEARP/ZPLUS, " << QString::number(zClearMm, 'f', 4) << "\n\n";
+
+            for (const auto& mf : m_solvedFeatures) {
+                const QString rawLabel = QString("FEAT_%1").arg(mf.id);
+                const QString qpidUuid = m_featureRefIds.count(mf.id) && !m_featureRefIds[mf.id].isEmpty()
+                    ? m_featureRefIds[mf.id]
+                    : QString("10000000-0000-4000-8000-%1").arg(mf.id, 12, 10, QChar('0'));
+
+                dmis << "$$ =========================================================\n"
+                     << "$$ Feature: " << QString::fromStdString(mf.name) << "\n"
+                     << "REFID/F(" << rawLabel << "), QIF, 'QPId', '" << qpidUuid << "'\n";
+
+                if (mf.kind == FeatureKind::Plane3D) {
+                    dmis << "F(" << rawLabel << ") = FEAT/PLANE, CART, "
+                         << QString::number(mf.location.x(), 'f', 4) << ", "
+                         << QString::number(mf.location.y(), 'f', 4) << ", "
+                         << QString::number(mf.location.z(), 'f', 4) << ", "
+                         << QString::number(mf.primaryVector.x(), 'f', 5) << ", "
+                         << QString::number(mf.primaryVector.y(), 'f', 5) << ", "
+                         << QString::number(mf.primaryVector.z(), 'f', 5) << "\n";
+                }
+                else if (mf.kind == FeatureKind::Circle2D) {
+                    dmis << "F(" << rawLabel << ") = FEAT/CIRCLE, INNER, CART, "
+                         << QString::number(mf.location.x(), 'f', 4) << ", "
+                         << QString::number(mf.location.y(), 'f', 4) << ", "
+                         << QString::number(mf.location.z(), 'f', 4) << ", "
+                         << QString::number(mf.primaryVector.x(), 'f', 5) << ", "
+                         << QString::number(mf.primaryVector.y(), 'f', 5) << ", "
+                         << QString::number(mf.primaryVector.z(), 'f', 5) << ", "
+                         << QString::number(mf.diameter, 'f', 4) << "\n";
+                }
+                else if (mf.kind == FeatureKind::Sphere3D) {
+                    dmis << "F(" << rawLabel << ") = FEAT/SPHERE, OUTER, CART, "
+                         << QString::number(mf.location.x(), 'f', 4) << ", "
+                         << QString::number(mf.location.y(), 'f', 4) << ", "
+                         << QString::number(mf.location.z(), 'f', 4) << ", "
+                         << QString::number(mf.diameter, 'f', 4) << "\n";
+                }
+                else if (mf.kind == FeatureKind::Line2D) {
+                    dmis << "F(" << rawLabel << ") = FEAT/LINE, UNBND, CART, "
+                         << QString::number(mf.location.x(), 'f', 4) << ", "
+                         << QString::number(mf.location.y(), 'f', 4) << ", "
+                         << QString::number(mf.location.z(), 'f', 4) << ", "
+                         << QString::number(mf.primaryVector.x(), 'f', 5) << ", "
+                         << QString::number(mf.primaryVector.y(), 'f', 5) << ", "
+                         << QString::number(mf.primaryVector.z(), 'f', 5) << ", "
+                         << QString::number(mf.secondaryVector.x(), 'f', 5) << ", "
+                         << QString::number(mf.secondaryVector.y(), 'f', 5) << ", "
+                         << QString::number(mf.secondaryVector.z(), 'f', 5) << "\n";
+                }
+
+                const auto& pts = m_featureDmisHits[mf.id];
+                const QString dmisMeasType = (mf.kind == FeatureKind::Plane3D) ? "PLANE"
+                    : (mf.kind == FeatureKind::Circle2D ? "CIRCLE"
+                    : (mf.kind == FeatureKind::Sphere3D ? "SPHERE" : "LINE"));
+
+                dmis << "MEAS/" << dmisMeasType << ", F(" << rawLabel << "), " << pts.size() << "\n";
+                for (const auto& pt : pts) {
+                    dmis << "  PTMEAS/CART, "
+                         << QString::number(pt.surfacePt.x(), 'f', 4) << ", "
+                         << QString::number(pt.surfacePt.y(), 'f', 4) << ", "
+                         << QString::number(pt.surfacePt.z(), 'f', 4) << ", "
+                         << QString::number(pt.normalVec.x(), 'f', 5) << ", "
+                         << QString::number(pt.normalVec.y(), 'f', 5) << ", "
+                         << QString::number(pt.normalVec.z(), 'f', 5) << "\n";
+                }
+                dmis << "ENDMES\n\n";
+            }
+
+            dmis << "ENDFIL\n";
+            dmisFile.close();
+            QDesktopServices::openUrl(QUrl::fromLocalFile(filePath));
+            statusBar()->showMessage("Exported DMIS 5.3 Inspection Program to: " + filePath);
+            return;
+        }
 
         // --- 1. QIF 2.1 XML Export ---
         if (filePath.endsWith(".qif", Qt::CaseInsensitive)) {
@@ -1026,9 +1651,12 @@ namespace OpenCMM {
                 QTreeWidgetItem* top = m_featureTree->topLevelItem(i);
                 if (top == m_activePointsGroup) continue;
 
+                const int featId = top->data(0, ROLE_FEATURE_ID).isValid() ? top->data(0, ROLE_FEATURE_ID).toInt() : i;
                 InspectionResultItem item;
                 item.featureName = top->text(0);
-                item.refId = "REFID_" + QString::number(i);
+                item.refId = (m_featureRefIds.count(featId) && !m_featureRefIds[featId].isEmpty())
+                    ? m_featureRefIds[featId]
+                    : ("REFID_" + QString::number(featId));
                 item.featureType = top->text(0).contains("Circle") || top->text(0).contains("Bore") ? "Bore"
                     : (top->text(0).contains("Plane") ? "Plane" : "Feature");
                 item.nominalMm = top->data(0, ROLE_NOMINAL_MM).isValid() ? top->data(0, ROLE_NOMINAL_MM).toDouble() : 0.0;
@@ -1147,6 +1775,25 @@ namespace OpenCMM {
         // ... existing CSV and HTML export handling continues below ...
 
     void MainWindow::onSimulateHitClicked() {
+        // If a DMIS 5.3 program is loaded and active, Simulate Hit fires the next planned PTMEAS point!
+        if (m_isDmisProgramActive && m_activeDmisFeatureIdx >= 0 &&
+            m_activeDmisFeatureIdx < static_cast<int>(m_dmisProgram.features.size())) {
+            const auto& df = m_dmisProgram.features[m_activeDmisFeatureIdx];
+            const int ptIdx = static_cast<int>(m_recordedHits.size());
+            if (ptIdx < static_cast<int>(df.points.size())) {
+                const auto& tgt = df.points[ptIdx];
+                CadSurfaceHit simHit;
+                simHit.success = true;
+                simHit.surfacePoint = gp_Pnt(tgt.x, tgt.y, tgt.z);
+                const double len = std::hypot(tgt.i, std::hypot(tgt.j, tgt.k));
+                simHit.surfaceNormal = (len > 1e-9)
+                    ? gp_Dir(tgt.i / len, tgt.j / len, tgt.k / len)
+                    : gp_Dir(0.0, 0.0, 1.0);
+                onCadSurfaceProbed(simHit);
+                return;
+            }
+        }
+
         const int idx = static_cast<int>(m_recordedHits.size());
         const int mode = m_simTargetCombo ? m_simTargetCombo->currentData().toInt() : 0;
         const double rProbe = m_effectiveProbeRadius;
@@ -1232,10 +1879,24 @@ namespace OpenCMM {
             return;
         }
 
+        Eigen::Vector3d avgPos = Eigen::Vector3d::Zero();
+        for (const auto& p : m_recordedHits) avgPos += p;
+        avgPos /= static_cast<double>(m_recordedHits.size());
+
+        Eigen::Vector3d refPt = avgPos + Eigen::Vector3d(0.0, 0.0, 25.0);
+        if (!m_recordedDmisHits.empty()) {
+            Eigen::Vector3d avgNorm = Eigen::Vector3d::Zero();
+            for (const auto& dh : m_recordedDmisHits) avgNorm += dh.normalVec;
+            if (avgNorm.norm() > 1e-6) {
+                refPt = avgPos + avgNorm.normalized() * 25.0;
+            }
+        }
+
         PlaneFitResult res = MetrologyMath::fitPlaneLeastSquares(
             m_recordedHits,
             m_effectiveProbeRadius,
-            currentCompMode()
+            currentCompMode(),
+            &refPt
         );
 
         if (!res.success) {
@@ -1248,7 +1909,8 @@ namespace OpenCMM {
         m_hasCustomPlane = true;
 
         const int id = m_featureCounter++;
-        const QString featName = QString("Plane #%1").arg(id);
+        const QString featName = (!m_activeDmisFeatureName.isEmpty() && m_activeDmisTreeItem)
+            ? m_activeDmisFeatureName : QString("Plane #%1").arg(id);
 
         MeasuredFeature mf;
         mf.id = id;
@@ -1258,12 +1920,22 @@ namespace OpenCMM {
         mf.primaryVector = res.normal;
         mf.diameter = 0.0;
         mf.formError = res.flatness;
+        m_featureDmisHits[id] = m_recordedDmisHits;
+        if (!m_activeDmisRefId.isEmpty()) m_featureRefIds[id] = m_activeDmisRefId;
         m_solvedFeatures.push_back(mf);
 
         const bool passed = (res.flatness <= m_defaultTolMm);
         playSolveChime(passed);
 
-        auto* planeItem = new QTreeWidgetItem(m_featureTree, { featName, "", "", "", "" });
+        QTreeWidgetItem* planeItem = m_activeDmisTreeItem;
+        if (planeItem) {
+            planeItem->setText(0, featName);
+            while (planeItem->childCount() > 0) delete planeItem->takeChild(0);
+            m_activeDmisTreeItem = nullptr;
+        }
+        else {
+            planeItem = new QTreeWidgetItem(m_featureTree, { featName, "", "", "", "" });
+        }
         planeItem->setData(0, ROLE_FEATURE_ID, id);
         applyEvaluationToTreeItem(planeItem, res.flatness, true, 0.0, m_defaultTolMm, m_defaultTolMm);
 
@@ -1326,7 +1998,8 @@ namespace OpenCMM {
         const double nominalDiam = m_hasArmedCadNominal ? m_armedCadDiameterMm : m_certifiedBallDiameterMm;
 
         const int id = m_featureCounter++;
-        const QString featName = QString("Sphere #%1").arg(id);
+        const QString featName = (!m_activeDmisFeatureName.isEmpty() && m_activeDmisTreeItem)
+            ? m_activeDmisFeatureName : QString("Sphere #%1").arg(id);
 
         MeasuredFeature mf;
         mf.id = id;
@@ -1335,12 +2008,22 @@ namespace OpenCMM {
         mf.location = res.center;
         mf.diameter = actualDiam;
         mf.formError = res.formError;
+        m_featureDmisHits[id] = m_recordedDmisHits;
+        if (!m_activeDmisRefId.isEmpty()) m_featureRefIds[id] = m_activeDmisRefId;
         m_solvedFeatures.push_back(mf);
 
         const bool passed = (std::abs(actualDiam - nominalDiam) <= m_defaultTolMm);
         playSolveChime(passed);
 
-        auto* sphereItem = new QTreeWidgetItem(m_featureTree, { featName, "", "", "", "" });
+        QTreeWidgetItem* sphereItem = m_activeDmisTreeItem;
+        if (sphereItem) {
+            sphereItem->setText(0, featName);
+            while (sphereItem->childCount() > 0) delete sphereItem->takeChild(0);
+            m_activeDmisTreeItem = nullptr;
+        }
+        else {
+            sphereItem = new QTreeWidgetItem(m_featureTree, { featName, "", "", "", "" });
+        }
         sphereItem->setData(0, ROLE_FEATURE_ID, id);
         applyEvaluationToTreeItem(sphereItem, actualDiam, true, nominalDiam, m_defaultTolMm, m_defaultTolMm);
 
@@ -1408,7 +2091,8 @@ namespace OpenCMM {
         }
 
         const int id = m_featureCounter++;
-        const QString featName = QString("Circle #%1").arg(id);
+        const QString featName = (!m_activeDmisFeatureName.isEmpty() && m_activeDmisTreeItem)
+            ? m_activeDmisFeatureName : QString("Circle #%1").arg(id);
 
         MeasuredFeature mf;
         mf.id = id;
@@ -1418,12 +2102,22 @@ namespace OpenCMM {
         mf.primaryVector = res.planeNormal;
         mf.diameter = actualDiam;
         mf.formError = res.circularity;
+        m_featureDmisHits[id] = m_recordedDmisHits;
+        if (!m_activeDmisRefId.isEmpty()) m_featureRefIds[id] = m_activeDmisRefId;
         m_solvedFeatures.push_back(mf);
 
         const bool passed = (std::abs(actualDiam - nominalDiam) <= m_defaultTolMm);
         playSolveChime(passed);
 
-        auto* circleItem = new QTreeWidgetItem(m_featureTree, { featName, "", "", "", "" });
+        QTreeWidgetItem* circleItem = m_activeDmisTreeItem;
+        if (circleItem) {
+            circleItem->setText(0, featName);
+            while (circleItem->childCount() > 0) delete circleItem->takeChild(0);
+            m_activeDmisTreeItem = nullptr;
+        }
+        else {
+            circleItem = new QTreeWidgetItem(m_featureTree, { featName, "", "", "", "" });
+        }
         circleItem->setData(0, ROLE_FEATURE_ID, id);
         applyEvaluationToTreeItem(circleItem, actualDiam, true, nominalDiam, m_defaultTolMm, m_defaultTolMm);
 
@@ -1483,7 +2177,8 @@ namespace OpenCMM {
         }
 
         const int id = m_featureCounter++;
-        const QString featName = QString("Line #%1").arg(id);
+        const QString featName = (!m_activeDmisFeatureName.isEmpty() && m_activeDmisTreeItem)
+            ? m_activeDmisFeatureName : QString("Line #%1").arg(id);
 
         MeasuredFeature mf;
         mf.id = id;
@@ -1494,12 +2189,22 @@ namespace OpenCMM {
         mf.secondaryVector = res.edgeNormal;
         mf.diameter = 0.0;
         mf.formError = res.straightness;
+        m_featureDmisHits[id] = m_recordedDmisHits;
+        if (!m_activeDmisRefId.isEmpty()) m_featureRefIds[id] = m_activeDmisRefId;
         m_solvedFeatures.push_back(mf);
 
         const bool passed = (res.straightness <= m_defaultTolMm);
         playSolveChime(passed);
 
-        auto* lineItem = new QTreeWidgetItem(m_featureTree, { featName, "", "", "", "" });
+        QTreeWidgetItem* lineItem = m_activeDmisTreeItem;
+        if (lineItem) {
+            lineItem->setText(0, featName);
+            while (lineItem->childCount() > 0) delete lineItem->takeChild(0);
+            m_activeDmisTreeItem = nullptr;
+        }
+        else {
+            lineItem = new QTreeWidgetItem(m_featureTree, { featName, "", "", "", "" });
+        }
         lineItem->setData(0, ROLE_FEATURE_ID, id);
         applyEvaluationToTreeItem(lineItem, res.straightness, true, 0.0, m_defaultTolMm, m_defaultTolMm);
 
@@ -1912,7 +2617,20 @@ namespace OpenCMM {
         );
         if (resp != QMessageBox::Yes) return;
 
-        // 1. Clear solved feature data model
+        // 1. Clear solved feature data model & DMIS guided state
+        stopDmisAutoRun();
+        m_isDmisProgramActive = false;
+        m_activeDmisFeatureIdx = -1;
+        m_plannedDmisTreeItems.clear();
+        m_activeDmisTreeItem = nullptr;
+        m_activeDmisFeatureName.clear();
+        m_activeDmisRefId.clear();
+        m_featureDmisHits.clear();
+        m_featureRefIds.clear();
+        if (m_viewport) {
+            m_viewport->clearProgramTargetMarkers();
+            m_viewport->clearHitMarkers();
+        }
         m_solvedFeatures.clear();
         m_featureCounter = 1;
         m_hasCustomPlane = false;

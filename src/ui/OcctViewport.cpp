@@ -32,7 +32,13 @@
 #include <TopoDS.hxx>
 #include <TopoDS_Face.hxx>
 #include <BRepAdaptor_Surface.hxx>
+#include <BRepGProp_Face.hxx>
+#include <BRepTools.hxx>
+#include <BRepTopAdaptor_FClass2d.hxx>
+#include <IntCurvesFace_ShapeIntersector.hxx>
 #include <GeomAbs_SurfaceType.hxx>
+#include <gp_Lin.hxx>
+#include <gp_Pnt2d.hxx>
 #include <gp_Pln.hxx>
 #include <gp_Cylinder.hxx>
 #include <gp_Sphere.hxx>
@@ -433,6 +439,89 @@ namespace OpenCMM {
         m_context->UpdateCurrentViewer();
     }
 
+    void OcctViewport::clearProgramTargetMarkers() {
+        if (m_context.IsNull()) {
+            return;
+        }
+        for (const auto& marker : m_programTargetMarkers) {
+            if (!marker.IsNull()) {
+                m_context->Remove(marker, Standard_False);
+            }
+        }
+        m_programTargetMarkers.clear();
+        m_context->UpdateCurrentViewer();
+    }
+
+    void OcctViewport::setProgramTargetMarkers(
+        const std::vector<gp_Pnt>& surfacePts,
+        const std::vector<gp_Dir>& normals,
+        int activeIndex,
+        double probeRadiusMm) {
+
+        if (m_context.IsNull()) {
+            return;
+        }
+
+        for (const auto& marker : m_programTargetMarkers) {
+            if (!marker.IsNull()) {
+                m_context->Remove(marker, Standard_False);
+            }
+        }
+        m_programTargetMarkers.clear();
+
+        const size_t count = surfacePts.size();
+        for (size_t i = 0; i < count; ++i) {
+            const gp_Pnt& surfPt = surfacePts[i];
+            const gp_Dir norm = (i < normals.size()) ? normals[i] : gp_Dir(0.0, 0.0, 1.0);
+            const gp_Vec nVec(norm);
+            const gp_Pnt rubyTargetPt = surfPt.Translated(nVec.Multiplied(probeRadiusMm));
+
+            if (static_cast<int>(i) < activeIndex) {
+                // Completed target point: small green sphere
+                TopoDS_Shape doneSph = BRepPrimAPI_MakeSphere(rubyTargetPt, 1.2).Shape();
+                Handle(AIS_Shape) aisDone = new AIS_Shape(doneSph);
+                aisDone->SetColor(Quantity_NOC_GREEN1);
+                m_context->Display(aisDone, AIS_Shaded, -1, Standard_False);
+                m_programTargetMarkers.push_back(aisDone);
+            }
+            else if (static_cast<int>(i) == activeIndex) {
+                // Active target point: high-visibility Gold bullseye sphere + approach vector rod
+                TopoDS_Shape activeSph = BRepPrimAPI_MakeSphere(rubyTargetPt, 2.3).Shape();
+                Handle(AIS_Shape) aisActive = new AIS_Shape(activeSph);
+                aisActive->SetColor(Quantity_NOC_GOLD);
+                aisActive->SetTransparency(0.25);
+                m_context->Display(aisActive, AIS_Shaded, -1, Standard_False);
+                m_programTargetMarkers.push_back(aisActive);
+
+                // Approach vector stem (from surface contact point out to +18mm standoff along normal)
+                gp_Ax2 stemAx(surfPt, norm);
+                TopoDS_Shape approachRod = BRepPrimAPI_MakeCylinder(stemAx, 0.45, 18.0 + probeRadiusMm).Shape();
+                Handle(AIS_Shape) aisRod = new AIS_Shape(approachRod);
+                aisRod->SetColor(Quantity_NOC_GOLD);
+                m_context->Display(aisRod, AIS_Shaded, -1, Standard_False);
+                m_programTargetMarkers.push_back(aisRod);
+            }
+            else {
+                // Pending upcoming target points: orange preview sphere + short normal indicator
+                TopoDS_Shape pendingSph = BRepPrimAPI_MakeSphere(rubyTargetPt, 1.4).Shape();
+                Handle(AIS_Shape) aisPending = new AIS_Shape(pendingSph);
+                aisPending->SetColor(Quantity_NOC_ORANGE);
+                aisPending->SetTransparency(0.35);
+                m_context->Display(aisPending, AIS_Shaded, -1, Standard_False);
+                m_programTargetMarkers.push_back(aisPending);
+
+                gp_Ax2 stemAx(surfPt, norm);
+                TopoDS_Shape shortRod = BRepPrimAPI_MakeCylinder(stemAx, 0.25, 9.0 + probeRadiusMm).Shape();
+                Handle(AIS_Shape) aisShortRod = new AIS_Shape(shortRod);
+                aisShortRod->SetColor(Quantity_NOC_ORANGE);
+                m_context->Display(aisShortRod, AIS_Shaded, -1, Standard_False);
+                m_programTargetMarkers.push_back(aisShortRod);
+            }
+        }
+
+        m_context->UpdateCurrentViewer();
+    }
+
     void OcctViewport::applyVisualStyleToShape(const Handle(AIS_Shape)& shape) {
         if (m_context.IsNull() || shape.IsNull()) {
             return;
@@ -735,7 +824,7 @@ namespace OpenCMM {
         m_context->UpdateCurrentViewer();
     }
 
-    CadFaceInfo OcctViewport::inspectSelectedCadFace() const {
+    CadFaceInfo OcctViewport::inspectSelectedCadFace() {
         CadFaceInfo info;
         if (m_context.IsNull()) {
             return info;
@@ -752,6 +841,7 @@ namespace OpenCMM {
         }
 
         TopoDS_Face face = TopoDS::Face(selectedShape);
+        m_lastSelectedTopoFace = face;
         BRepAdaptor_Surface surfAdaptor(face, Standard_True);
         GeomAbs_SurfaceType surfType = surfAdaptor.GetType();
 
@@ -799,13 +889,200 @@ namespace OpenCMM {
         return info;
     }
 
+    CadSurfaceHit OcctViewport::pickSurfacePointOnSelectedFace(int screenX, int screenY) const {
+        CadSurfaceHit hit;
+        if (m_view.IsNull() || m_lastSelectedTopoFace.IsNull()) {
+            return hit;
+        }
+
+        Standard_Real px = 0.0, py = 0.0, pz = 0.0;
+        Standard_Real vx = 0.0, vy = 0.0, vz = 0.0;
+        m_view->ConvertWithProj(screenX, screenY, px, py, pz, vx, vy, vz);
+
+        gp_Vec rayVec(vx, vy, vz);
+        if (rayVec.Magnitude() <= 1e-9) {
+            return hit;
+        }
+        gp_Lin pickRay(gp_Pnt(px, py, pz), gp_Dir(rayVec));
+
+        IntCurvesFace_ShapeIntersector intersector;
+        intersector.Load(m_lastSelectedTopoFace, 1e-4);
+        intersector.Perform(pickRay, -1e9, 1e9);
+
+        if (intersector.IsDone() && intersector.NbPnt() >= 1) {
+            int bestIdx = 1;
+            double minW = intersector.WParameter(1);
+            for (int i = 2; i <= intersector.NbPnt(); ++i) {
+                if (intersector.WParameter(i) < minW) {
+                    minW = intersector.WParameter(i);
+                    bestIdx = i;
+                }
+            }
+
+            const Standard_Real u = intersector.UParameter(bestIdx);
+            const Standard_Real v = intersector.VParameter(bestIdx);
+
+            BRepGProp_Face prop(m_lastSelectedTopoFace);
+            gp_Pnt surfPt;
+            gp_Vec surfNorm;
+            prop.Normal(u, v, surfPt, surfNorm);
+            if (surfNorm.Magnitude() > 1e-9) {
+                surfNorm.Normalize();
+                hit.surfacePoint = surfPt;
+                hit.surfaceNormal = gp_Dir(surfNorm);
+                hit.success = true;
+            }
+        }
+        return hit;
+    }
+
+    std::vector<CadSurfaceHit> OcctViewport::sampleSelectedCadFace(int numPoints) const {
+        std::vector<CadSurfaceHit> hits;
+        if (m_lastSelectedTopoFace.IsNull()) {
+            return hits;
+        }
+
+        Standard_Real umin = 0.0, umax = 0.0, vmin = 0.0, vmax = 0.0;
+        BRepTools::UVBounds(m_lastSelectedTopoFace, umin, umax, vmin, vmax);
+        if (umax <= umin + 1e-9 || vmax <= vmin + 1e-9) {
+            return hits;
+        }
+
+        BRepTopAdaptor_FClass2d classifier(m_lastSelectedTopoFace, 1e-6);
+        BRepGProp_Face prop(m_lastSelectedTopoFace);
+        BRepAdaptor_Surface surfAdaptor(m_lastSelectedTopoFace, Standard_True);
+        GeomAbs_SurfaceType surfType = surfAdaptor.GetType();
+
+        auto evalUV = [&](double u, double v, CadSurfaceHit& outHit) -> bool {
+            if (classifier.Perform(gp_Pnt2d(u, v)) != TopAbs_IN) {
+                return false;
+            }
+            gp_Pnt pt;
+            gp_Vec norm;
+            prop.Normal(u, v, pt, norm);
+            if (norm.Magnitude() <= 1e-9) {
+                return false;
+            }
+            norm.Normalize();
+            outHit.surfacePoint = pt;
+            outHit.surfaceNormal = gp_Dir(norm);
+            outHit.success = true;
+            return true;
+        };
+
+        if (surfType == GeomAbs_Cylinder) {
+            const int targetCount = (numPoints > 0) ? numPoints : 5;
+            const double uSpan = umax - umin;
+            const bool isFullCircle = (uSpan >= 2.0 * 3.14159265358979323846 - 1e-2);
+            const double vMid = 0.5 * (vmin + vmax);
+            const double vSpan = vmax - vmin;
+
+            for (int i = 0; i < targetCount; ++i) {
+                double baseU = umin;
+                if (isFullCircle) {
+                    baseU = umin + (2.0 * 3.14159265358979323846 * i) / targetCount + 0.23;
+                    while (baseU > umax) baseU -= 2.0 * 3.14159265358979323846;
+                }
+                else {
+                    const double margin = 0.12 * uSpan;
+                    baseU = (umin + margin) + ((uSpan - 2.0 * margin) * i) / std::max(1, targetCount - 1);
+                }
+
+                // Try vMid first, then slightly above/below in case of a cross-hole on the cylinder wall
+                const double vOffsets[3] = { 0.0, -0.20 * vSpan, 0.20 * vSpan };
+                const double uOffsets[3] = { 0.0, 0.08 * uSpan, -0.08 * uSpan };
+                bool found = false;
+                for (double dv : vOffsets) {
+                    for (double du : uOffsets) {
+                        double uTry = std::clamp(baseU + du, umin + 1e-4, umax - 1e-4);
+                        double vTry = std::clamp(vMid + dv, vmin + 1e-4, vmax - 1e-4);
+                        CadSurfaceHit candidate;
+                        if (evalUV(uTry, vTry, candidate)) {
+                            hits.push_back(candidate);
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (found) break;
+                }
+            }
+            return hits;
+        }
+
+        // For Planes, Spheres, and general B-Rep surfaces:
+        // Build an interior candidate grid filtered by BRepTopAdaptor_FClass2d (avoids holes/cutouts)
+        const int targetCount = (numPoints > 0) ? numPoints : ((surfType == GeomAbs_Sphere) ? 5 : 4);
+        std::vector<CadSurfaceHit> candidates;
+        const int gridN = 8;
+        const double uMargin = 0.12 * (umax - umin);
+        const double vMargin = 0.12 * (vmax - vmin);
+
+        for (int iu = 0; iu < gridN; ++iu) {
+            const double u = (umin + uMargin) + ((umax - umin - 2.0 * uMargin) * iu) / (gridN - 1);
+            for (int iv = 0; iv < gridN; ++iv) {
+                const double v = (vmin + vMargin) + ((vmax - vmin - 2.0 * vMargin) * iv) / (gridN - 1);
+                CadSurfaceHit cand;
+                if (evalUV(u, v, cand)) {
+                    candidates.push_back(cand);
+                }
+            }
+        }
+
+        if (candidates.empty()) {
+            // Fallback to face center if heavily trimmed
+            CadSurfaceHit midHit;
+            if (evalUV(0.5 * (umin + umax), 0.5 * (vmin + vmax), midHit)) {
+                hits.push_back(midHit);
+            }
+            return hits;
+        }
+
+        // Farthest-point sampling in 3D space to guarantee well-spread probe hits
+        std::vector<bool> used(candidates.size(), false);
+        hits.push_back(candidates.front());
+        used[0] = true;
+
+        while (static_cast<int>(hits.size()) < targetCount && hits.size() < candidates.size()) {
+            int bestIdx = -1;
+            double bestMinDist = -1.0;
+
+            for (size_t i = 0; i < candidates.size(); ++i) {
+                if (used[i]) continue;
+                double minDistToChosen = 1e18;
+                for (const auto& chosen : hits) {
+                    const double d = candidates[i].surfacePoint.Distance(chosen.surfacePoint);
+                    if (d < minDistToChosen) {
+                        minDistToChosen = d;
+                    }
+                }
+                if (minDistToChosen > bestMinDist) {
+                    bestMinDist = minDistToChosen;
+                    bestIdx = static_cast<int>(i);
+                }
+            }
+
+            if (bestIdx >= 0) {
+                used[bestIdx] = true;
+                hits.push_back(candidates[bestIdx]);
+            }
+            else {
+                break;
+            }
+        }
+
+        return hits;
+    }
+
     void OcctViewport::mousePressEvent(QMouseEvent* event) {
         m_lastMousePos = event->pos();
         m_pressMousePos = event->pos();
 
         if (event->button() == Qt::LeftButton && !m_view.IsNull()) {
-            m_isRotating = true;
-            m_view->StartRotation(event->pos().x(), event->pos().y());
+            // Hold Ctrl + Left-Click to probe CAD surfaces without rotating the camera
+            if (!(event->modifiers() & Qt::ControlModifier)) {
+                m_isRotating = true;
+                m_view->StartRotation(event->pos().x(), event->pos().y());
+            }
         }
         else if (event->button() == Qt::RightButton || event->button() == Qt::MiddleButton) {
             m_isPanning = true;
@@ -816,6 +1093,7 @@ namespace OpenCMM {
         if (event->button() == Qt::LeftButton) {
             m_isRotating = false;
             if ((event->pos() - m_pressMousePos).manhattanLength() <= 3 && !m_context.IsNull()) {
+                m_context->MoveTo(event->pos().x(), event->pos().y(), m_view, Standard_False);
                 m_context->SelectDetected();
                 m_view->Redraw();
 
@@ -824,6 +1102,14 @@ namespace OpenCMM {
                     m_lastSelectedFace = faceInfo;
                     if (m_faceSelectedCallback) {
                         m_faceSelectedCallback(faceInfo);
+                    }
+
+                    // Ctrl + Left-Click: Raycast and record a virtual probe touch on the clicked CAD face
+                    if ((event->modifiers() & Qt::ControlModifier) && m_surfaceHitCallback) {
+                        CadSurfaceHit hit = pickSurfacePointOnSelectedFace(event->pos().x(), event->pos().y());
+                        if (hit.success) {
+                            m_surfaceHitCallback(hit);
+                        }
                     }
                 }
             }

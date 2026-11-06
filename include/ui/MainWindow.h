@@ -13,6 +13,9 @@
 #include <string>
 #include <Eigen/Dense>
 #include <deque>
+#include <map>
+#include <QTimer>
+#include "dmis/DMIS53Parser.h"
 
 #include "core/Units.h"
 #include "hal/PicoSerialController.h"
@@ -23,6 +26,12 @@ namespace OpenCMM {
 
     class OcctViewport;
     struct CadFaceInfo;
+    struct CadSurfaceHit;
+
+    struct DmisPointRecord {
+        Eigen::Vector3d surfacePt = Eigen::Vector3d::Zero();
+        Eigen::Vector3d normalVec = Eigen::Vector3d::UnitZ();
+    };
 
     class MainWindow : public QMainWindow {
         Q_OBJECT
@@ -38,6 +47,10 @@ namespace OpenCMM {
         void onOpenSettingsClicked();
 
         void onSimulateHitClicked();
+        void onAutoProbeCadFaceClicked();
+        void onLoadDmisProgramClicked();
+        void onToggleAutoRunDmisClicked();
+        void onDmisPlaybackTick();
         void onCalibrateProbeClicked();
         void onFitSphereClicked();
         void onFitPlaneClicked();
@@ -71,6 +84,10 @@ namespace OpenCMM {
         void updateProbeStatusDisplay();
         void finishFeatureBuffer();
         void onCadFaceSelected(const CadFaceInfo& faceInfo);
+        void onCadSurfaceProbed(const CadSurfaceHit& hit);
+        void startDmisGuidedFeature(int featureIndex);
+        void updateDmisTargetVisuals();
+        void stopDmisAutoRun();
 
         void applyEvaluationToTreeItem(QTreeWidgetItem* item,
             double actualMm,
@@ -103,6 +120,8 @@ namespace OpenCMM {
         bool m_hasArmedCadNominal = false;
         double m_armedCadDiameterMm = 0.0;
         Eigen::Vector3d m_armedCadLocationMm = Eigen::Vector3d::Zero();
+        Eigen::Vector3d m_armedCadNormalMm = Eigen::Vector3d::UnitZ();
+        bool m_armedCadIsInternal = false;
         QString m_armedCadDescription;
 
         WorkplaneFrame m_lastFittedPlaneFrame = WorkplaneFrame::fromStandard(StandardWorkplane::XY_PlusZ);
@@ -113,7 +132,28 @@ namespace OpenCMM {
         QPushButton* m_alignStatusBtn = nullptr;
 
         ::std::vector<Eigen::Vector3d> m_recordedHits;
+        ::std::vector<DmisPointRecord> m_recordedDmisHits;
+        ::std::map<int, ::std::vector<DmisPointRecord>> m_featureDmisHits;
+        ::std::map<int, QString> m_featureRefIds;
         ::std::vector<MeasuredFeature> m_solvedFeatures;
+
+        // DMIS 5.3 Guided Execution & Offline Playback State
+        DmisProgramData m_dmisProgram;
+        bool m_isDmisProgramActive = false;
+        int m_activeDmisFeatureIdx = -1;
+        ::std::vector<QTreeWidgetItem*> m_plannedDmisTreeItems;
+        QTreeWidgetItem* m_activeDmisTreeItem = nullptr;
+        QString m_activeDmisFeatureName;
+        QString m_activeDmisRefId;
+        bool m_suppressDmisStepAdvance = false;
+
+        QTimer* m_dmisPlaybackTimer = nullptr;
+        QPushButton* m_autoRunDmisBtnHome = nullptr;
+        QPushButton* m_autoRunDmisBtnCad = nullptr;
+        int m_playbackPhase = 0; // 0 = Clearance/Approach, 1 = Touch, 2 = Retract
+        int m_playbackSubStep = 0;
+        Eigen::Vector3d m_playbackStartPos = Eigen::Vector3d::Zero();
+        Eigen::Vector3d m_playbackEndPos = Eigen::Vector3d::Zero();
         int m_featureCounter = 1;
 
         QPushButton* m_settingsBtn = nullptr;

@@ -49,12 +49,15 @@ set(PROJECT_SOURCES
     include/dmis/QifExporter.h
 )
 
-add_executable(OpenCMM ${PROJECT_SOURCES} "include/DMIS/QifExporter.h")
+add_executable(OpenCMM ${PROJECT_SOURCES} "include/DMIS/QifExporter.h" "include/DMIS/DmisToken.h" "include/DMIS/DmisAst.h" "include/DMIS/DmisParser.h" "include/DMIS/DmisContext.h" "include/DMIS/DmisInterpreter.h")
+
 
 target_include_directories(OpenCMM PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${OpenCASCADE_INCLUDE_DIR}
+    ${EIGEN3_INCLUDE_DIR}
 )
+
 
 target_link_libraries(OpenCMM PRIVATE
     Eigen3::Eigen
@@ -93,7 +96,7 @@ add_executable(dmis_parser_test
     src/dmis/DMIS53Parser.cpp
     include/dmis/DMIS53Parser.h
     src/dmis/DMIS53ParserTest.cpp
- "include/DMIS/QifExporter.h")
+ "include/DMIS/QifExporter.h" "include/DMIS/DmisToken.h" "include/DMIS/DmisAst.h" "include/DMIS/DmisParser.h" "include/DMIS/DmisContext.h" "include/DMIS/DmisInterpreter.h")
 
 target_include_directories(dmis_parser_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -101,6 +104,7 @@ target_include_directories(dmis_parser_test PRIVATE
 
 target_link_libraries(dmis_parser_test PRIVATE
     Qt6::Core
+    Eigen3::Eigen
 )
 
 # Register the test executable with CTest using the --test-dmis flag
