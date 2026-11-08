@@ -13,10 +13,10 @@
 namespace OpenCMM {
 
     struct RibbonCommandMeta {
-        QString id;          // Unique command ID, e.g. "cad_load_step"
-        QString label;       // Display label, e.g. "Load STEP"
-        QString iconSymbol;  // Icon glyph, e.g. "📦"
-        QString groupTitle;  // Ribbon group header, e.g. "3D CAD Model"
+        QString id;
+        QString label;
+        QString iconSymbol;
+        QString groupTitle;
     };
 
     struct RibbonTabConfig {

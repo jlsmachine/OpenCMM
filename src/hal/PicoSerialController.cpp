@@ -158,5 +158,6 @@ namespace OpenCMM {
             emit connectionStatusChanged(false, "Serial port disconnected unexpectedly.");
         }
     }
+    
 
 } // namespace OpenCMM

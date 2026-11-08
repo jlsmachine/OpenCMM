@@ -23,6 +23,8 @@ namespace OpenCMM {
 
         void setAxisCalibration(const Eigen::Vector3d& scaleMm, const Eigen::Vector3i& sign);
 
+        static constexpr double ENCODER_SCALE_MM = 0.001;
+
     private slots:
         void onReadyRead();
         void onSerialError(QSerialPort::SerialPortError error);

@@ -69,6 +69,7 @@ namespace OpenCMM {
         void onProbeHit(const Position3D& hitPos);
         void onConnectionChanged(bool connected, const QString& message);
         void onThemeToggled(bool dark);
+        void onFitCylinderClicked();
     protected:
         void closeEvent(QCloseEvent* event) override;
     private:

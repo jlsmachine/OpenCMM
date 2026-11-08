@@ -523,6 +523,127 @@ namespace OpenCMM {
         res.success = true;
         return res;
     }
+    CylinderFitResult MetrologyMath::fitCylinderLeastSquares(
+        const std::vector<Eigen::Vector3d>& hits,
+        double probeRadius,
+        ProbeCompMode compMode,
+        const Eigen::Vector3d* initialAxisHint
+    ) {
+        CylinderFitResult res;
+        if (hits.size() < 5) return res;
+
+        // 1. Apply stylus probe compensation
+        std::vector<Eigen::Vector3d> compHits;
+        compHits.reserve(hits.size());
+        for (size_t i = 0; i < hits.size(); ++i) {
+            Eigen::Vector3d pt = hits[i];
+            if (compMode != ProbeCompMode::Uncompensated && probeRadius > 0.0) {
+                // Estimate local outward normal from centroid
+                Eigen::Vector3d centroid = Eigen::Vector3d::Zero();
+                for (const auto& h : hits) centroid += h;
+                centroid /= static_cast<double>(hits.size());
+                Eigen::Vector3d radialDir = (pt - centroid);
+                radialDir.z() = 0.0; // Assume mostly vertical or horizontal cylinder axis
+                if (radialDir.norm() > 1e-6) {
+                    radialDir.normalize();
+                    double sign = (compMode == ProbeCompMode::Internal) ? 1.0 : -1.0;
+                    pt += sign * probeRadius * radialDir;
+                }
+            }
+            compHits.push_back(pt);
+        }
+
+        // 2. Compute centroid and initial axis via PCA (Principal Component Analysis)
+        Eigen::Vector3d centroid = Eigen::Vector3d::Zero();
+        for (const auto& p : compHits) centroid += p;
+        centroid /= static_cast<double>(compHits.size());
+
+        Eigen::Matrix3d cov = Eigen::Matrix3d::Zero();
+        for (const auto& p : compHits) {
+            Eigen::Vector3d diff = p - centroid;
+            cov += diff * diff.transpose();
+        }
+        Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> eig(cov);
+        Eigen::Vector3d axis = eig.eigenvectors().col(2).normalized(); // eigenvector with largest eigenvalue
+        if (initialAxisHint && initialAxisHint->norm() > 1e-6) {
+            axis = initialAxisHint->normalized();
+            if (axis.dot(eig.eigenvectors().col(2)) < 0.0) axis = -axis;
+        }
+
+        // Initial radius estimate
+        double sumR = 0.0;
+        for (const auto& p : compHits) {
+            Eigen::Vector3d d = (p - centroid) - ((p - centroid).dot(axis)) * axis;
+            sumR += d.norm();
+        }
+        double radius = sumR / static_cast<double>(compHits.size());
+
+        // 3. Gauss-Newton Iterative Refinement for Cylinder (Axis point P0, direction V, radius R)
+        // Parameter vector: [P0x, P0y, P0z, Vx, Vy, R] (6 degrees of freedom, V is unit constrained)
+        Eigen::Vector3d p0 = centroid;
+
+        for (int iter = 0; iter < 15; ++iter) {
+            Eigen::MatrixXd J(compHits.size(), 6);
+            Eigen::VectorXd F(compHits.size());
+
+            for (size_t i = 0; i < compHits.size(); ++i) {
+                const Eigen::Vector3d& p = compHits[i];
+                Eigen::Vector3d d = p - p0;
+                Eigen::Vector3d cross = d.cross(axis);
+                double distToAxis = cross.norm();
+                double r_i = distToAxis;
+
+                F(i) = r_i - radius;
+
+                if (distToAxis < 1e-9) continue;
+
+                // Partial derivatives w.r.t p0 (dx, dy, dz), axis (vx, vy), and radius (R)
+                // d(dist)/dp0 = - (axis x cross) / distToAxis
+                Eigen::Vector3d d_p0 = -(axis.cross(cross)) / distToAxis;
+                // d(dist)/d(axis) = (d x cross) / distToAxis
+                Eigen::Vector3d d_axis = (d.cross(cross)) / distToAxis;
+
+                J(i, 0) = d_p0.x();
+                J(i, 1) = d_p0.y();
+                J(i, 2) = d_p0.z();
+                J(i, 3) = d_axis.x();
+                J(i, 4) = d_axis.y();
+                J(i, 5) = -1.0; // w.r.t radius R
+            }
+
+            Eigen::VectorXd delta = (J.transpose() * J).ldlt().solve(-J.transpose() * F);
+            p0 += Eigen::Vector3d(delta(0), delta(1), delta(2));
+            axis += Eigen::Vector3d(delta(3), delta(4), 0.0);
+            axis.normalize();
+            radius += delta(5);
+
+            if (delta.norm() < 1e-7) break;
+        }
+
+        // 4. Compute Form Error (Cylindricity: max_r - min_r)
+        double minR = std::numeric_limits<double>::max();
+        double maxR = std::numeric_limits<double>::lowest();
+        double sqSum = 0.0;
+
+        for (const auto& p : compHits) {
+            Eigen::Vector3d d = (p - p0) - ((p - p0).dot(axis)) * axis;
+            double r = d.norm();
+            minR = std::min(minR, r);
+            maxR = std::max(maxR, r);
+            double err = r - radius;
+            sqSum += err * err;
+        }
+
+        res.success = true;
+        res.center = p0;
+        res.axis = axis;
+        res.radius = radius;
+        res.diameter = radius * 2.0;
+        res.cylindricity = maxR - minR;
+        res.rmsError = std::sqrt(sqSum / static_cast<double>(compHits.size()));
+        return res;
+    }
+
 
     Eigen::Vector3d MetrologyMath::transformPoint(
         const Eigen::Vector3d& pt,

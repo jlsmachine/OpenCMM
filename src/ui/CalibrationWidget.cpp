@@ -8,6 +8,7 @@
 #include <QDialogButtonBox>
 #include <QMessageBox>
 #include <QPainter>
+#include <cmath>
 #include <algorithm>
 
 namespace OpenCMM {
@@ -18,31 +19,46 @@ namespace OpenCMM {
         m_solvedEffectiveRadiusMm(currentEffectiveRadiusMm) {
 
         setWindowTitle("OpenCMM — Master Ball Probe Calibration Wizard");
-        setMinimumWidth(500);
-        setMinimumHeight(440);
+        setMinimumWidth(520);
+        setMinimumHeight(450);
         setupUi();
         updateStatusDisplay();
     }
 
     void CalibrationWidget::setupUi() {
+        setStyleSheet(
+            "QDialog { background-color: #1e2227; color: #e0e0e0; }"
+            "QGroupBox { border: 1px solid #3a3f4b; border-radius: 4px; margin-top: 10px; padding-top: 14px; color: #61afef; font-weight: bold; }"
+            "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }"
+            "QLabel { color: #e0e0e0; font-size: 12px; }"
+            "QDoubleSpinBox { background-color: #181a1f; color: #ffffff; border: 1px solid #4b5263; border-radius: 3px; padding: 4px 8px; font-weight: bold; }"
+            "QProgressBar { background-color: #181a1f; color: #ffffff; border: 1px solid #3a3f4b; border-radius: 4px; text-align: center; font-weight: bold; }"
+            "QProgressBar::chunk { background-color: #2b6cb0; border-radius: 3px; }"
+            "QPushButton { background-color: #282c34; color: #abb2bf; border: 1px solid #4b5263; border-radius: 4px; padding: 6px 14px; font-weight: bold; }"
+            "QPushButton:hover { background-color: #3e4451; color: #ffffff; border: 1px solid #61afef; }"
+            "QPushButton:disabled { background-color: #181a1f; color: #5c6370; border: 1px solid #2c313a; }"
+        );
+
         auto* mainLayout = new QVBoxLayout(this);
         mainLayout->setSpacing(14);
 
-        // Instructions Group
-        auto* instGroup = new QGroupBox("Instructions & Protocol", this);
+        // Instructions Group (Double '&&' escapes the Qt mnemonic accelerator so '&' renders properly)
+        auto* instGroup = new QGroupBox("Instructions && Protocol", this);
         auto* instLayout = new QVBoxLayout(instGroup);
         auto* instLbl = new QLabel(
-            "1. Secure the certified Master Calibration Sphere on the CMM table.\n"
-            "2. Take at least <b>5 non-coplanar hits</b> distributed around the equator and pole of the ball.\n"
-            "3. Click <b>Calculate Calibration</b> to solve effective stylus radius ($R_{\text{eff}}$) and lobing form error.",
+            "1. Secure the certified Master Calibration Sphere on the CMM table.<br>"
+            "2. Take at least <b>5 non-coplanar hits</b> distributed around the equator and pole of the ball.<br>"
+            "3. Click <b>Calculate Calibration</b> to solve effective stylus radius (<b>R<sub>eff</sub></b>) and lobing form error.",
             instGroup
         );
+        instLbl->setTextFormat(Qt::RichText);
         instLbl->setWordWrap(true);
+        instLbl->setStyleSheet("color: #dcdfe4; font-size: 12px; line-height: 1.4;");
         instLayout->addWidget(instLbl);
         mainLayout->addWidget(instGroup);
 
         // Parameters & Progress Group
-        auto* progGroup = new QGroupBox("Calibration Buffer & Sphere Settings", this);
+        auto* progGroup = new QGroupBox("Calibration Buffer && Sphere Settings", this);
         auto* formLayout = new QFormLayout(progGroup);
 
         m_ballDiamSpin = new QDoubleSpinBox(progGroup);
@@ -57,6 +73,7 @@ namespace OpenCMM {
         m_progressHits = new QProgressBar(progGroup);
         m_progressHits->setRange(0, 5);
         m_progressHits->setValue(0);
+        m_progressHits->setFormat("%v / %m hits");
         m_progressHits->setTextVisible(true);
 
         formLayout->addRow("Master Ball Diameter:", m_ballDiamSpin);
@@ -73,10 +90,10 @@ namespace OpenCMM {
 
         m_effRadResultLbl = new QLabel(QString("Effective Stylus Radius (R_eff): %1 mm").arg(m_solvedEffectiveRadiusMm, 0, 'f', 4), resGroup);
         m_sphericityResultLbl = new QLabel("Sphericity / Lobing Error: --", resGroup);
-        m_rmsResultLbl = new QLabel("RMS Residual Fit Error: --", resGroup);
+        m_rmsResultLbl = new QLabel("Master Sphere Center (X, Y, Z): --", resGroup);
 
         for (auto* lbl : { m_effRadResultLbl, m_sphericityResultLbl, m_rmsResultLbl }) {
-            lbl->setStyleSheet("font-family: Consolas, monospace; font-size: 12px; font-weight: bold; color: #abb2bf;");
+            lbl->setStyleSheet("font-family: Consolas, monospace; font-size: 12px; font-weight: bold; color: #e0e0e0;");
         }
 
         resLayout->addWidget(m_statusBadgeLbl);
@@ -88,11 +105,18 @@ namespace OpenCMM {
         // Action Buttons Row
         auto* btnRow = new QHBoxLayout();
         m_computeBtn = new QPushButton("Calculate Calibration", this);
-        m_computeBtn->setStyleSheet("background-color: #2d5a88; color: white; font-weight: bold; padding: 6px 14px;");
+        m_computeBtn->setStyleSheet(
+            "QPushButton { background-color: #2d5a88; color: white; border: 1px solid #61afef; font-weight: bold; padding: 6px 14px; }"
+            "QPushButton:hover { background-color: #3b6998; }"
+            "QPushButton:disabled { background-color: #181a1f; color: #5c6370; border: 1px solid #2c313a; }"
+        );
         m_computeBtn->setEnabled(false);
 
         m_clearBtn = new QPushButton("Clear Hits", this);
-        m_clearBtn->setStyleSheet("background-color: #5c2b29; color: white; font-weight: bold; padding: 6px 14px;");
+        m_clearBtn->setStyleSheet(
+            "QPushButton { background-color: #5c2b29; color: white; border: 1px solid #e06c75; font-weight: bold; padding: 6px 14px; }"
+            "QPushButton:hover { background-color: #743432; }"
+        );
 
         connect(m_computeBtn, &QPushButton::clicked, this, &CalibrationWidget::onComputeCalibrationClicked);
         connect(m_clearBtn, &QPushButton::clicked, this, &CalibrationWidget::resetCalibrationBuffer);
@@ -104,6 +128,7 @@ namespace OpenCMM {
 
         // Dialog Buttons
         auto* dialogButtons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
+        dialogButtons->button(QDialogButtonBox::Ok)->setText("Apply Calibration");
         dialogButtons->button(QDialogButtonBox::Ok)->setEnabled(false);
         connect(dialogButtons, &QDialogButtonBox::accepted, this, &CalibrationWidget::accept);
         connect(dialogButtons, &QDialogButtonBox::rejected, this, &CalibrationWidget::reject);
@@ -127,10 +152,9 @@ namespace OpenCMM {
         m_statusBadgeLbl->setStyleSheet("font-size: 12px; font-weight: bold; color: #e5c07b;");
         m_effRadResultLbl->setText("Effective Stylus Radius (R_eff): --");
         m_sphericityResultLbl->setText("Sphericity / Lobing Error: --");
-        m_rmsResultLbl->setText("RMS Residual Fit Error: --");
+        m_rmsResultLbl->setText("Master Sphere Center (X, Y, Z): --");
 
-        auto* btnBox = findChild<QDialogButtonBox*>();
-        if (btnBox) {
+        if (auto* btnBox = findChild<QDialogButtonBox*>()) {
             btnBox->button(QDialogButtonBox::Ok)->setEnabled(false);
         }
     }
@@ -143,6 +167,8 @@ namespace OpenCMM {
         if (count >= 5) {
             m_computeBtn->setEnabled(true);
             m_hitCountLbl->setStyleSheet("font-weight: bold; color: #98c379;");
+            m_statusBadgeLbl->setText("STATUS: READY TO COMPUTE");
+            m_statusBadgeLbl->setStyleSheet("font-size: 12px; font-weight: bold; color: #61afef;");
         }
         else {
             m_computeBtn->setEnabled(false);
@@ -168,16 +194,18 @@ namespace OpenCMM {
         m_success = true;
 
         const int decimals = 4;
-        m_effRadResultLbl->setText(QString("Effective Stylus Radius (R_eff): %1 mm").arg(m_solvedEffectiveRadiusMm, 0, 'f', decimals));
+        m_effRadResultLbl->setText(QString("Effective Stylus Radius (R_eff): %1 mm  (Tip Ø: %2 mm)")
+            .arg(m_solvedEffectiveRadiusMm, 0, 'f', decimals)
+            .arg(m_solvedEffectiveRadiusMm * 2.0, 0, 'f', decimals));
         m_sphericityResultLbl->setText(QString("Sphericity / Lobing Error: %1 mm").arg(m_solvedSphericityMm, 0, 'f', decimals));
+        m_rmsResultLbl->setText(QString("Master Sphere Center: (%1, %2, %3) mm")
+            .arg(res.masterBallCenter.x(), 0, 'f', decimals)
+            .arg(res.masterBallCenter.y(), 0, 'f', decimals)
+            .arg(res.masterBallCenter.z(), 0, 'f', decimals));
         m_statusBadgeLbl->setText("STATUS: PASSED & QUALIFIED");
         m_statusBadgeLbl->setStyleSheet("font-size: 12px; font-weight: bold; color: #98c379;");
 
         emit calibrationCompleted(m_solvedEffectiveRadiusMm, m_solvedSphericityMm);
-        QMessageBox::information(this, "Calibration Successful",
-            QString("Probe stylus successfully qualified!\n\nEffective Radius (R_eff): %1 mm\nLobing Error: %2 mm")
-            .arg(m_solvedEffectiveRadiusMm, 0, 'f', 4)
-            .arg(m_solvedSphericityMm, 0, 'f', 4));
     }
 
 } // namespace OpenCMM

@@ -30,13 +30,15 @@ set(PROJECT_SOURCES
     src/math/MetrologyMath.cpp
     include/math/MetrologyMath.h
     src/cad/CmmDigitalTwin.cpp
+    include/cad/CmmDigitalTwin.h
 
     # DMIS 5.3 & Characterization Parsers
     src/dmis/DMIS53Parser.cpp
     include/dmis/DMIS53Parser.h
-    #src/dmis/DMIS53ParserTest.cpp
     src/dmis/ChFileParser.cpp
     include/dmis/ChFileParser.h
+    src/dmis/QifExporter.cpp
+    include/dmis/QifExporter.h
 
     # User Interface & Viewports
     src/ui/MainWindow.cpp
@@ -45,23 +47,19 @@ set(PROJECT_SOURCES
     include/ui/OcctViewport.h
     src/ui/SettingsDialog.cpp
     include/ui/SettingsDialog.h
-    src/dmis/QifExporter.cpp       # <--- Add this line
-    include/dmis/QifExporter.h
-    src/ui/CalibrationWidget.cpp      # <--- Add this line
+    src/ui/CalibrationWidget.cpp
     include/ui/CalibrationWidget.h
     src/ui/RibbonCustomizeDialog.cpp
     include/ui/RibbonCustomizeDialog.h
 )
 
-add_executable(OpenCMM ${PROJECT_SOURCES} )
-
+add_executable(OpenCMM ${PROJECT_SOURCES})
 
 target_include_directories(OpenCMM PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${OpenCASCADE_INCLUDE_DIR}
     ${EIGEN3_INCLUDE_DIR}
 )
-
 
 target_link_libraries(OpenCMM PRIVATE
     Eigen3::Eigen
@@ -95,12 +93,12 @@ file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/Machines" DESTINATION "${CMAKE_CURRENT_BI
 # Enable testing framework support
 enable_testing()
 
-# Define the DMIS parser test executable (incorporating your test runner source)
+# Define the DMIS parser test executable
 add_executable(dmis_parser_test
     src/dmis/DMIS53Parser.cpp
     include/dmis/DMIS53Parser.h
     src/dmis/DMIS53ParserTest.cpp
- )
+)
 
 target_include_directories(dmis_parser_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -111,5 +109,4 @@ target_link_libraries(dmis_parser_test PRIVATE
     Eigen3::Eigen
 )
 
-# Register the test executable with CTest using the --test-dmis flag
 add_test(NAME DMIS53ParserValidationTest COMMAND dmis_parser_test --test-dmis)

@@ -20,27 +20,18 @@ namespace OpenCMM {
 
     std::vector<RibbonCommandMeta> RibbonCustomizeDialog::availableCommandsCatalog() {
         return {
-            // System & Hardware
             { "sys_settings",       "Settings...",        "⚙",  "System & Hardware" },
             { "sys_about",          "About",              "ℹ",  "System & Hardware" },
             { "sys_customize",      "Customize Ribbon",   "🛠", "System & Hardware" },
-
-            // Machine DRO & Buffer
             { "dro_zero",           "Zero XYZ",           "🎯", "Machine DRO" },
             { "dro_units",          "Units (mm/in)",      "📏", "Machine DRO" },
             { "buf_clear_points",   "Clear Points",       "🗑", "Point Buffer" },
-
-            // Offline Simulator & CAD Authoring
             { "sim_target_combo",   "Virtual Target",     "🎯", "Offline Simulator & CAD" },
             { "sim_hit",            "Simulate Hit",       "⚡", "Offline Simulator & CAD" },
             { "cad_auto_probe",     "Auto-Probe CAD",     "🎯", "Offline Simulator & CAD" },
-
-            // DMIS 5.3 Program
             { "dmis_save",          "Save DMIS",          "💾", "DMIS 5.3 Program" },
             { "dmis_load",          "Load DMIS",          "📂", "DMIS 5.3 Program" },
             { "dmis_run",           "Run DMIS",           "▶",  "DMIS 5.3 Program" },
-
-            // Probe & Alignment
             { "probe_comp_combo",   "Tip Compensation",   "🧭", "Stylus Compensation" },
             { "probe_calibrate",    "Calibrate Tip",      "🔴", "Stylus Compensation" },
             { "datum_set_a",        "Set Datum A",        "🅰", "CAD / Feature Datums (A-B-C)" },
@@ -48,22 +39,17 @@ namespace OpenCMM {
             { "datum_set_c",        "Set Datum C",        "🅲", "CAD / Feature Datums (A-B-C)" },
             { "pcs_align_321",      "3-2-1 Align...",     "📐", "Part Coordinate System (PCS)" },
             { "pcs_coord_toggle",   "Coord: MCS / PCS",   "🌐", "Part Coordinate System (PCS)" },
-
-            // Measure
             { "meas_workplane",     "2D Workplane",       "📐", "Active Projection" },
             { "meas_style",         "Feature Style",      "👁", "Feature Display" },
             { "meas_fit_plane",     "Fit Plane",          "▱",  "3D Features" },
             { "meas_fit_sphere",    "Fit Sphere",         "🌐", "3D Features" },
+            { "meas_fit_cylinder",  "Fit Cylinder",       "⌭",  "3D Features" },
             { "meas_fit_circle",    "Fit 2D Circle",      "⭕", "2D Workplane Features" },
             { "meas_fit_line",      "Fit 2D Line",        "╱",  "2D Workplane Features" },
             { "meas_relation",      "Distance / Angle",   "↔",  "Dimensions & Relations" },
-
-            // CAD & Deviation
             { "cad_load_step",      "Load STEP",          "📦", "3D CAD Model" },
             { "cad_orient",         "Orient CAD...",      "🧭", "3D CAD Model" },
             { "cad_surface_dev",    "Surface Dev",        "🌡", "Point Cloud vs. CAD" },
-
-            // Reporting
             { "rep_edit_tol",       "Edit Tol...",        "±",  "Feature Evaluation" },
             { "rep_clear_all",      "Clear All",          "🧹", "Manage Features" },
             { "rep_export_report",  "Export Report",      "📄", "Quality & DMIS Export" }
@@ -95,7 +81,7 @@ namespace OpenCMM {
             {
                 "Measure", true, false,
                 { "meas_workplane", "meas_style", "meas_fit_plane", "meas_fit_sphere",
-                  "meas_fit_circle", "meas_fit_line", "meas_relation" }
+                  "meas_fit_cylinder", "meas_fit_circle", "meas_fit_line", "meas_relation" }
             },
             {
                 "CAD & Deviation", true, false,
@@ -144,7 +130,6 @@ namespace OpenCMM {
             }
         }
 
-        // Fallback to default layout (applying any legacy Tab_<Name> visibility flags if present)
         std::vector<RibbonTabConfig> defaults = defaultRibbonLayout();
         settings.beginGroup("RibbonCustomization");
         for (auto& tab : defaults) {
@@ -194,25 +179,25 @@ namespace OpenCMM {
     void RibbonCustomizeDialog::setupUi(bool darkMode) {
         setStyleSheet(darkMode
             ? "QDialog { background-color: #1e2227; color: #e0e0e0; }"
-              "QGroupBox { border: 1px solid #3a3f4b; border-radius: 4px; margin-top: 10px; padding-top: 12px; color: #abb2bf; font-weight: bold; }"
-              "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }"
-              "QListWidget { background-color: #181a1f; color: #ffffff; border: 1px solid #3a3f4b; border-radius: 4px; padding: 4px; font-size: 12px; }"
-              "QListWidget::item { padding: 5px 6px; border-bottom: 1px solid #23272e; }"
-              "QListWidget::item:selected { background-color: #2d5a88; color: #ffffff; }"
-              "QComboBox { background-color: #181a1f; color: #ffffff; border: 1px solid #4b5263; border-radius: 3px; padding: 4px 8px; font-weight: bold; }"
-              "QPushButton { background-color: #282c34; color: #abb2bf; border: 1px solid #4b5263; border-radius: 4px; padding: 5px 10px; font-weight: bold; }"
-              "QPushButton:hover { background-color: #3e4451; color: #ffffff; border: 1px solid #61afef; }"
-              "QPushButton:disabled { color: #5c6370; border-color: #2c313a; }"
+            "QGroupBox { border: 1px solid #3a3f4b; border-radius: 4px; margin-top: 10px; padding-top: 12px; color: #abb2bf; font-weight: bold; }"
+            "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }"
+            "QListWidget { background-color: #181a1f; color: #ffffff; border: 1px solid #3a3f4b; border-radius: 4px; padding: 4px; font-size: 12px; }"
+            "QListWidget::item { padding: 5px 6px; border-bottom: 1px solid #23272e; }"
+            "QListWidget::item:selected { background-color: #2d5a88; color: #ffffff; }"
+            "QComboBox { background-color: #181a1f; color: #ffffff; border: 1px solid #4b5263; border-radius: 3px; padding: 4px 8px; font-weight: bold; }"
+            "QPushButton { background-color: #282c34; color: #abb2bf; border: 1px solid #4b5263; border-radius: 4px; padding: 5px 10px; font-weight: bold; }"
+            "QPushButton:hover { background-color: #3e4451; color: #ffffff; border: 1px solid #61afef; }"
+            "QPushButton:disabled { color: #5c6370; border-color: #2c313a; }"
             : "QDialog { background-color: #f1f5f9; color: #1e293b; }"
-              "QGroupBox { border: 1px solid #cbd5e1; border-radius: 4px; margin-top: 10px; padding-top: 12px; color: #334155; font-weight: bold; }"
-              "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }"
-              "QListWidget { background-color: #ffffff; color: #0f172a; border: 1px solid #cbd5e1; border-radius: 4px; padding: 4px; font-size: 12px; }"
-              "QListWidget::item { padding: 5px 6px; border-bottom: 1px solid #f1f5f9; }"
-              "QListWidget::item:selected { background-color: #0284c7; color: #ffffff; }"
-              "QComboBox { background-color: #ffffff; color: #0f172a; border: 1px solid #94a3b8; border-radius: 3px; padding: 4px 8px; font-weight: bold; }"
-              "QPushButton { background-color: #ffffff; color: #334155; border: 1px solid #cbd5e1; border-radius: 4px; padding: 5px 10px; font-weight: bold; }"
-              "QPushButton:hover { background-color: #e2e8f0; color: #0f172a; border: 1px solid #0284c7; }"
-              "QPushButton:disabled { color: #94a3b8; border-color: #e2e8f0; }"
+            "QGroupBox { border: 1px solid #cbd5e1; border-radius: 4px; margin-top: 10px; padding-top: 12px; color: #334155; font-weight: bold; }"
+            "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }"
+            "QListWidget { background-color: #ffffff; color: #0f172a; border: 1px solid #cbd5e1; border-radius: 4px; padding: 4px; font-size: 12px; }"
+            "QListWidget::item { padding: 5px 6px; border-bottom: 1px solid #f1f5f9; }"
+            "QListWidget::item:selected { background-color: #0284c7; color: #ffffff; }"
+            "QComboBox { background-color: #ffffff; color: #0f172a; border: 1px solid #94a3b8; border-radius: 3px; padding: 4px 8px; font-weight: bold; }"
+            "QPushButton { background-color: #ffffff; color: #334155; border: 1px solid #cbd5e1; border-radius: 4px; padding: 5px 10px; font-weight: bold; }"
+            "QPushButton:hover { background-color: #e2e8f0; color: #0f172a; border: 1px solid #0284c7; }"
+            "QPushButton:disabled { color: #94a3b8; border-color: #e2e8f0; }"
         );
 
         auto* mainLayout = new QVBoxLayout(this);
@@ -271,7 +256,7 @@ namespace OpenCMM {
         m_tabCommandsListWidget->setDefaultDropAction(Qt::MoveAction);
         connect(m_tabCommandsListWidget->model(), &QAbstractItemModel::rowsMoved, this, [this]() {
             syncCurrentTabCommandsFromList();
-        });
+            });
         cmdLayout->addWidget(m_tabCommandsListWidget, 1);
 
         auto* cmdBtnRow = new QHBoxLayout();
@@ -298,21 +283,21 @@ namespace OpenCMM {
         m_categoryCombo->addItem("All Categories", "");
 
         QStringList categories;
-        for (const auto& cmd : availableCommandsCatalog()) {
-            if (!categories.contains(cmd.groupTitle)) {
-                categories.append(cmd.groupTitle);
-                m_categoryCombo->addItem(cmd.groupTitle, cmd.groupTitle);
+        for (const auto& meta : availableCommandsCatalog()) {
+            if (!categories.contains(meta.groupTitle)) {
+                categories.append(meta.groupTitle);
+                m_categoryCombo->addItem(meta.groupTitle, meta.groupTitle);
             }
         }
         connect(m_categoryCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-                this, &RibbonCustomizeDialog::onCategoryFilterChanged);
+            this, &RibbonCustomizeDialog::onCategoryFilterChanged);
         filterRow->addWidget(m_categoryCombo, 1);
         catLayout->addLayout(filterRow);
 
         m_catalogListWidget = new QListWidget(catGroup);
         connect(m_catalogListWidget, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem*) {
             onAddCommandToTabClicked();
-        });
+            });
         catLayout->addWidget(m_catalogListWidget, 1);
 
         m_addCmdBtn = new QPushButton("⬅ Add Selected Command to Tab", catGroup);
@@ -332,7 +317,7 @@ namespace OpenCMM {
 
         auto* buttonBox = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, this);
         connect(buttonBox, &QDialogButtonBox::accepted, this, &RibbonCustomizeDialog::onSaveClicked);
-        connect(buttonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
+        connect(buttonBox, &QDialogButtonBox::rejected, this, &RibbonCustomizeDialog::reject);
         bottomRow->addWidget(buttonBox);
 
         mainLayout->addLayout(bottomRow);
@@ -353,7 +338,8 @@ namespace OpenCMM {
         if (!m_tabs.empty()) {
             const int clamped = std::clamp(selectRow, 0, static_cast<int>(m_tabs.size()) - 1);
             m_tabListWidget->setCurrentRow(clamped);
-        } else {
+        }
+        else {
             m_currentTabIndex = -1;
             m_tabCommandsListWidget->clear();
         }
@@ -368,8 +354,13 @@ namespace OpenCMM {
             for (const QString& cid : cmdIds) {
                 const RibbonCommandMeta* meta = findCommandMeta(cid);
                 if (!meta) continue;
+
+                // Safely access fields via pointer ->
                 const QString text = QString("%1  %2   —   [%3]")
-                    .arg(meta->iconSymbol, meta->label, meta->groupTitle);
+                    .arg(meta->iconSymbol)
+                    .arg(meta->label)
+                    .arg(meta->groupTitle);
+
                 auto* item = new QListWidgetItem(text, m_tabCommandsListWidget);
                 item->setData(Qt::UserRole, meta->id);
             }
@@ -515,7 +506,8 @@ namespace OpenCMM {
             m_tabs[m_currentTabIndex].commandIds.insert(insertPos + 1, cmdId);
             populateTabCommandsList(m_currentTabIndex);
             m_tabCommandsListWidget->setCurrentRow(insertPos + 1);
-        } else {
+        }
+        else {
             m_tabs[m_currentTabIndex].commandIds.append(cmdId);
             populateTabCommandsList(m_currentTabIndex);
             m_tabCommandsListWidget->setCurrentRow(m_tabCommandsListWidget->count() - 1);

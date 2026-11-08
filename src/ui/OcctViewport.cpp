@@ -1,5 +1,12 @@
 // Copyright (C) 2026 JLS Machine LLC
 // SPDX-License-Identifier: GPL-3.0-or-later
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifdef _WIN32
+#include <windows.h>
+#include <WNT_Window.hxx>
+#endif
 #include "ui/OcctViewport.h"
 
 #include <QMouseEvent>
@@ -50,19 +57,14 @@
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
-#include <BRepPrimAPI_MakeSphere.hxx>
-#include <BRepPrimAPI_MakeCylinder.hxx>
-#include <gp_Pln.hxx>
-#include <gp_Ax2.hxx>
 #include <gp_Circ.hxx>
 #include <Prs3d_IsoAspect.hxx>
-#include <Prs3d_LineAspect.hxx>
 #include <Aspect_TypeOfLine.hxx>
+#include <Geom_CylindricalSurface.hxx>
+#include <BRep_Tool.hxx>
+#include <GeomLProp_SLProps.hxx>
 
-#ifdef _WIN32
-#include <WNT_Window.hxx>
 
-#endif
 
 namespace OpenCMM {
 
@@ -83,10 +85,14 @@ namespace OpenCMM {
 
     void OcctViewport::setupOverlayHud() {
         m_hudContainer = new QWidget(this);
+        // Give the HUD its own native window handle so OpenGL SwapBuffers on the parent HWND never erases it
+        m_hudContainer->setAttribute(Qt::WA_NativeWindow, true);
+        m_hudContainer->setAttribute(Qt::WA_StyledBackground, true);
+        m_hudContainer->setAutoFillBackground(true);
         m_hudContainer->setMinimumWidth(180);
-        m_hudContainer->setMinimumHeight(260); // Force full expanded height on startup
+        m_hudContainer->setMinimumHeight(260);
         m_hudContainer->setStyleSheet(
-            "QWidget { background-color: rgba(33, 37, 43, 220); border: 1px solid #3a3f4b; border-radius: 6px; }"
+            "QWidget { background-color: #21252b; border: 1px solid #3a3f4b; border-radius: 6px; }"
             "QPushButton { background-color: #282c34; color: #abb2bf; border: 1px solid #4b5263; border-radius: 3px; padding: 5px 10px; min-width: 150px; min-height: 24px; font-weight: bold; font-size: 11px; text-align: left; }"
             "QPushButton:hover { background-color: #3a3f4b; color: white; }"
             "QPushButton:checked { background-color: #2d5a88; color: white; border: 1px solid #61afef; }"
@@ -167,7 +173,7 @@ namespace OpenCMM {
         sliderLayout->addWidget(transTitle);
         sliderLayout->addWidget(m_verticalSlider, 0, Qt::AlignHCenter);
         hudLayout->addLayout(sliderLayout);
-        // --- Populate machine link buttons immediately so initial size is correct ---
+
         rebuildComponentHudButtons();
         m_hudContainer->adjustSize();
         m_hudContainer->raise();
@@ -181,6 +187,7 @@ namespace OpenCMM {
             int x = width() - m_hudContainer->width() - 14;
             int y = 14;
             m_hudContainer->move(x, y);
+            m_hudContainer->show();
             m_hudContainer->raise();
         }
     }
@@ -199,10 +206,8 @@ namespace OpenCMM {
             const bool vis = m_digitalTwin.isLinkVisible(id);
             auto* btn = new QPushButton((vis ? "✓ " : "  ") + id, m_linkButtonsContainer);
 
-            // --- Make button checkable so it triggers checked styles ---
             btn->setCheckable(true);
             btn->setChecked(vis);
-
             btn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
             btn->setMinimumHeight(26);
 
@@ -221,6 +226,8 @@ namespace OpenCMM {
                 if (m_hudContainer) {
                     m_hudContainer->layout()->invalidate();
                     m_hudContainer->adjustSize();
+                    m_hudContainer->raise();
+                    m_hudContainer->update();
                 }
                 });
 
@@ -234,7 +241,9 @@ namespace OpenCMM {
             int x = width() - m_hudContainer->width() - 14;
             int y = 14;
             m_hudContainer->move(x, y);
+            m_hudContainer->show();
             m_hudContainer->raise();
+            m_hudContainer->update();
         }
     }
 
@@ -260,7 +269,12 @@ namespace OpenCMM {
         m_view = m_viewer->CreateView();
 
 #ifdef _WIN32
-        Handle(WNT_Window) wntWindow = new WNT_Window(reinterpret_cast<Aspect_Handle>(winId()));
+        HWND hwnd = reinterpret_cast<HWND>(winId());
+        // Clip child windows (like m_hudContainer) so OpenGL SwapBuffers never draws over the HUD
+        LONG_PTR style = GetWindowLongPtr(hwnd, GWL_STYLE);
+        SetWindowLongPtr(hwnd, GWL_STYLE, style | WS_CLIPCHILDREN | WS_CLIPSIBLINGS);
+
+        Handle(WNT_Window) wntWindow = new WNT_Window(reinterpret_cast<Aspect_Handle>(hwnd));
         m_view->SetWindow(wntWindow);
         if (!wntWindow->IsMapped()) {
             wntWindow->Map();
@@ -280,18 +294,17 @@ namespace OpenCMM {
         m_digitalTwin.buildDefaultBridgeMachine();
         rebuildComponentHudButtons();
 
-
-        // Apply saved theme to the newly created 3D view and HUD
         setTheme(m_isDarkMode);
 
-        // --- Force layout recalculation pass for the HUD overlay ---
         if (m_hudContainer) {
             m_hudContainer->layout()->activate();
             m_hudContainer->adjustSize();
             int x = width() - m_hudContainer->width() - 14;
             int y = 14;
             m_hudContainer->move(x, y);
+            m_hudContainer->show();
             m_hudContainer->raise();
+            m_hudContainer->update();
         }
 
         m_view->MustBeResized();
@@ -338,8 +351,6 @@ namespace OpenCMM {
         bool ok = m_digitalTwin.loadMachinePackage(packagePath);
         if (ok) {
             rebuildComponentHudButtons();
-            // If the custom machine package already has a modeled probe offset on its quill,
-            // hide the redundant built-in procedural stylus by default (user can toggle it in HUD)
             const bool hasModeledStylus = (m_digitalTwin.config().probeMountOffsetMm.norm() > 1e-3);
             setProbeStylusVisible(!hasModeledStylus);
             if (!m_view.IsNull()) {
@@ -477,16 +488,12 @@ namespace OpenCMM {
         }
         m_pcsTriadShapes.clear();
 
-        // pcsMatrix maps Machine (World) -> PCS: P_pcs = R * P_world + t
-        // Therefore, PCS Origin in World is O_world = -R^T * t,
-        // and PCS unit axes in World are rows 0, 1, 2 of R.
         const Eigen::Matrix3d R = pcsMatrix.block<3, 3>(0, 0);
         const Eigen::Vector3d t = pcsMatrix.block<3, 1>(0, 3);
         const Eigen::Vector3d originW = -R.transpose() * t;
 
         const gp_Pnt origPt(originW.x(), originW.y(), originW.z());
 
-        // Golden origin sphere at PCS (0,0,0)
         TopoDS_Shape origSph = BRepPrimAPI_MakeSphere(origPt, 2.2).Shape();
         Handle(AIS_Shape) aisOrig = new AIS_Shape(origSph);
         aisOrig->SetColor(Quantity_NOC_GOLD);
@@ -494,9 +501,9 @@ namespace OpenCMM {
         m_pcsTriadShapes.push_back(aisOrig);
 
         const Quantity_Color axisColors[3] = {
-            Quantity_Color(0.88, 0.42, 0.46, Quantity_TOC_RGB), // +X Datum Red
-            Quantity_Color(0.60, 0.76, 0.47, Quantity_TOC_RGB), // +Y Datum Green
-            Quantity_Color(0.38, 0.69, 0.94, Quantity_TOC_RGB)  // +Z Datum Blue
+            Quantity_Color(0.88, 0.42, 0.46, Quantity_TOC_RGB),
+            Quantity_Color(0.60, 0.76, 0.47, Quantity_TOC_RGB),
+            Quantity_Color(0.38, 0.69, 0.94, Quantity_TOC_RGB)
         };
 
         for (int a = 0; a < 3; ++a) {
@@ -512,7 +519,6 @@ namespace OpenCMM {
             m_context->Display(aisAxis, AIS_Shaded, -1, Standard_False);
             m_pcsTriadShapes.push_back(aisAxis);
 
-            // Tip marker sphere at end of axis
             gp_Pnt tipPt = origPt.Translated(gp_Vec(gDir).Multiplied(axisLengthMm));
             TopoDS_Shape tipSph = BRepPrimAPI_MakeSphere(tipPt, 1.8).Shape();
             Handle(AIS_Shape) aisTip = new AIS_Shape(tipSph);
@@ -549,7 +555,6 @@ namespace OpenCMM {
             const gp_Pnt rubyTargetPt = surfPt.Translated(nVec.Multiplied(probeRadiusMm));
 
             if (static_cast<int>(i) < activeIndex) {
-                // Completed target point: small green sphere
                 TopoDS_Shape doneSph = BRepPrimAPI_MakeSphere(rubyTargetPt, 1.2).Shape();
                 Handle(AIS_Shape) aisDone = new AIS_Shape(doneSph);
                 aisDone->SetColor(Quantity_NOC_GREEN1);
@@ -557,7 +562,6 @@ namespace OpenCMM {
                 m_programTargetMarkers.push_back(aisDone);
             }
             else if (static_cast<int>(i) == activeIndex) {
-                // Active target point: high-visibility Gold bullseye sphere + approach vector rod
                 TopoDS_Shape activeSph = BRepPrimAPI_MakeSphere(rubyTargetPt, 2.3).Shape();
                 Handle(AIS_Shape) aisActive = new AIS_Shape(activeSph);
                 aisActive->SetColor(Quantity_NOC_GOLD);
@@ -565,7 +569,6 @@ namespace OpenCMM {
                 m_context->Display(aisActive, AIS_Shaded, -1, Standard_False);
                 m_programTargetMarkers.push_back(aisActive);
 
-                // Approach vector stem (from surface contact point out to +18mm standoff along normal)
                 gp_Ax2 stemAx(surfPt, norm);
                 TopoDS_Shape approachRod = BRepPrimAPI_MakeCylinder(stemAx, 0.45, 18.0 + probeRadiusMm).Shape();
                 Handle(AIS_Shape) aisRod = new AIS_Shape(approachRod);
@@ -574,7 +577,6 @@ namespace OpenCMM {
                 m_programTargetMarkers.push_back(aisRod);
             }
             else {
-                // Pending upcoming target points: orange preview sphere + short normal indicator
                 TopoDS_Shape pendingSph = BRepPrimAPI_MakeSphere(rubyTargetPt, 1.4).Shape();
                 Handle(AIS_Shape) aisPending = new AIS_Shape(pendingSph);
                 aisPending->SetColor(Quantity_NOC_ORANGE);
@@ -663,16 +665,15 @@ namespace OpenCMM {
             initOcct();
         }
 
-        // Ensure HUD layout is fully expanded and positioned on initial paint passes
         if (m_hudContainer) {
             m_hudContainer->layout()->activate();
             m_hudContainer->adjustSize();
             int x = width() - m_hudContainer->width() - 14;
             int y = 14;
-            if (m_hudContainer->pos() != QPoint(x, y) || m_hudContainer->height() < 200) {
+            if (m_hudContainer->pos() != QPoint(x, y)) {
                 m_hudContainer->move(x, y);
-                m_hudContainer->raise();
             }
+            m_hudContainer->raise();
         }
 
         if (!m_view.IsNull()) {
@@ -689,6 +690,7 @@ namespace OpenCMM {
             int y = 14;
             m_hudContainer->move(x, y);
             m_hudContainer->raise();
+            m_hudContainer->update();
         }
     }
 
@@ -918,6 +920,7 @@ namespace OpenCMM {
         GeomAbs_SurfaceType surfType = surfAdaptor.GetType();
 
         info.isInternal = (face.Orientation() == TopAbs_REVERSED);
+        info.face = face;
 
         switch (surfType) {
         case GeomAbs_Plane: {
@@ -1008,140 +1011,41 @@ namespace OpenCMM {
         return hit;
     }
 
-    std::vector<CadSurfaceHit> OcctViewport::sampleSelectedCadFace(int numPoints) const {
+    std::vector<CadSurfaceHit> OcctViewport::sampleSelectedCadFace(int numPointsPerRing) {
         std::vector<CadSurfaceHit> hits;
-        if (m_lastSelectedTopoFace.IsNull()) {
-            return hits;
-        }
+        if (!hasSelectedCadFace()) return hits;
 
-        Standard_Real umin = 0.0, umax = 0.0, vmin = 0.0, vmax = 0.0;
-        BRepTools::UVBounds(m_lastSelectedTopoFace, umin, umax, vmin, vmax);
-        if (umax <= umin + 1e-9 || vmax <= vmin + 1e-9) {
-            return hits;
-        }
+        const TopoDS_Face& face = m_lastSelectedFace.face;
+        Handle(Geom_Surface) surf = BRep_Tool::Surface(face);
 
-        BRepTopAdaptor_FClass2d classifier(m_lastSelectedTopoFace, 1e-6);
-        BRepGProp_Face prop(m_lastSelectedTopoFace);
-        BRepAdaptor_Surface surfAdaptor(m_lastSelectedTopoFace, Standard_True);
-        GeomAbs_SurfaceType surfType = surfAdaptor.GetType();
+        Handle(Standard_Type) sType = surf->DynamicType();
+        bool isCylinder = (sType == STANDARD_TYPE(Geom_CylindricalSurface));
 
-        auto evalUV = [&](double u, double v, CadSurfaceHit& outHit) -> bool {
-            if (classifier.Perform(gp_Pnt2d(u, v)) != TopAbs_IN) {
-                return false;
-            }
-            gp_Pnt pt;
-            gp_Vec norm;
-            prop.Normal(u, v, pt, norm);
-            if (norm.Magnitude() <= 1e-9) {
-                return false;
-            }
-            norm.Normalize();
-            outHit.surfacePoint = pt;
-            outHit.surfaceNormal = gp_Dir(norm);
-            outHit.success = true;
-            return true;
-        };
+        int numRings = isCylinder ? 3 : 1;
+        double uMin, uMax, vMin, vMax;
+        BRepTools::UVBounds(face, uMin, uMax, vMin, vMax);
 
-        if (surfType == GeomAbs_Cylinder) {
-            const int targetCount = (numPoints > 0) ? numPoints : 5;
-            const double uSpan = umax - umin;
-            const bool isFullCircle = (uSpan >= 2.0 * 3.14159265358979323846 - 1e-2);
-            const double vMid = 0.5 * (vmin + vmax);
-            const double vSpan = vmax - vmin;
-
-            for (int i = 0; i < targetCount; ++i) {
-                double baseU = umin;
-                if (isFullCircle) {
-                    baseU = umin + (2.0 * 3.14159265358979323846 * i) / targetCount + 0.23;
-                    while (baseU > umax) baseU -= 2.0 * 3.14159265358979323846;
-                }
-                else {
-                    const double margin = 0.12 * uSpan;
-                    baseU = (umin + margin) + ((uSpan - 2.0 * margin) * i) / std::max(1, targetCount - 1);
-                }
-
-                // Try vMid first, then slightly above/below in case of a cross-hole on the cylinder wall
-                const double vOffsets[3] = { 0.0, -0.20 * vSpan, 0.20 * vSpan };
-                const double uOffsets[3] = { 0.0, 0.08 * uSpan, -0.08 * uSpan };
-                bool found = false;
-                for (double dv : vOffsets) {
-                    for (double du : uOffsets) {
-                        double uTry = std::clamp(baseU + du, umin + 1e-4, umax - 1e-4);
-                        double vTry = std::clamp(vMid + dv, vmin + 1e-4, vmax - 1e-4);
-                        CadSurfaceHit candidate;
-                        if (evalUV(uTry, vTry, candidate)) {
-                            hits.push_back(candidate);
-                            found = true;
-                            break;
-                        }
+        for (int r = 0; r < numRings; ++r) {
+            double v = (numRings > 1)
+                ? (vMin + (0.15 + 0.70 * (static_cast<double>(r) / (numRings - 1))) * (vMax - vMin))
+                : (0.5 * (vMin + vMax));
+            for (int i = 0; i < numPointsPerRing; ++i) {
+                double u = uMin + (static_cast<double>(i) / numPointsPerRing) * (uMax - uMin);
+                GeomLProp_SLProps props(surf, u, v, 1, 1e-6);
+                if (props.IsNormalDefined()) {
+                    gp_Pnt pt = props.Value();
+                    gp_Dir norm = props.Normal();
+                    if (face.Orientation() == TopAbs_REVERSED) {
+                        norm.Reverse();
                     }
-                    if (found) break;
-                }
-            }
-            return hits;
-        }
-
-        // For Planes, Spheres, and general B-Rep surfaces:
-        // Build an interior candidate grid filtered by BRepTopAdaptor_FClass2d (avoids holes/cutouts)
-        const int targetCount = (numPoints > 0) ? numPoints : ((surfType == GeomAbs_Sphere) ? 5 : 4);
-        std::vector<CadSurfaceHit> candidates;
-        const int gridN = 8;
-        const double uMargin = 0.12 * (umax - umin);
-        const double vMargin = 0.12 * (vmax - vmin);
-
-        for (int iu = 0; iu < gridN; ++iu) {
-            const double u = (umin + uMargin) + ((umax - umin - 2.0 * uMargin) * iu) / (gridN - 1);
-            for (int iv = 0; iv < gridN; ++iv) {
-                const double v = (vmin + vMargin) + ((vmax - vmin - 2.0 * vMargin) * iv) / (gridN - 1);
-                CadSurfaceHit cand;
-                if (evalUV(u, v, cand)) {
-                    candidates.push_back(cand);
+                    CadSurfaceHit hit;
+                    hit.success = true;
+                    hit.surfacePoint = pt;
+                    hit.surfaceNormal = norm;
+                    hits.push_back(hit);
                 }
             }
         }
-
-        if (candidates.empty()) {
-            // Fallback to face center if heavily trimmed
-            CadSurfaceHit midHit;
-            if (evalUV(0.5 * (umin + umax), 0.5 * (vmin + vmax), midHit)) {
-                hits.push_back(midHit);
-            }
-            return hits;
-        }
-
-        // Farthest-point sampling in 3D space to guarantee well-spread probe hits
-        std::vector<bool> used(candidates.size(), false);
-        hits.push_back(candidates.front());
-        used[0] = true;
-
-        while (static_cast<int>(hits.size()) < targetCount && hits.size() < candidates.size()) {
-            int bestIdx = -1;
-            double bestMinDist = -1.0;
-
-            for (size_t i = 0; i < candidates.size(); ++i) {
-                if (used[i]) continue;
-                double minDistToChosen = 1e18;
-                for (const auto& chosen : hits) {
-                    const double d = candidates[i].surfacePoint.Distance(chosen.surfacePoint);
-                    if (d < minDistToChosen) {
-                        minDistToChosen = d;
-                    }
-                }
-                if (minDistToChosen > bestMinDist) {
-                    bestMinDist = minDistToChosen;
-                    bestIdx = static_cast<int>(i);
-                }
-            }
-
-            if (bestIdx >= 0) {
-                used[bestIdx] = true;
-                hits.push_back(candidates[bestIdx]);
-            }
-            else {
-                break;
-            }
-        }
-
         return hits;
     }
 
@@ -1150,7 +1054,6 @@ namespace OpenCMM {
         m_pressMousePos = event->pos();
 
         if (event->button() == Qt::LeftButton && !m_view.IsNull()) {
-            // Hold Ctrl + Left-Click to probe CAD surfaces without rotating the camera
             if (!(event->modifiers() & Qt::ControlModifier)) {
                 m_isRotating = true;
                 m_view->StartRotation(event->pos().x(), event->pos().y());
@@ -1168,6 +1071,7 @@ namespace OpenCMM {
                 m_context->MoveTo(event->pos().x(), event->pos().y(), m_view, Standard_False);
                 m_context->SelectDetected();
                 m_view->Redraw();
+                if (m_hudContainer) m_hudContainer->update();
 
                 CadFaceInfo faceInfo = inspectSelectedCadFace();
                 if (faceInfo.success) {
@@ -1176,7 +1080,6 @@ namespace OpenCMM {
                         m_faceSelectedCallback(faceInfo);
                     }
 
-                    // Ctrl + Left-Click: Raycast and record a virtual probe touch on the clicked CAD face
                     if ((event->modifiers() & Qt::ControlModifier) && m_surfaceHitCallback) {
                         CadSurfaceHit hit = pickSurfacePointOnSelectedFace(event->pos().x(), event->pos().y());
                         if (hit.success) {
@@ -1204,10 +1107,12 @@ namespace OpenCMM {
         if (m_isRotating) {
             m_view->Rotation(pos.x(), pos.y());
             m_view->Redraw();
+            if (m_hudContainer) m_hudContainer->update();
         }
         else if (m_isPanning) {
             m_view->Pan(dx, -dy);
             m_view->Redraw();
+            if (m_hudContainer) m_hudContainer->update();
         }
         else {
             m_context->MoveTo(pos.x(), pos.y(), m_view, Standard_True);
@@ -1220,8 +1125,13 @@ namespace OpenCMM {
             const double zoomFactor = (steps > 0.0) ? (1.0 + steps * 0.15) : (1.0 / (1.0 - steps * 0.15));
             m_view->SetZoom(zoomFactor, Standard_True);
             m_view->Redraw();
+            if (m_hudContainer) {
+                m_hudContainer->raise();
+                m_hudContainer->update();
+            }
         }
     }
+
     void OcctViewport::displayFittedFeatureShape(int featureId, const TopoDS_Shape& shape, const Quantity_Color& color) {
         if (m_context.IsNull() || shape.IsNull()) return;
 
@@ -1236,7 +1146,7 @@ namespace OpenCMM {
         drawer->SetFaceBoundaryAspect(new Prs3d_LineAspect(color, Aspect_TOL_SOLID, 2.0));
         drawer->SetWireAspect(new Prs3d_LineAspect(color, Aspect_TOL_SOLID, 2.0));
 
-        const int dispMode = m_fittedFeaturesWireframe ? 0 : 1; // 0 = Wireframe, 1 = Shaded
+        const int dispMode = m_fittedFeaturesWireframe ? 0 : 1;
         ais->SetTransparency(m_fittedFeaturesWireframe ? 0.0 : 0.35);
 
         m_context->Display(ais, dispMode, -1, Standard_False);
@@ -1297,7 +1207,7 @@ namespace OpenCMM {
     void OcctViewport::highlightFittedFeature(int featureId) {
         if (m_context.IsNull()) return;
 
-        const Quantity_Color highlightCol(1.0, 0.92, 0.23, Quantity_TOC_RGB); // Bright Inspection Yellow
+        const Quantity_Color highlightCol(1.0, 0.92, 0.23, Quantity_TOC_RGB);
 
         for (auto& entry : m_fittedFeatureShapes) {
             if (entry.shape.IsNull()) continue;
@@ -1345,15 +1255,16 @@ namespace OpenCMM {
         m_fittedFeatureShapes.clear();
         m_context->UpdateCurrentViewer();
     }
+
     void OcctViewport::setBackgroundColor(bool dark) {
         m_isDarkMode = dark;
         if (m_view.IsNull()) return;
 
         if (dark) {
-            m_view->SetBackgroundColor(Quantity_Color(0.1176, 0.1333, 0.1529, Quantity_TOC_RGB)); // #1e2227
+            m_view->SetBackgroundColor(Quantity_Color(0.1176, 0.1333, 0.1529, Quantity_TOC_RGB));
         }
         else {
-            m_view->SetBackgroundColor(Quantity_Color(0.9451, 0.9608, 0.9765, Quantity_TOC_RGB)); // #f1f5f9
+            m_view->SetBackgroundColor(Quantity_Color(0.9451, 0.9608, 0.9765, Quantity_TOC_RGB));
         }
         m_view->Redraw();
     }
@@ -1361,11 +1272,10 @@ namespace OpenCMM {
     void OcctViewport::setTheme(bool dark) {
         m_isDarkMode = dark;
 
-        // 1. Always style the HUD container immediately, even if m_view is not created yet
         if (m_hudContainer) {
             if (dark) {
                 m_hudContainer->setStyleSheet(
-                    "QWidget { background-color: rgba(33, 37, 43, 220); border: 1px solid #3a3f4b; border-radius: 6px; }"
+                    "QWidget { background-color: #21252b; border: 1px solid #3a3f4b; border-radius: 6px; }"
                     "QPushButton { background-color: #282c34; color: #abb2bf; border: 1px solid #4b5263; border-radius: 3px; padding: 4px 8px; font-weight: bold; font-size: 11px; min-width: 115px; text-align: left; }"
                     "QPushButton:hover { background-color: #3a3f4b; color: white; }"
                     "QPushButton:checked { background-color: #2d5a88; color: white; border: 1px solid #61afef; }"
@@ -1376,7 +1286,7 @@ namespace OpenCMM {
             }
             else {
                 m_hudContainer->setStyleSheet(
-                    "QWidget { background-color: rgba(255, 255, 255, 230); border: 1px solid #cbd5e1; border-radius: 6px; }"
+                    "QWidget { background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 6px; }"
                     "QPushButton { background-color: #f1f5f9; color: #334155; border: 1px solid #94a3b8; border-radius: 3px; padding: 4px 8px; font-weight: bold; font-size: 11px; min-width: 115px; text-align: left; }"
                     "QPushButton:hover { background-color: #e2e8f0; color: #0f172a; }"
                     "QPushButton:checked { background-color: #0284c7; color: white; border: 1px solid #0284c7; }"
@@ -1385,21 +1295,20 @@ namespace OpenCMM {
                     "QLabel { color: #475569; font-size: 10px; font-weight: bold; background: transparent; border: none; }"
                 );
             }
+            m_hudContainer->update();
         }
 
-        // 2. Update the 3D OpenCASCADE view if it has been initialized
         if (!m_view.IsNull()) {
             if (dark) {
-                m_view->SetBackgroundColor(Quantity_Color(0.1176, 0.1333, 0.1529, Quantity_TOC_RGB)); // #1e2227
+                m_view->SetBackgroundColor(Quantity_Color(0.1176, 0.1333, 0.1529, Quantity_TOC_RGB));
                 m_view->TriedronDisplay(Aspect_TOTP_LEFT_LOWER, Quantity_NOC_WHITE, 0.1, V3d_ZBUFFER);
             }
             else {
-                m_view->SetBackgroundColor(Quantity_Color(0.9451, 0.9608, 0.9765, Quantity_TOC_RGB)); // #f1f5f9
+                m_view->SetBackgroundColor(Quantity_Color(0.9451, 0.9608, 0.9765, Quantity_TOC_RGB));
                 m_view->TriedronDisplay(Aspect_TOTP_LEFT_LOWER, Quantity_NOC_BLACK, 0.1, V3d_ZBUFFER);
             }
             m_view->Redraw();
         }
     }
-   
 
 } // namespace OpenCMM

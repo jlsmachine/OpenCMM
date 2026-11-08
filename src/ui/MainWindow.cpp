@@ -16,6 +16,7 @@
 #include "core/AppSettings.h"
 #include "ui/CalibrationWidget.h"
 #include "ui/RibbonCustomizeDialog.h"
+#include "dmis/QifExporter.h"
 
 #include <QToolBar>
 #include <QTabWidget>
@@ -50,18 +51,9 @@
 #include <QSettings>
 #include <QPdfWriter>
 #include <QPageLayout>
+#include <QPageSize>
 #include <QPainter>
-#include "dmis/QifExporter.h"
-
-namespace {
-    constexpr int ROLE_ACTUAL_MM = Qt::UserRole + 1;
-    constexpr int ROLE_HAS_NOMINAL = Qt::UserRole + 2;
-    constexpr int ROLE_NOMINAL_MM = Qt::UserRole + 3;
-    constexpr int ROLE_PLUS_TOL_MM = Qt::UserRole + 4;
-    constexpr int ROLE_MINUS_TOL_MM = Qt::UserRole + 5;
-    constexpr int ROLE_FEATURE_ID = Qt::UserRole + 6;
-}
-
+#include <QLineEdit>
 
 namespace OpenCMM {
 
@@ -71,6 +63,7 @@ namespace OpenCMM {
         constexpr int ROLE_NOMINAL_MM = Qt::UserRole + 3;
         constexpr int ROLE_PLUS_TOL_MM = Qt::UserRole + 4;
         constexpr int ROLE_MINUS_TOL_MM = Qt::UserRole + 5;
+        constexpr int ROLE_FEATURE_ID = Qt::UserRole + 6;
     }
 
     MainWindow::MainWindow(QWidget* parent)
@@ -93,7 +86,7 @@ namespace OpenCMM {
             m_isDarkMode
         );
 
-        // --- 2. Now setup UI components with the correct theme active ---
+        // --- 2. Setup UI components with the active theme ---
         setupUi();
 
         if (!savedMachinePath.isEmpty() && m_viewport) {
@@ -147,9 +140,10 @@ namespace OpenCMM {
             }
         }
         else {
-            resize(1280, 800); // Default startup size if no saved state exists
+            resize(1280, 800);
         }
     }
+
     void MainWindow::closeEvent(QCloseEvent* event) {
         QSettings settings("JLS Machine", "OpenCMM");
         settings.setValue("geometry", saveGeometry());
@@ -159,7 +153,6 @@ namespace OpenCMM {
 
         QMainWindow::closeEvent(event);
     }
-
 
     MainWindow::~MainWindow() = default;
 
@@ -185,14 +178,11 @@ namespace OpenCMM {
             });
         setCentralWidget(m_viewport);
 
-        // Apply initial theme immediately to the viewport and HUD
         m_viewport->setTheme(m_isDarkMode);
         loadRibbonCustomization();
         statusBar()->setStyleSheet("background-color: #007acc; color: white; font-weight: bold;");
         statusBar()->showMessage("Ready - Click 'Settings...' to configure hardware/units, or probe features to begin inspection.");
     }
-
-
 
     QFrame* MainWindow::createRibbonGroup(const QString& title, const QList<QWidget*>& widgets) {
         auto* group = new QFrame(this);
@@ -228,7 +218,6 @@ namespace OpenCMM {
         btn->setMaximumHeight(60);
         btn->setCursor(Qt::PointingHandCursor);
 
-        // Dynamic styling based on theme
         if (m_isDarkMode) {
             btn->setStyleSheet(QString(
                 "QPushButton { background-color: %1; color: %3; border: 1px solid %2; "
@@ -238,7 +227,6 @@ namespace OpenCMM {
             ).arg(accentBg, borderCol, textCol));
         }
         else {
-            // Clean light theme button styling
             QString lightBg = (accentBg == "#282c34" || accentBg == "#1e2227") ? "#ffffff" : accentBg;
             QString lightText = (textCol == "#abb2bf" || textCol == "#e0e0e0") ? "#334155" : textCol;
             QString lightBorder = (borderCol == "#3a3f4b" || borderCol == "#4b5263") ? "#cbd5e1" : borderCol;
@@ -258,7 +246,6 @@ namespace OpenCMM {
         ribbonTabs->setObjectName("RibbonBar");
         ribbonTabs->setFixedHeight(116);
 
-        // Enable Right-Click Context Menu on the Ribbon Bar & Tab Bar
         ribbonTabs->setContextMenuPolicy(Qt::CustomContextMenu);
         connect(ribbonTabs, &QTabWidget::customContextMenuRequested,
             this, &MainWindow::onRibbonContextMenuRequested);
@@ -292,7 +279,7 @@ namespace OpenCMM {
             v->addWidget(control);
             v->addStretch(1);
             return box;
-        };
+            };
 
         // --- System & Hardware ---
         if (cmdId == "sys_settings") {
@@ -315,7 +302,7 @@ namespace OpenCMM {
                     "Eigen 3 (MPL-2.0), and Raspberry Pi Pico 2 MicroPython.</p>"
                     "<p>This program comes with ABSOLUTELY NO WARRANTY.</p>"
                 );
-            });
+                });
             return btn;
         }
         if (cmdId == "sys_customize") {
@@ -353,7 +340,8 @@ namespace OpenCMM {
             combo->addItem("Left Y-Edge (X=0)", 5);
             if (!m_simTargetCombo) {
                 m_simTargetCombo = combo;
-            } else {
+            }
+            else {
                 combo->setCurrentIndex(m_simTargetCombo->currentIndex());
                 connect(combo, QOverload<int>::of(&QComboBox::currentIndexChanged), m_simTargetCombo, &QComboBox::setCurrentIndex);
                 connect(m_simTargetCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), combo, &QComboBox::setCurrentIndex);
@@ -403,7 +391,8 @@ namespace OpenCMM {
             combo->addItem("Uncomp (0)", static_cast<int>(ProbeCompMode::Uncompensated));
             if (!m_compModeCombo) {
                 m_compModeCombo = combo;
-            } else {
+            }
+            else {
                 combo->setCurrentIndex(m_compModeCombo->currentIndex());
                 connect(combo, QOverload<int>::of(&QComboBox::currentIndexChanged), m_compModeCombo, &QComboBox::setCurrentIndex);
                 connect(m_compModeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), combo, &QComboBox::setCurrentIndex);
@@ -451,12 +440,13 @@ namespace OpenCMM {
                 if (checked) {
                     btn->setText("🌐\nPCS (Aligned)");
                     btn->setStyleSheet("QPushButton { background-color: #1e4620; color: #98c379; border: 1px solid #98c379; border-radius: 4px; padding: 4px 8px; font-size: 11px; font-weight: bold; }");
-                } else {
+                }
+                else {
                     btn->setText("🌐\nCoord: MCS");
                     btn->setStyleSheet("QPushButton { background-color: #3a3f4b; color: #e5c07b; border: 1px solid #e5c07b; border-radius: 4px; padding: 4px 8px; font-size: 11px; font-weight: bold; }");
                 }
                 updateDroDisplay();
-            });
+                });
             if (!m_alignStatusBtn) m_alignStatusBtn = btn;
             return btn;
         }
@@ -470,7 +460,8 @@ namespace OpenCMM {
             combo->addItem("Last Fitted Plane", static_cast<int>(StandardWorkplane::CustomPlane));
             if (!m_workplaneCombo) {
                 m_workplaneCombo = combo;
-            } else {
+            }
+            else {
                 combo->setCurrentIndex(m_workplaneCombo->currentIndex());
                 connect(combo, QOverload<int>::of(&QComboBox::currentIndexChanged), m_workplaneCombo, &QComboBox::setCurrentIndex);
                 connect(m_workplaneCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), combo, &QComboBox::setCurrentIndex);
@@ -485,7 +476,7 @@ namespace OpenCMM {
                 if (m_viewport) {
                     m_viewport->setFittedFeaturesWireframe(index == 1);
                 }
-            });
+                });
             if (!m_featureRenderCombo) m_featureRenderCombo = combo;
             return makeStackedControl("Feature Style:", combo);
         }
@@ -497,6 +488,12 @@ namespace OpenCMM {
         if (cmdId == "meas_fit_sphere") {
             auto* btn = createRibbonButton("🌐", "Fit Sphere");
             connect(btn, &QPushButton::clicked, this, &MainWindow::onFitSphereClicked);
+            return btn;
+        }
+        if (cmdId == "meas_fit_cylinder") {
+            auto* btn = createRibbonButton("⌭", "Fit Cylinder", "#2b6cb0", "#61afef", "#ffffff");
+            btn->setToolTip("Solve a 3D Cylinder (axis, diameter, and cylindricity) from 5+ multi-depth points");
+            connect(btn, &QPushButton::clicked, this, &MainWindow::onFitCylinderClicked);
             return btn;
         }
         if (cmdId == "meas_fit_circle") {
@@ -613,19 +610,15 @@ namespace OpenCMM {
         m_featureTree->setColumnCount(5);
         m_featureTree->setHeaderLabels({ "Feature / Parameter", "Nominal", "Actual", "±Tol", "Dev / Status" });
 
-        // --- Enable Context Menu ---
         m_featureTree->setContextMenuPolicy(Qt::CustomContextMenu);
         connect(m_featureTree, &QTreeWidget::customContextMenuRequested,
             this, &MainWindow::onFeatureTreeContextMenuRequested);
-        // ---------------------------
 
-        // --- Keyboard Shortcut Support (Delete & Backspace) ---
         auto* deleteKeyShortcut = new QShortcut(QKeySequence::Delete, m_featureTree);
         connect(deleteKeyShortcut, &QShortcut::activated, this, &MainWindow::onDeleteSelectedFeature);
 
         auto* backspaceKeyShortcut = new QShortcut(QKeySequence(Qt::Key_Backspace), m_featureTree);
         connect(backspaceKeyShortcut, &QShortcut::activated, this, &MainWindow::onDeleteSelectedFeature);
-        // ------------------------------------------------------
 
         m_activePointsGroup = new QTreeWidgetItem(m_featureTree, { "Active Probe Buffer", "", "0 pts", "", "READY" });
         m_activePointsGroup->setExpanded(true);
@@ -649,7 +642,6 @@ namespace OpenCMM {
                 }
             });
     }
-
 
     void MainWindow::onOpenSettingsClicked() {
         SettingsDialog dlg(this);
@@ -716,23 +708,19 @@ namespace OpenCMM {
             m_audioEnabled = true;
             m_isDarkMode = true;
 
-            // Reset probe calibration to nominal defaults
             m_isProbeCalibrated = false;
             m_certifiedBallDiameterMm = 25.4000;
             m_effectiveProbeRadius = 1.5000;
             m_lastProbeLobingMm = 0.0;
 
-            // Reset units to Millimeters
             if (m_unitSystem != UnitSystem::Millimeters) {
                 onUnitToggled();
             }
 
-            // Reset controller scale & sign
             if (m_controller) {
                 m_controller->setAxisCalibration(Eigen::Vector3d(0.001, 0.001, 0.001), Eigen::Vector3i(1, 1, 1));
             }
 
-            // Re-apply Dark Metrology Theme and refresh displays
             onThemeToggled(true);
             updateDroDisplay();
             updateProbeStatusDisplay();
@@ -740,7 +728,6 @@ namespace OpenCMM {
             setWindowTitle("OpenCMM - Precision Coordinate Metrology Studio");
             statusBar()->showMessage("Restored all OpenCMM settings to factory defaults.");
             });
-
 
         connect(&dlg, &SettingsDialog::serialPortConnectRequested, this, [this](const QString& portName, int baudRate) {
             if (!portName.isEmpty() && m_controller) {
@@ -757,7 +744,6 @@ namespace OpenCMM {
 
         if (dlg.exec() != QDialog::Accepted) return;
 
-        // Apply theme selection from dialog
         onThemeToggled(dlg.isDarkModeEnabled());
 
         m_defaultTolMm = dlg.getDefaultToleranceMm();
@@ -774,10 +760,6 @@ namespace OpenCMM {
             onUnitToggled();
         }
 
-        m_defaultTolMm = dlg.getDefaultToleranceMm();
-        m_audioEnabled = dlg.areAudioChimesEnabled();
-        m_machinePackagePath = dlg.getSelectedMachinePath();
-
         AppSettings::saveSettings(
             m_machinePackagePath,
             m_currentPortName,
@@ -792,9 +774,6 @@ namespace OpenCMM {
 
         statusBar()->showMessage("Settings updated and saved successfully.");
     }
-
-
-
 
     void MainWindow::playHitChime() const {
         if (!m_audioEnabled) return;
@@ -924,7 +903,14 @@ namespace OpenCMM {
         for (int i = 0; i < m_featureTree->topLevelItemCount(); ++i) {
             QTreeWidgetItem* item = m_featureTree->topLevelItem(i);
             if (item != m_activePointsGroup && item->data(0, ROLE_ACTUAL_MM).isValid()) {
-                applyEvaluationToTreeItem(item, item->data(0, ROLE_ACTUAL_MM).toDouble(), item->data(0, ROLE_HAS_NOMINAL).toBool(), item->data(0, ROLE_NOMINAL_MM).toDouble(), item->data(0, ROLE_PLUS_TOL_MM).toDouble(), item->data(0, ROLE_MINUS_TOL_MM).toDouble());
+                applyEvaluationToTreeItem(
+                    item,
+                    item->data(0, ROLE_ACTUAL_MM).toDouble(),
+                    item->data(0, ROLE_HAS_NOMINAL).toBool(),
+                    item->data(0, ROLE_NOMINAL_MM).toDouble(),
+                    item->data(0, ROLE_PLUS_TOL_MM).toDouble(),
+                    item->data(0, ROLE_MINUS_TOL_MM).toDouble()
+                );
             }
         }
     }
@@ -1027,28 +1013,27 @@ namespace OpenCMM {
                 m_compModeCombo->setCurrentIndex(faceInfo.isInternal ? 1 : 0);
             }
             else {
-                m_compModeCombo->setCurrentIndex(0); // External (-R) for planar surfaces
+                m_compModeCombo->setCurrentIndex(0);
             }
         }
 
-        // Automatically align active 2D Workplane to the selected CAD Cylinder axis or Plane normal
         if (m_workplaneCombo && (m_armedCadDescription.contains("Cylinder") || m_armedCadDescription.contains("Plane"))) {
             const double ax = std::abs(m_armedCadNormalMm.x());
             const double ay = std::abs(m_armedCadNormalMm.y());
             const double az = std::abs(m_armedCadNormalMm.z());
             if (az >= 0.999) {
-                m_workplaneCombo->setCurrentIndex(0); // XY (+Z)
+                m_workplaneCombo->setCurrentIndex(0);
             }
             else if (ax >= 0.999) {
-                m_workplaneCombo->setCurrentIndex(1); // YZ (+X)
+                m_workplaneCombo->setCurrentIndex(1);
             }
             else if (ay >= 0.999) {
-                m_workplaneCombo->setCurrentIndex(2); // ZX (+Y)
+                m_workplaneCombo->setCurrentIndex(2);
             }
             else {
                 m_lastFittedPlaneFrame = WorkplaneFrame::fromPlane(m_armedCadLocationMm, m_armedCadNormalMm);
                 m_hasCustomPlane = true;
-                m_workplaneCombo->setCurrentIndex(3); // Custom Plane aligned to tilted feature
+                m_workplaneCombo->setCurrentIndex(3);
             }
         }
 
@@ -1078,7 +1063,6 @@ namespace OpenCMM {
         const Eigen::Vector3d surfPt(hit.surfacePoint.X(), hit.surfacePoint.Y(), hit.surfacePoint.Z());
         const Eigen::Vector3d surfNorm(hit.surfaceNormal.X(), hit.surfaceNormal.Y(), hit.surfaceNormal.Z());
 
-        // Offset contact point along outward material-free normal by effective ruby radius
         const double rProbe = (currentCompMode() == ProbeCompMode::Uncompensated) ? 0.0 : m_effectiveProbeRadius;
         const Eigen::Vector3d rubyCenter = surfPt + surfNorm * rProbe;
 
@@ -1088,7 +1072,6 @@ namespace OpenCMM {
         Position3D rubyPos{ rubyCenter.x(), rubyCenter.y(), rubyCenter.z() };
         onProbeHit(rubyPos);
 
-        // Annotate the latest tree item with the DMIS surface normal vector (I, J, K)
         if (m_activePointsGroup && m_activePointsGroup->childCount() > 0) {
             QTreeWidgetItem* lastItem = m_activePointsGroup->child(m_activePointsGroup->childCount() - 1);
             if (lastItem) {
@@ -1141,6 +1124,9 @@ namespace OpenCMM {
         if (surfType.contains("Plane") && m_recordedHits.size() >= 3) {
             onFitPlaneClicked();
         }
+        else if (surfType.contains("Cylinder") && m_recordedHits.size() >= 5) {
+            onFitCylinderClicked();
+        }
         else if (surfType.contains("Cylinder") && m_recordedHits.size() >= 3) {
             onFitCircleClicked();
         }
@@ -1157,7 +1143,6 @@ namespace OpenCMM {
     void MainWindow::onAssignCadDatumClicked(const QString& datumLetter) {
         const size_t prevCount = m_solvedFeatures.size();
 
-        // If a 3D CAD face is currently selected, auto-probe and solve it right on the model
         if (m_viewport && m_viewport->hasCadModel() && m_viewport->hasSelectedCadFace()) {
             onAutoProbeCadFaceClicked();
             if (m_solvedFeatures.size() > prevCount) {
@@ -1166,7 +1151,6 @@ namespace OpenCMM {
             }
         }
 
-        // Otherwise, if a solved feature is highlighted in the Inspection Feature Tree, assign it
         QTreeWidgetItem* cur = m_featureTree->currentItem();
         while (cur && cur->parent() != nullptr) {
             cur = cur->parent();
@@ -1176,7 +1160,6 @@ namespace OpenCMM {
             return;
         }
 
-        // Or fallback to the most recently solved feature if one exists
         if (!m_solvedFeatures.empty()) {
             assignFeatureAsDatum(m_solvedFeatures.back().id, datumLetter, true);
             return;
@@ -1186,9 +1169,9 @@ namespace OpenCMM {
             this,
             "Specify Datum " + datumLetter,
             QString("To specify Datum %1:\n\n"
-                    "1. Left-click any face (Plane, Bore, Boss, or Edge) directly on the 3D CAD model and click 'CAD Datum %1', OR\n"
-                    "2. Right-click any solved feature in the Inspection Feature Tree and choose 'Set as Datum %1'.")
-                .arg(datumLetter)
+                "1. Left-click any face (Plane, Bore, Boss, or Edge) directly on the 3D CAD model and click 'Set Datum %1', OR\n"
+                "2. Right-click any solved feature in the Inspection Feature Tree and choose 'Set as Datum %1'.")
+            .arg(datumLetter)
         );
     }
 
@@ -1196,7 +1179,6 @@ namespace OpenCMM {
         const QString letter = datumLetter.trimmed().toUpper();
         if (letter != "A" && letter != "B" && letter != "C") return;
 
-        // Clear any previous feature holding the same datum letter
         for (auto it = m_featureDatumLetters.begin(); it != m_featureDatumLetters.end(); ) {
             if (it->second == letter && it->first != featureId) {
                 int oldId = it->first;
@@ -1220,7 +1202,6 @@ namespace OpenCMM {
         else if (letter == "B") m_datumBFeatureId = featureId;
         else if (letter == "C") m_datumCFeatureId = featureId;
 
-        // Tag the feature in m_solvedFeatures and QTreeWidget with [DAT A/B/C]
         const QString badge = QString(" [DAT %1]").arg(letter);
         for (auto& mf : m_solvedFeatures) {
             if (mf.id == featureId) {
@@ -1316,12 +1297,11 @@ namespace OpenCMM {
                 this,
                 "DMIS 5.3 Load Error",
                 QString("Could not parse executable features from:\n%1\n\nDetails: %2")
-                    .arg(filePath, QString::fromStdString(prog.errorMessage))
+                .arg(filePath, QString::fromStdString(prog.errorMessage))
             );
             return;
         }
 
-        // Clear previous inspection tree items and visuals
         finishFeatureBuffer();
         m_solvedFeatures.clear();
         m_featureDmisHits.clear();
@@ -1362,7 +1342,6 @@ namespace OpenCMM {
         const int decimals = (m_unitSystem == UnitSystem::Millimeters) ? 4 : 5;
         const QString unitStr = (m_unitSystem == UnitSystem::Millimeters) ? " mm" : " in";
 
-        // Populate Inspection Feature Tree with PLANNED DMIS features
         for (size_t i = 0; i < m_dmisProgram.features.size(); ++i) {
             const auto& df = m_dmisProgram.features[i];
             const QString datSuffix = df.datumLetter.empty()
@@ -1379,7 +1358,7 @@ namespace OpenCMM {
                 "--",
                 QString("±%1").arg(toDisplayUnit(m_defaultTolMm, m_unitSystem), 0, 'f', decimals),
                 QString("PLANNED (0/%1 pts)").arg(df.points.size())
-            });
+                });
             item->setForeground(4, QBrush(QColor("#e5c07b")));
             m_plannedDmisTreeItems.push_back(item);
         }
@@ -1417,7 +1396,6 @@ namespace OpenCMM {
             m_activeDmisTreeItem->setForeground(4, QBrush(QColor("#61afef")));
         }
 
-        // Arm nominal diameter and compensation mode for the active DMIS feature
         m_hasArmedCadNominal = true;
         m_armedCadDiameterMm = df.nominalDiameter;
         m_armedCadLocationMm = Eigen::Vector3d(df.nomX, df.nomY, df.nomZ);
@@ -1434,7 +1412,6 @@ namespace OpenCMM {
             }
         }
 
-        // Align 2D Workplane to the DMIS feature's normal/axis
         if (m_workplaneCombo && (df.featureType == "CIRCLE" || df.featureType == "CYLNDR" || df.featureType == "CYL" || df.featureType == "PLANE" || df.featureType == "LINE")) {
             const double ax = std::abs(m_armedCadNormalMm.x());
             const double ay = std::abs(m_armedCadNormalMm.y());
@@ -1555,7 +1532,6 @@ namespace OpenCMM {
         const Eigen::Vector3d standoffPos = surfPt + surfNorm * (rProbe + 18.0);
 
         if (m_playbackPhase == 0) {
-            // Phase 0: Move to standoff approach point (via clearance Z if first point of feature)
             const int totalSteps = (ptIdx == 0) ? 10 : 6;
             if (m_playbackSubStep == 0) {
                 m_playbackStartPos = Eigen::Vector3d(m_lastPosition.x, m_lastPosition.y, m_lastPosition.z);
@@ -1564,7 +1540,6 @@ namespace OpenCMM {
             const double t = std::clamp(static_cast<double>(m_playbackSubStep) / totalSteps, 0.0, 1.0);
             Eigen::Vector3d interp = m_playbackStartPos + t * (standoffPos - m_playbackStartPos);
             if (ptIdx == 0) {
-                // Arc through clearance plane Z on feature transitions
                 const double zClear = std::max(m_dmisProgram.clearanceZMm, std::max(m_playbackStartPos.z(), standoffPos.z()) + 15.0);
                 interp.z() += 4.0 * t * (1.0 - t) * (zClear - 0.5 * (m_playbackStartPos.z() + standoffPos.z()));
             }
@@ -1577,7 +1552,6 @@ namespace OpenCMM {
             }
         }
         else if (m_playbackPhase == 1) {
-            // Phase 1: Probing approach along normal vector into surface contact
             const int totalSteps = 5;
             m_playbackSubStep++;
             const double t = std::clamp(static_cast<double>(m_playbackSubStep) / totalSteps, 0.0, 1.0);
@@ -1590,7 +1564,6 @@ namespace OpenCMM {
                 m_playbackStartPos = touchPos;
                 m_playbackEndPos = standoffPos;
 
-                // Trigger the virtual probe hit at the exact surface point & normal
                 CadSurfaceHit simHit;
                 simHit.success = true;
                 simHit.surfacePoint = gp_Pnt(surfPt.x(), surfPt.y(), surfPt.z());
@@ -1599,7 +1572,6 @@ namespace OpenCMM {
             }
         }
         else if (m_playbackPhase == 2) {
-            // Phase 2: Retract along normal back to standoff position
             const int totalSteps = 4;
             m_playbackSubStep++;
             const double t = std::clamp(static_cast<double>(m_playbackSubStep) / totalSteps, 0.0, 1.0);
@@ -1618,7 +1590,6 @@ namespace OpenCMM {
         updateDroDisplay();
         if (m_viewport) { m_viewport->updateProbePosition(pos.x, pos.y, pos.z); }
 
-        // Live shop-floor proximity guidance when a DMIS 5.3 program is active (and not in auto-playback)
         if (m_isDmisProgramActive && (!m_dmisPlaybackTimer || !m_dmisPlaybackTimer->isActive()) &&
             m_activeDmisFeatureIdx >= 0 && m_activeDmisFeatureIdx < static_cast<int>(m_dmisProgram.features.size())) {
             const auto& df = m_dmisProgram.features[m_activeDmisFeatureIdx];
@@ -1671,7 +1642,6 @@ namespace OpenCMM {
             Eigen::Vector3d hitNorm = -m_lastApproachDir.normalized();
             Eigen::Vector3d surfContact = hitVec;
 
-            // If guided DMIS mode is active and this was a physical CMM hit, use the planned target's nominal normal
             if (m_isDmisProgramActive && m_activeDmisFeatureIdx >= 0 &&
                 m_activeDmisFeatureIdx < static_cast<int>(m_dmisProgram.features.size())) {
                 const auto& df = m_dmisProgram.features[m_activeDmisFeatureIdx];
@@ -1689,7 +1659,6 @@ namespace OpenCMM {
         m_hitCountLabel->setText(QString("Active Feature Hits: %1").arg(count));
         m_activePointsGroup->setText(2, QString("%1 pts").arg(count));
 
-        // --- Add individual hit as a child item in the feature tree ---
         const int decimals = (m_unitSystem == UnitSystem::Millimeters) ? 4 : 5;
         const QString unitStr = (m_unitSystem == UnitSystem::Millimeters) ? " mm" : " in";
 
@@ -1706,14 +1675,12 @@ namespace OpenCMM {
             });
         hitItem->setForeground(4, QBrush(QColor("#61afef")));
         m_activePointsGroup->setExpanded(true);
-        // -------------------------------------------------------------
 
         if (m_viewport) {
             m_viewport->updateProbePosition(hitPos.x, hitPos.y, hitPos.z);
             m_viewport->addHitPointMarker(hitPos.x, hitPos.y, hitPos.z);
         }
 
-        // --- Guided DMIS 5.3 Execution Progression ---
         if (m_isDmisProgramActive && !m_suppressDmisStepAdvance &&
             m_activeDmisFeatureIdx >= 0 && m_activeDmisFeatureIdx < static_cast<int>(m_dmisProgram.features.size())) {
             const auto& df = m_dmisProgram.features[m_activeDmisFeatureIdx];
@@ -1730,6 +1697,9 @@ namespace OpenCMM {
                 if (fType == "PLANE" && count >= 3) {
                     onFitPlaneClicked();
                 }
+                else if ((fType == "CYLNDR" || fType == "CYL") && count >= 5) {
+                    onFitCylinderClicked();
+                }
                 else if ((fType == "CIRCLE" || fType == "CYLNDR" || fType == "CYL") && count >= 3) {
                     onFitCircleClicked();
                 }
@@ -1740,7 +1710,6 @@ namespace OpenCMM {
                     onFitLineClicked();
                 }
 
-                // If the just-solved DMIS feature is a declared Datum (DATDEF A, B, or C), assign it and auto-align when A-B-C are ready
                 if (!df.datumLetter.empty() && !m_solvedFeatures.empty()) {
                     assignFeatureAsDatum(
                         m_solvedFeatures.back().id,
@@ -1764,6 +1733,7 @@ namespace OpenCMM {
         m_activePointsGroup->setText(2, "0 pts");
         if (m_viewport) { m_viewport->commitActiveHitMarkers(); }
     }
+
     bool MainWindow::writeDmisProgramToFile(const QString& filePath, const QString& partName) {
         QFile dmisFile(filePath);
         if (!dmisFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
@@ -1781,13 +1751,13 @@ namespace OpenCMM {
         }
 
         dmis << "DMISMN/'OpenCMM Offline Inspection Program', 05.3\n"
-             << "$$ Generated by OpenCMM Studio (JLS Machine LLC) on " << timestamp << "\n"
-             << "FILNAM/'" << partName << "', 05.3\n"
-             << "UNITS/MM, ANGDEC\n"
-             << "WKPLAN/XYPLAN\n"
-             << "MODE/PROG, MAN\n"
-             << "SNSTYP/INDEX, 1, " << QString::number(m_effectiveProbeRadius * 2.0, 'f', 4) << "\n"
-             << "CLEARP/ZPLUS, " << QString::number(zClearMm, 'f', 4) << "\n\n";
+            << "$$ Generated by OpenCMM Studio (JLS Machine LLC) on " << timestamp << "\n"
+            << "FILNAM/'" << partName << "', 05.3\n"
+            << "UNITS/MM, ANGDEC\n"
+            << "WKPLAN/XYPLAN\n"
+            << "MODE/PROG, MAN\n"
+            << "SNSTYP/INDEX, 1, " << QString::number(m_effectiveProbeRadius * 2.0, 'f', 4) << "\n"
+            << "CLEARP/ZPLUS, " << QString::number(zClearMm, 'f', 4) << "\n\n";
 
         for (const auto& mf : m_solvedFeatures) {
             const QString rawLabel = QString("FEAT_%1").arg(mf.id);
@@ -1796,62 +1766,62 @@ namespace OpenCMM {
                 : QString("10000000-0000-4000-8000-%1").arg(mf.id, 12, 10, QChar('0'));
 
             dmis << "$$ =========================================================\n"
-                 << "$$ Feature: " << QString::fromStdString(mf.name) << "\n"
-                 << "REFID/F(" << rawLabel << "), QIF, 'QPId', '" << qpidUuid << "'\n";
+                << "$$ Feature: " << QString::fromStdString(mf.name) << "\n"
+                << "REFID/F(" << rawLabel << "), QIF, 'QPId', '" << qpidUuid << "'\n";
 
             if (mf.kind == FeatureKind::Plane3D) {
                 dmis << "F(" << rawLabel << ") = FEAT/PLANE, CART, "
-                     << QString::number(mf.location.x(), 'f', 4) << ", "
-                     << QString::number(mf.location.y(), 'f', 4) << ", "
-                     << QString::number(mf.location.z(), 'f', 4) << ", "
-                     << QString::number(mf.primaryVector.x(), 'f', 5) << ", "
-                     << QString::number(mf.primaryVector.y(), 'f', 5) << ", "
-                     << QString::number(mf.primaryVector.z(), 'f', 5) << "\n";
+                    << QString::number(mf.location.x(), 'f', 4) << ", "
+                    << QString::number(mf.location.y(), 'f', 4) << ", "
+                    << QString::number(mf.location.z(), 'f', 4) << ", "
+                    << QString::number(mf.primaryVector.x(), 'f', 5) << ", "
+                    << QString::number(mf.primaryVector.y(), 'f', 5) << ", "
+                    << QString::number(mf.primaryVector.z(), 'f', 5) << "\n";
             }
             else if (mf.kind == FeatureKind::Circle2D) {
                 dmis << "F(" << rawLabel << ") = FEAT/CIRCLE, INNER, CART, "
-                     << QString::number(mf.location.x(), 'f', 4) << ", "
-                     << QString::number(mf.location.y(), 'f', 4) << ", "
-                     << QString::number(mf.location.z(), 'f', 4) << ", "
-                     << QString::number(mf.primaryVector.x(), 'f', 5) << ", "
-                     << QString::number(mf.primaryVector.y(), 'f', 5) << ", "
-                     << QString::number(mf.primaryVector.z(), 'f', 5) << ", "
-                     << QString::number(mf.diameter, 'f', 4) << "\n";
+                    << QString::number(mf.location.x(), 'f', 4) << ", "
+                    << QString::number(mf.location.y(), 'f', 4) << ", "
+                    << QString::number(mf.location.z(), 'f', 4) << ", "
+                    << QString::number(mf.primaryVector.x(), 'f', 5) << ", "
+                    << QString::number(mf.primaryVector.y(), 'f', 5) << ", "
+                    << QString::number(mf.primaryVector.z(), 'f', 5) << ", "
+                    << QString::number(mf.diameter, 'f', 4) << "\n";
             }
             else if (mf.kind == FeatureKind::Sphere3D) {
                 dmis << "F(" << rawLabel << ") = FEAT/SPHERE, OUTER, CART, "
-                     << QString::number(mf.location.x(), 'f', 4) << ", "
-                     << QString::number(mf.location.y(), 'f', 4) << ", "
-                     << QString::number(mf.location.z(), 'f', 4) << ", "
-                     << QString::number(mf.diameter, 'f', 4) << "\n";
+                    << QString::number(mf.location.x(), 'f', 4) << ", "
+                    << QString::number(mf.location.y(), 'f', 4) << ", "
+                    << QString::number(mf.location.z(), 'f', 4) << ", "
+                    << QString::number(mf.diameter, 'f', 4) << "\n";
             }
             else if (mf.kind == FeatureKind::Line2D) {
                 dmis << "F(" << rawLabel << ") = FEAT/LINE, UNBND, CART, "
-                     << QString::number(mf.location.x(), 'f', 4) << ", "
-                     << QString::number(mf.location.y(), 'f', 4) << ", "
-                     << QString::number(mf.location.z(), 'f', 4) << ", "
-                     << QString::number(mf.primaryVector.x(), 'f', 5) << ", "
-                     << QString::number(mf.primaryVector.y(), 'f', 5) << ", "
-                     << QString::number(mf.primaryVector.z(), 'f', 5) << ", "
-                     << QString::number(mf.secondaryVector.x(), 'f', 5) << ", "
-                     << QString::number(mf.secondaryVector.y(), 'f', 5) << ", "
-                     << QString::number(mf.secondaryVector.z(), 'f', 5) << "\n";
+                    << QString::number(mf.location.x(), 'f', 4) << ", "
+                    << QString::number(mf.location.y(), 'f', 4) << ", "
+                    << QString::number(mf.location.z(), 'f', 4) << ", "
+                    << QString::number(mf.primaryVector.x(), 'f', 5) << ", "
+                    << QString::number(mf.primaryVector.y(), 'f', 5) << ", "
+                    << QString::number(mf.primaryVector.z(), 'f', 5) << ", "
+                    << QString::number(mf.secondaryVector.x(), 'f', 5) << ", "
+                    << QString::number(mf.secondaryVector.y(), 'f', 5) << ", "
+                    << QString::number(mf.secondaryVector.z(), 'f', 5) << "\n";
             }
 
             const auto& pts = m_featureDmisHits[mf.id];
             const QString dmisMeasType = (mf.kind == FeatureKind::Plane3D) ? "PLANE"
                 : (mf.kind == FeatureKind::Circle2D ? "CIRCLE"
-                : (mf.kind == FeatureKind::Sphere3D ? "SPHERE" : "LINE"));
+                    : (mf.kind == FeatureKind::Sphere3D ? "SPHERE" : "LINE"));
 
             dmis << "MEAS/" << dmisMeasType << ", F(" << rawLabel << "), " << pts.size() << "\n";
             for (const auto& pt : pts) {
                 dmis << "  PTMEAS/CART, "
-                     << QString::number(pt.surfacePt.x(), 'f', 4) << ", "
-                     << QString::number(pt.surfacePt.y(), 'f', 4) << ", "
-                     << QString::number(pt.surfacePt.z(), 'f', 4) << ", "
-                     << QString::number(pt.normalVec.x(), 'f', 5) << ", "
-                     << QString::number(pt.normalVec.y(), 'f', 5) << ", "
-                     << QString::number(pt.normalVec.z(), 'f', 5) << "\n";
+                    << QString::number(pt.surfacePt.x(), 'f', 4) << ", "
+                    << QString::number(pt.surfacePt.y(), 'f', 4) << ", "
+                    << QString::number(pt.surfacePt.z(), 'f', 4) << ", "
+                    << QString::number(pt.normalVec.x(), 'f', 5) << ", "
+                    << QString::number(pt.normalVec.y(), 'f', 5) << ", "
+                    << QString::number(pt.normalVec.z(), 'f', 5) << "\n";
             }
             dmis << "ENDMES\n";
 
@@ -1864,9 +1834,9 @@ namespace OpenCMM {
 
         if (m_datumAFeatureId > 0 && m_datumBFeatureId > 0 && m_datumCFeatureId > 0) {
             dmis << "$$ =========================================================\n"
-                 << "$$ Automated 3-2-1 Datum Reference Frame Alignment (PCS)\n"
-                 << "D(PCS_ABC) = DATSET/DAT(A), ZDIR, ZORIG, DAT(B), XDIR, YORIG, DAT(C), XORIG\n"
-                 << "SAVE/D(PCS_ABC)\n\n";
+                << "$$ Automated 3-2-1 Datum Reference Frame Alignment (PCS)\n"
+                << "D(PCS_ABC) = DATSET/DAT(A), ZDIR, ZORIG, DAT(B), XDIR, YORIG, DAT(C), XORIG\n"
+                << "SAVE/D(PCS_ABC)\n\n";
         }
 
         dmis << "ENDFIL\n";
@@ -1876,14 +1846,13 @@ namespace OpenCMM {
     }
 
     void MainWindow::onExportDmisProgramClicked() {
-        // If the user has points in the active buffer that haven't been fitted yet, offer to fit or inform them
         if (m_solvedFeatures.empty()) {
             QMessageBox::information(
                 this,
                 "No Solved Features to Export",
                 "Please solve at least one feature before saving a DMIS 5.3 (.dmis) program:\n\n"
-                "• Click any CAD face and press '🎯 Auto-Probe CAD' (or '🅰/🅱/🅲 CAD Datum'), OR\n"
-                "• Probe points (Ctrl + Left-Click on CAD) and click Fit Plane / Fit 2D Circle / Fit Sphere."
+                "• Click any CAD face and press '🎯 Auto-Probe CAD' (or '🅰/🅱/🅲 Set Datum'), OR\n"
+                "• Probe points (Ctrl + Left-Click on CAD) and click Fit Plane / Fit Cylinder / Fit 2D Circle / Fit Sphere."
             );
             return;
         }
@@ -1921,7 +1890,6 @@ namespace OpenCMM {
             return;
         }
 
-        // Custom Export Dialog with explicit Format Selector
         QDialog expDlg(this);
         expDlg.setWindowTitle("Export Inspection Report / DMIS 5.3 Program");
         expDlg.setMinimumWidth(420);
@@ -1932,7 +1900,7 @@ namespace OpenCMM {
 
         auto* partEdit = new QLineEdit("JLS-PART-001", &expDlg);
         auto* formatCombo = new QComboBox(&expDlg);
-        formatCombo->addItem("PDF Printable Inspection Certificate (.pdf)", "pdf"); // <--- Add this option
+        formatCombo->addItem("PDF Printable Inspection Certificate (.pdf)", "pdf");
         formatCombo->addItem("DMIS 5.3 Inspection Program (.dmis)", "dmis");
         formatCombo->addItem("HTML Printable Inspection Report (.html)", "html");
         formatCombo->addItem("QIF 2.1 Quality Information Framework (.qif)", "qif");
@@ -1985,7 +1953,6 @@ namespace OpenCMM {
         );
         if (filePath.isEmpty()) return;
 
-        // Guarantee correct extension
         if (fmt == "pdf" && !filePath.endsWith(".pdf", Qt::CaseInsensitive)) filePath += ".pdf";
         else if (fmt == "dmis" && !filePath.endsWith(".dmis", Qt::CaseInsensitive)) filePath += ".dmis";
         else if (fmt == "qif" && !filePath.endsWith(".qif", Qt::CaseInsensitive)) filePath += ".qif";
@@ -2000,22 +1967,19 @@ namespace OpenCMM {
             pdfWriter.setTitle("JLS Machine LLC — Inspection Certificate");
 
             QPainter painter(&pdfWriter);
-            int yPos = 1200; // coordinate units in 1/10th of a mm
+            int yPos = 1200;
             const int leftMargin = 1000;
 
-            // Header Title
             painter.setFont(QFont("Segoe UI", 16, QFont::Bold));
             painter.drawText(leftMargin, yPos, "JLS MACHINE LLC — INSPECTION CERTIFICATE");
             yPos += 400;
 
-            // Metadata Block
             painter.setFont(QFont("Segoe UI", 10, QFont::Normal));
             const QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
             painter.drawText(leftMargin, yPos, "Part / Job Number: " + partName); yPos += 250;
             painter.drawText(leftMargin, yPos, "Inspection Date: " + timestamp); yPos += 250;
             painter.drawText(leftMargin, yPos, QString("Stylus Effective Radius (R_eff): %1 mm").arg(m_effectiveProbeRadius, 0, 'f', 4)); yPos += 400;
 
-            // Table Header Background
             painter.setPen(Qt::NoPen);
             painter.setBrush(QColor(30, 41, 59));
             painter.drawRect(leftMargin, yPos, 19000, 350);
@@ -2029,13 +1993,12 @@ namespace OpenCMM {
             painter.drawText(leftMargin + 17000, yPos + 240, "Status");
             yPos += 450;
 
-            // Populate Table Rows from Feature Tree
             painter.setFont(QFont("Segoe UI", 9, QFont::Normal));
             for (int i = 0; i < m_featureTree->topLevelItemCount(); ++i) {
                 QTreeWidgetItem* top = m_featureTree->topLevelItem(i);
                 if (top == m_activePointsGroup) continue;
 
-                if (yPos > 26000) { // New page if page full
+                if (yPos > 26000) {
                     pdfWriter.newPage();
                     yPos = 1200;
                 }
@@ -2054,7 +2017,6 @@ namespace OpenCMM {
 
                 yPos += 350;
 
-                // Sub-rows (hits / info)
                 painter.setPen(QColor(100, 116, 139));
                 painter.setFont(QFont("Consolas", 8, QFont::Normal));
                 for (int c = 0; c < top->childCount(); ++c) {
@@ -2073,14 +2035,13 @@ namespace OpenCMM {
             return;
         }
 
-
-        // --- 0. DMIS 5.3 Program Export (.dmis) ---
+        // --- 1. DMIS 5.3 Program Export (.dmis) ---
         if (fmt == "dmis" || filePath.endsWith(".dmis", Qt::CaseInsensitive)) {
             writeDmisProgramToFile(filePath, partName);
             return;
         }
 
-        // --- 1. QIF 2.1 XML Export ---
+        // --- 2. QIF 2.1 XML Export ---
         if (filePath.endsWith(".qif", Qt::CaseInsensitive)) {
             std::vector<InspectionResultItem> qifItems;
 
@@ -2094,7 +2055,7 @@ namespace OpenCMM {
                 item.refId = (m_featureRefIds.count(featId) && !m_featureRefIds[featId].isEmpty())
                     ? m_featureRefIds[featId]
                     : ("REFID_" + QString::number(featId));
-                item.featureType = top->text(0).contains("Circle") || top->text(0).contains("Bore") ? "Bore"
+                item.featureType = top->text(0).contains("Circle") || top->text(0).contains("Bore") || top->text(0).contains("Cylinder") ? "Bore"
                     : (top->text(0).contains("Plane") ? "Plane" : "Feature");
                 item.nominalMm = top->data(0, ROLE_NOMINAL_MM).isValid() ? top->data(0, ROLE_NOMINAL_MM).toDouble() : 0.0;
                 item.actualMm = top->data(0, ROLE_ACTUAL_MM).isValid() ? top->data(0, ROLE_ACTUAL_MM).toDouble() : 0.0;
@@ -2122,7 +2083,7 @@ namespace OpenCMM {
         }
         QTextStream out(&file);
 
-        // --- 2. CSV Export ---
+        // --- 3. CSV Export ---
         if (filePath.endsWith(".csv", Qt::CaseInsensitive)) {
             out << "Feature / Parameter,Nominal,Actual,Tolerance,Deviation / Status\n";
             for (int i = 0; i < m_featureTree->topLevelItemCount(); ++i) {
@@ -2150,7 +2111,7 @@ namespace OpenCMM {
             return;
         }
 
-        // --- 3. HTML Printable Report Export ---
+        // --- 4. HTML Printable Report Export ---
         const QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
         const QString unitLabel = (m_unitSystem == UnitSystem::Millimeters) ? "Millimeters (mm)" : "Inches (in)";
 
@@ -2209,10 +2170,8 @@ namespace OpenCMM {
         QDesktopServices::openUrl(QUrl::fromLocalFile(filePath));
         statusBar()->showMessage("Exported HTML Inspection Report to: " + filePath);
     }
-        // ... existing CSV and HTML export handling continues below ...
 
     void MainWindow::onSimulateHitClicked() {
-        // If a DMIS 5.3 program is loaded and active, Simulate Hit fires the next planned PTMEAS point!
         if (m_isDmisProgramActive && m_activeDmisFeatureIdx >= 0 &&
             m_activeDmisFeatureIdx < static_cast<int>(m_dmisProgram.features.size())) {
             const auto& df = m_dmisProgram.features[m_activeDmisFeatureIdx];
@@ -2251,12 +2210,14 @@ namespace OpenCMM {
         else if (mode == 1) {
             const double R = 10.0000 - rProbe;
             const double angle = idx * (2.0 * 3.141592653589793 / 5.0) + 0.2;
-            simHit = { 50.0 + R * std::cos(angle), 30.0 + R * std::sin(angle), 15.0 };
+            const double zLevel = 10.0 + (idx / 5) * 5.0;
+            simHit = { 50.0 + R * std::cos(angle), 30.0 + R * std::sin(angle), zLevel };
         }
         else if (mode == 2) {
             const double R = 6.0000 - rProbe;
             const double angle = idx * (2.0 * 3.141592653589793 / 5.0) + 0.4;
-            simHit = { 100.0 + R * std::cos(angle), 30.0 + R * std::sin(angle), 15.0 };
+            const double zLevel = 10.0 + (idx / 5) * 5.0;
+            simHit = { 100.0 + R * std::cos(angle), 30.0 + R * std::sin(angle), zLevel };
         }
         else if (mode == 3) {
             const double xGrid[6] = { 15.0, 85.0, 85.0, 15.0, 50.0, 50.0 };
@@ -2281,7 +2242,6 @@ namespace OpenCMM {
 
         CalibrationWidget wizard(m_effectiveProbeRadius, m_certifiedBallDiameterMm, this);
 
-        // Feed active recorded hits into the wizard buffer
         for (const auto& pt : m_recordedHits) {
             wizard.addCalibrationHit(pt);
         }
@@ -2373,7 +2333,6 @@ namespace OpenCMM {
                 res.normal.x(), res.normal.y(), res.normal.z());
         }
 
-
         const int decimals = (m_unitSystem == UnitSystem::Millimeters) ? 4 : 5;
         const QString unitStr = (m_unitSystem == UnitSystem::Millimeters) ? " mm" : " in";
 
@@ -2395,8 +2354,6 @@ namespace OpenCMM {
             "--", "INFO"
             });
         planeItem->setExpanded(true);
-
-        
 
         finishFeatureBuffer();
         statusBar()->showMessage(QString("Solved %1 — Flatness: %2%3")
@@ -2460,8 +2417,6 @@ namespace OpenCMM {
             m_viewport->addFittedSphereVisual(id, res.center.x(), res.center.y(), res.center.z(), res.radius);
         }
 
-
-
         const int decimals = (m_unitSystem == UnitSystem::Millimeters) ? 4 : 5;
         const QString unitStr = (m_unitSystem == UnitSystem::Millimeters) ? " mm" : " in";
 
@@ -2480,8 +2435,6 @@ namespace OpenCMM {
             "--", "FORM"
             });
         sphereItem->setExpanded(true);
-
-     
 
         finishFeatureBuffer();
         statusBar()->showMessage(QString("Solved %1 — Ø%2%3")
@@ -2556,7 +2509,6 @@ namespace OpenCMM {
                 res.radius);
         }
 
-
         const int decimals = (m_unitSystem == UnitSystem::Millimeters) ? 4 : 5;
         const QString unitStr = (m_unitSystem == UnitSystem::Millimeters) ? " mm" : " in";
 
@@ -2575,8 +2527,6 @@ namespace OpenCMM {
             "--", "FORM"
             });
         circleItem->setExpanded(true);
-
-       
 
         finishFeatureBuffer();
         statusBar()->showMessage(QString("Solved %1 — Ø%2%3")
@@ -2649,7 +2599,6 @@ namespace OpenCMM {
             m_viewport->addFittedLineVisual(id, p1.x(), p1.y(), p1.z(), p2.x(), p2.y(), p2.z());
         }
 
-
         const int decimals = (m_unitSystem == UnitSystem::Millimeters) ? 4 : 5;
         const QString unitStr = (m_unitSystem == UnitSystem::Millimeters) ? " mm" : " in";
 
@@ -2672,14 +2621,109 @@ namespace OpenCMM {
             });
         lineItem->setExpanded(true);
 
-        
-
         finishFeatureBuffer();
         statusBar()->showMessage(QString("Solved %1 — Straightness: %2%3")
             .arg(featName)
             .arg(toDisplayUnit(res.straightness, m_unitSystem), 0, 'f', decimals)
             .arg(unitStr));
     }
+
+    void MainWindow::onFitCylinderClicked() {
+        if (m_recordedHits.size() < 5) {
+            QMessageBox::warning(this, "Insufficient Points", "At least 5 points across multiple depths are required to fit a 3D Cylinder.");
+            return;
+        }
+
+        CylinderFitResult res = MetrologyMath::fitCylinderLeastSquares(
+            m_recordedHits,
+            m_effectiveProbeRadius,
+            currentCompMode(),
+            m_hasArmedCadNominal ? &m_armedCadNormalMm : nullptr
+        );
+
+        if (!res.success) {
+            playSolveChime(false);
+            QMessageBox::critical(this, "Fit Failed", "Could not solve 3D Cylinder from the recorded points.");
+            return;
+        }
+
+        const double actualDiam = res.diameter;
+        double nominalDiam = 20.0;
+        if (m_hasArmedCadNominal && m_armedCadDiameterMm > 0.0) {
+            nominalDiam = m_armedCadDiameterMm;
+        }
+
+        const int id = m_featureCounter++;
+        const QString featName = (!m_activeDmisFeatureName.isEmpty() && m_activeDmisTreeItem)
+            ? m_activeDmisFeatureName : QString("Cylinder #%1").arg(id);
+
+        MeasuredFeature mf;
+        mf.id = id;
+        mf.name = featName.toStdString();
+        mf.kind = FeatureKind::Circle2D;
+        mf.location = res.center;
+        mf.primaryVector = res.axis;
+        mf.diameter = actualDiam;
+        mf.formError = res.cylindricity;
+        m_featureDmisHits[id] = m_recordedDmisHits;
+        if (!m_activeDmisRefId.isEmpty()) m_featureRefIds[id] = m_activeDmisRefId;
+        m_solvedFeatures.push_back(mf);
+
+        const bool passed = (std::abs(actualDiam - nominalDiam) <= m_defaultTolMm);
+        playSolveChime(passed);
+
+        QTreeWidgetItem* cylItem = m_activeDmisTreeItem;
+        if (cylItem) {
+            cylItem->setText(0, featName);
+            while (cylItem->childCount() > 0) delete cylItem->takeChild(0);
+            m_activeDmisTreeItem = nullptr;
+        }
+        else {
+            cylItem = new QTreeWidgetItem(m_featureTree, { featName, "", "", "", "" });
+        }
+        cylItem->setData(0, ROLE_FEATURE_ID, id);
+        applyEvaluationToTreeItem(cylItem, actualDiam, true, nominalDiam, m_defaultTolMm, m_defaultTolMm);
+
+        if (m_viewport) {
+            m_viewport->addFittedCircleVisual(id, res.center.x(), res.center.y(), res.center.z(),
+                res.axis.x(), res.axis.y(), res.axis.z(), res.radius);
+        }
+
+        const int decimals = (m_unitSystem == UnitSystem::Millimeters) ? 4 : 5;
+        const QString unitStr = (m_unitSystem == UnitSystem::Millimeters) ? " mm" : " in";
+
+        new QTreeWidgetItem(cylItem, {
+            "Axis Point (X, Y, Z)", "--",
+            QString("(%1, %2, %3)%4")
+                .arg(toDisplayUnit(res.center.x(), m_unitSystem), 0, 'f', decimals)
+                .arg(toDisplayUnit(res.center.y(), m_unitSystem), 0, 'f', decimals)
+                .arg(toDisplayUnit(res.center.z(), m_unitSystem), 0, 'f', decimals)
+                .arg(unitStr),
+            "--", "INFO"
+            });
+        new QTreeWidgetItem(cylItem, {
+            "Axis Vector (I, J, K)", "--",
+            QString("(%1, %2, %3)")
+                .arg(res.axis.x(), 0, 'f', 5)
+                .arg(res.axis.y(), 0, 'f', 5)
+                .arg(res.axis.z(), 0, 'f', 5),
+            "--", "INFO"
+            });
+        new QTreeWidgetItem(cylItem, {
+            "Cylindricity / Form", "--",
+            QString("%1%2").arg(toDisplayUnit(res.cylindricity, m_unitSystem), 0, 'f', decimals).arg(unitStr),
+            "--", "FORM"
+            });
+        cylItem->setExpanded(true);
+
+        finishFeatureBuffer();
+        statusBar()->showMessage(QString("Solved %1 — Ø%2%3, Cylindricity: %4%3")
+            .arg(featName)
+            .arg(toDisplayUnit(actualDiam, m_unitSystem), 0, 'f', decimals)
+            .arg(unitStr)
+            .arg(toDisplayUnit(res.cylindricity, m_unitSystem), 0, 'f', decimals));
+    }
+
     void MainWindow::onMeasureRelationClicked() {
         if (m_solvedFeatures.size() < 2) {
             QMessageBox::information(this, "Need At Least 2 Features",
@@ -2967,10 +3011,11 @@ namespace OpenCMM {
             .arg(toDisplayUnit(maxAbsDev, m_unitSystem), 0, 'f', decimals)
             .arg(unitStr));
     }
+
     void MainWindow::onFeatureTreeContextMenuRequested(const QPoint& pos) {
         QTreeWidgetItem* item = m_featureTree->itemAt(pos);
         if (!item || item == m_activePointsGroup) {
-            return; // Don't show context menu for empty space or the active point buffer header
+            return;
         }
 
         QTreeWidgetItem* topItem = item;
@@ -3008,7 +3053,6 @@ namespace OpenCMM {
         QTreeWidgetItem* item = m_featureTree->currentItem();
         if (!item || item == m_activePointsGroup) return;
 
-        // Ensure we target the top-level parent feature node
         QTreeWidgetItem* topItem = item;
         while (topItem->parent() != nullptr && topItem->parent() != m_activePointsGroup) {
             topItem = topItem->parent();
@@ -3016,11 +3060,9 @@ namespace OpenCMM {
 
         if (topItem == m_activePointsGroup) return;
 
-        // If the item has a registered feature ID, remove its corresponding 3D visual and solved data
         if (topItem->data(0, ROLE_FEATURE_ID).isValid()) {
             const int featureId = topItem->data(0, ROLE_FEATURE_ID).toInt();
 
-            // Remove from m_solvedFeatures vector
             auto it = std::remove_if(m_solvedFeatures.begin(), m_solvedFeatures.end(), [featureId](const MeasuredFeature& f) {
                 return f.id == featureId;
                 });
@@ -3028,16 +3070,15 @@ namespace OpenCMM {
                 m_solvedFeatures.erase(it, m_solvedFeatures.end());
             }
 
-            // Clear its highlight / visual representation in the viewport if supported
             if (m_viewport) {
                 m_viewport->highlightFittedFeature(-1);
             }
         }
 
-        // Delete from the QTreeWidget
         delete topItem;
         statusBar()->showMessage("Deleted feature from inspection tree.");
     }
+
     void MainWindow::onClearAllFeaturesClicked() {
         if (m_solvedFeatures.empty() && m_featureTree->topLevelItemCount() <= 1) {
             QMessageBox::information(this, "No Features", "There are no solved features to clear.");
@@ -3053,7 +3094,6 @@ namespace OpenCMM {
         );
         if (resp != QMessageBox::Yes) return;
 
-        // 1. Clear solved feature data model & DMIS guided state
         stopDmisAutoRun();
         m_isDmisProgramActive = false;
         m_activeDmisFeatureIdx = -1;
@@ -3086,7 +3126,6 @@ namespace OpenCMM {
                 "border-radius: 4px; padding: 4px 8px; font-size: 11px; font-weight: bold; }");
         }
 
-        // 2. Remove all top-level items except the active point buffer
         for (int i = m_featureTree->topLevelItemCount() - 1; i >= 0; --i) {
             QTreeWidgetItem* top = m_featureTree->topLevelItem(i);
             if (top != m_activePointsGroup) {
@@ -3094,7 +3133,6 @@ namespace OpenCMM {
             }
         }
 
-        // 3. Clear 3D viewport fitted feature visuals
         if (m_viewport) {
             m_viewport->clearFittedFeatures();
             m_viewport->highlightFittedFeature(-1);
@@ -3103,11 +3141,11 @@ namespace OpenCMM {
         updateDroDisplay();
         statusBar()->showMessage("Cleared all solved features and reset alignment.");
     }
+
     void MainWindow::onThemeToggled(bool dark) {
         m_isDarkMode = dark;
 
         if (dark) {
-            // --- Dark Theme Studio Palette ---
             setStyleSheet(
                 "QMainWindow { background-color: #1e2227; color: #e0e0e0; }"
                 "QDockWidget { color: #ffffff; font-weight: bold; }"
@@ -3119,7 +3157,6 @@ namespace OpenCMM {
             if (m_droContainer) m_droContainer->setStyleSheet("background-color: #181a1f;");
             if (m_treeContainer) m_treeContainer->setStyleSheet("background-color: #181a1f;");
 
-            // DRO Numerical Display Styles (Dark)
             if (m_droX) m_droX->setStyleSheet("color: #ffffff; background-color: #0d0f12; border: 1px solid #2c313a; border-radius: 4px; padding: 6px 12px; font-size: 28px; font-weight: bold; font-family: 'Consolas', monospace; min-width: 190px;");
             if (m_droY) m_droY->setStyleSheet("color: #ffffff; background-color: #0d0f12; border: 1px solid #2c313a; border-radius: 4px; padding: 6px 12px; font-size: 28px; font-weight: bold; font-family: 'Consolas', monospace; min-width: 190px;");
             if (m_droZ) m_droZ->setStyleSheet("color: #ffffff; background-color: #0d0f12; border: 1px solid #2c313a; border-radius: 4px; padding: 6px 12px; font-size: 28px; font-weight: bold; font-family: 'Consolas', monospace; min-width: 190px;");
@@ -3144,7 +3181,6 @@ namespace OpenCMM {
                 );
             }
 
-            // Reset ribbon buttons to dark style
             for (auto* btn : findChildren<QPushButton*>()) {
                 if (btn && btn->parent() && btn->parent()->objectName() == "RibbonGroup") {
                     btn->setStyleSheet(
@@ -3156,19 +3192,15 @@ namespace OpenCMM {
                 }
             }
 
-			// Update viewport background for dark theme
             if (m_viewport) {
                 m_viewport->setBackgroundColor(true);
-            }
-            if (m_viewport) {
-                m_viewport->setTheme(dark);
+                m_viewport->setTheme(true);
             }
 
             statusBar()->setStyleSheet("background-color: #007acc; color: white; font-weight: bold;");
             statusBar()->showMessage("Switched to Dark Metrology Theme.");
         }
         else {
-            // --- Clean Light Inspection Palette ---
             setStyleSheet(
                 "QMainWindow { background-color: #f1f5f9; color: #1e293b; }"
                 "QDockWidget { color: #1e293b; font-weight: bold; }"
@@ -3180,7 +3212,6 @@ namespace OpenCMM {
             if (m_droContainer) m_droContainer->setStyleSheet("background-color: #f8fafc;");
             if (m_treeContainer) m_treeContainer->setStyleSheet("background-color: #f8fafc;");
 
-            // DRO Numerical Display Styles (Light)
             if (m_droX) m_droX->setStyleSheet("color: #0f172a; background-color: #ffffff; border: 1px solid #94a3b8; border-radius: 4px; padding: 6px 12px; font-size: 28px; font-weight: bold; font-family: 'Consolas', monospace; min-width: 190px;");
             if (m_droY) m_droY->setStyleSheet("color: #0f172a; background-color: #ffffff; border: 1px solid #94a3b8; border-radius: 4px; padding: 6px 12px; font-size: 28px; font-weight: bold; font-family: 'Consolas', monospace; min-width: 190px;");
             if (m_droZ) m_droZ->setStyleSheet("color: #0f172a; background-color: #ffffff; border: 1px solid #94a3b8; border-radius: 4px; padding: 6px 12px; font-size: 28px; font-weight: bold; font-family: 'Consolas', monospace; min-width: 190px;");
@@ -3205,7 +3236,6 @@ namespace OpenCMM {
                 );
             }
 
-            // Apply clean light style to all ribbon buttons
             for (auto* btn : findChildren<QPushButton*>()) {
                 if (btn && btn->parent() && btn->parent()->objectName() == "RibbonGroup") {
                     btn->setStyleSheet(
@@ -3216,7 +3246,7 @@ namespace OpenCMM {
                     );
                 }
             }
-            // Reset 3D viewport background color and HUD to light theme
+
             if (m_viewport) {
                 m_viewport->setTheme(false);
             }
@@ -3225,6 +3255,7 @@ namespace OpenCMM {
             statusBar()->showMessage("Switched to Light Inspection Theme.");
         }
     }
+
     void MainWindow::onRibbonContextMenuRequested(const QPoint& pos) {
         auto* ribbonTabs = findChild<QTabWidget*>("RibbonBar");
         if (!ribbonTabs) return;
@@ -3293,7 +3324,6 @@ namespace OpenCMM {
         auto* ribbonTabs = findChild<QTabWidget*>("RibbonBar");
         if (!ribbonTabs) return;
 
-        // Preserve active dropdown indices before rebuilding ribbon widgets
         const int savedSimIdx = m_simTargetCombo ? m_simTargetCombo->currentIndex() : 0;
         const int savedCompIdx = m_compModeCombo ? m_compModeCombo->currentIndex() : 0;
         const int savedWpIdx = m_workplaneCombo ? m_workplaneCombo->currentIndex() : 0;
@@ -3302,7 +3332,6 @@ namespace OpenCMM {
             ? ribbonTabs->tabText(ribbonTabs->currentIndex())
             : QString();
 
-        // Reset tracked widget pointers before deleting old tab pages
         m_settingsBtn = nullptr;
         m_simTargetCombo = nullptr;
         m_compModeCombo = nullptr;
@@ -3329,7 +3358,6 @@ namespace OpenCMM {
             pageLayout->setContentsMargins(6, 2, 6, 2);
             pageLayout->setSpacing(2);
 
-            // Bundle consecutive commands with the same groupTitle into a single RibbonGroup
             QString currentGroupTitle;
             QList<QWidget*> currentGroupWidgets;
 
@@ -3338,7 +3366,7 @@ namespace OpenCMM {
                     pageLayout->addWidget(createRibbonGroup(currentGroupTitle, currentGroupWidgets));
                     currentGroupWidgets.clear();
                 }
-            };
+                };
 
             for (const QString& cmdId : tabCfg.commandIds) {
                 const RibbonCommandMeta* meta = RibbonCustomizeDialog::findCommandMeta(cmdId);
@@ -3364,7 +3392,6 @@ namespace OpenCMM {
             }
         }
 
-        // Restore previous dropdown states
         if (m_simTargetCombo && savedSimIdx >= 0 && savedSimIdx < m_simTargetCombo->count()) {
             m_simTargetCombo->setCurrentIndex(savedSimIdx);
         }
@@ -3380,7 +3407,8 @@ namespace OpenCMM {
 
         if (restoreTabIdx >= 0) {
             ribbonTabs->setCurrentIndex(restoreTabIdx);
-        } else {
+        }
+        else {
             for (int i = 0; i < ribbonTabs->count(); ++i) {
                 if (ribbonTabs->isTabVisible(i)) {
                     ribbonTabs->setCurrentIndex(i);
