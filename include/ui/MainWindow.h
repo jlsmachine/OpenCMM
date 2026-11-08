@@ -192,6 +192,11 @@ namespace OpenCMM {
         void onFeatureTreeContextMenuRequested(const QPoint& pos);
         void onDeleteSelectedFeature();
         void onClearAllFeaturesClicked();
+        void onRibbonContextMenuRequested(const QPoint& pos);
+        void onCustomizeRibbonClicked();
+        void loadRibbonCustomization();
+        QWidget* createCommandWidgetForId(const QString& cmdId);
+
         bool m_isDarkMode = true;
         QWidget* m_droContainer = nullptr;
         QWidget* m_treeContainer = nullptr;

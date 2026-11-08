@@ -14,6 +14,8 @@
 #include "ui/OcctViewport.h"
 #include "ui/SettingsDialog.h"
 #include "core/AppSettings.h"
+#include "ui/CalibrationWidget.h"
+#include "ui/RibbonCustomizeDialog.h"
 
 #include <QToolBar>
 #include <QTabWidget>
@@ -185,7 +187,7 @@ namespace OpenCMM {
 
         // Apply initial theme immediately to the viewport and HUD
         m_viewport->setTheme(m_isDarkMode);
-
+        loadRibbonCustomization();
         statusBar()->setStyleSheet("background-color: #007acc; color: white; font-weight: bold;");
         statusBar()->showMessage("Ready - Click 'Settings...' to configure hardware/units, or probe features to begin inspection.");
     }
@@ -256,6 +258,11 @@ namespace OpenCMM {
         ribbonTabs->setObjectName("RibbonBar");
         ribbonTabs->setFixedHeight(116);
 
+        // Enable Right-Click Context Menu on the Ribbon Bar & Tab Bar
+        ribbonTabs->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(ribbonTabs, &QTabWidget::customContextMenuRequested,
+            this, &MainWindow::onRibbonContextMenuRequested);
+
         ribbonTabs->setStyleSheet(
             "QTabWidget#RibbonBar::pane { background-color: #21252b; border-top: 1px solid #3a3f4b; border-bottom: 2px solid #181a1f; }"
             "QTabWidget#RibbonBar QTabBar::tab { background-color: #181a1f; color: #abb2bf; padding: 6px 20px; font-size: 12px; font-weight: bold; border: 1px solid #2c313a; border-bottom: none; border-top-left-radius: 4px; border-top-right-radius: 4px; margin-right: 3px; margin-top: 2px; }"
@@ -267,248 +274,282 @@ namespace OpenCMM {
             "QComboBox QAbstractItemView { background-color: #181a1f; color: #ffffff; selection-background-color: #2d5a88; }"
         );
 
-        auto makeRibbonPage = [this](const QList<QFrame*>& groups) -> QWidget* {
-            auto* page = new QWidget(this);
-            auto* layout = new QHBoxLayout(page);
-            layout->setContentsMargins(6, 2, 6, 2);
-            layout->setSpacing(2);
-            for (QFrame* grp : groups) {
-                layout->addWidget(grp);
-            }
-            layout->addStretch(1);
-            return page;
-            };
+        setMenuWidget(ribbonTabs);
+        loadRibbonCustomization();
+    }
 
+    QWidget* MainWindow::createCommandWidgetForId(const QString& cmdId) {
         auto makeStackedControl = [this](const QString& labelText, QWidget* control) -> QWidget* {
             auto* box = new QWidget(this);
             auto* v = new QVBoxLayout(box);
             v->setContentsMargins(2, 2, 2, 2);
             v->setSpacing(4);
             auto* lbl = new QLabel(labelText, box);
-            lbl->setStyleSheet("color: #abb2bf; font-size: 10px; font-weight: bold;");
+            lbl->setStyleSheet(m_isDarkMode
+                ? "color: #abb2bf; font-size: 10px; font-weight: bold;"
+                : "color: #475569; font-size: 10px; font-weight: bold;");
             v->addWidget(lbl);
             v->addWidget(control);
             v->addStretch(1);
             return box;
-            };
+        };
 
-        // --- Home Tab ---
-        m_settingsBtn = createRibbonButton("⚙", "Settings...", "#282c34", "#61afef", "#61afef");
-        connect(m_settingsBtn, &QPushButton::clicked, this, &MainWindow::onOpenSettingsClicked);
-
-        auto* aboutBtn = createRibbonButton("ℹ", "About", "#282c34", "#abb2bf", "#abb2bf");
-        connect(aboutBtn, &QPushButton::clicked, this, [this]() {
-            QMessageBox::about(
-                this,
-                "About OpenCMM",
-                "<h3>OpenCMM — Precision Coordinate Metrology Studio</h3>"
-                "<p><b>Copyright &copy; 2026 JLS Machine LLC</b></p>"
-                "<p>OpenCMM is free open-source software licensed under the "
-                "<b>GNU General Public License v3.0 (GPL-3.0-or-later)</b>.</p>"
-                "<p>Built with Qt 6 (LGPLv3), OpenCASCADE Technology (LGPLv2.1), "
-                "Eigen 3 (MPL-2.0), and Raspberry Pi Pico 2 MicroPython.</p>"
-                "<p>This program comes with ABSOLUTELY NO WARRANTY.</p>"
-            );
+        // --- System & Hardware ---
+        if (cmdId == "sys_settings") {
+            auto* btn = createRibbonButton("⚙", "Settings...", "#282c34", "#61afef", "#61afef");
+            connect(btn, &QPushButton::clicked, this, &MainWindow::onOpenSettingsClicked);
+            if (!m_settingsBtn) m_settingsBtn = btn;
+            return btn;
+        }
+        if (cmdId == "sys_about") {
+            auto* btn = createRibbonButton("ℹ", "About", "#282c34", "#abb2bf", "#abb2bf");
+            connect(btn, &QPushButton::clicked, this, [this]() {
+                QMessageBox::about(
+                    this,
+                    "About OpenCMM",
+                    "<h3>OpenCMM — Precision Coordinate Metrology Studio</h3>"
+                    "<p><b>Copyright &copy; 2026 JLS Machine LLC</b></p>"
+                    "<p>OpenCMM is free open-source software licensed under the "
+                    "<b>GNU General Public License v3.0 (GPL-3.0-or-later)</b>.</p>"
+                    "<p>Built with Qt 6 (LGPLv3), OpenCASCADE Technology (LGPLv2.1), "
+                    "Eigen 3 (MPL-2.0), and Raspberry Pi Pico 2 MicroPython.</p>"
+                    "<p>This program comes with ABSOLUTELY NO WARRANTY.</p>"
+                );
             });
+            return btn;
+        }
+        if (cmdId == "sys_customize") {
+            auto* btn = createRibbonButton("🛠", "Customize...", "#282c34", "#e5c07b", "#e5c07b");
+            btn->setToolTip("Customize Ribbon Tabs and Commands");
+            connect(btn, &QPushButton::clicked, this, &MainWindow::onCustomizeRibbonClicked);
+            return btn;
+        }
 
-        auto* zeroBtn = createRibbonButton("🎯", "Zero XYZ");
-        connect(zeroBtn, &QPushButton::clicked, this, &MainWindow::onZeroAxesClicked);
+        // --- Machine DRO & Point Buffer ---
+        if (cmdId == "dro_zero") {
+            auto* btn = createRibbonButton("🎯", "Zero XYZ");
+            connect(btn, &QPushButton::clicked, this, &MainWindow::onZeroAxesClicked);
+            return btn;
+        }
+        if (cmdId == "dro_units") {
+            auto* btn = createRibbonButton("📏", "Units (mm/in)");
+            connect(btn, &QPushButton::clicked, this, &MainWindow::onUnitToggled);
+            return btn;
+        }
+        if (cmdId == "buf_clear_points") {
+            auto* btn = createRibbonButton("🗑", "Clear Points", "#5c2b29", "#e06c75", "#ffffff");
+            connect(btn, &QPushButton::clicked, this, &MainWindow::onClearPointsClicked);
+            return btn;
+        }
 
-        auto* unitsBtn = createRibbonButton("📏", "Units (mm/in)");
-        connect(unitsBtn, &QPushButton::clicked, this, &MainWindow::onUnitToggled);
-
-        auto* clearBtn = createRibbonButton("🗑", "Clear Points", "#5c2b29", "#e06c75", "#ffffff");
-        connect(clearBtn, &QPushButton::clicked, this, &MainWindow::onClearPointsClicked);
-
-        m_simTargetCombo = new QComboBox(this);
-        m_simTargetCombo->addItem("Master Ball Ø25.4mm", 0);
-        m_simTargetCombo->addItem("Bore #1 Ø20.0mm (50,30)", 1);
-        m_simTargetCombo->addItem("Bore #2 Ø12.0mm (100,30)", 2);
-        m_simTargetCombo->addItem("Top Datum Plane (Z=20)", 3);
-        m_simTargetCombo->addItem("Front X-Edge (Y=0)", 4);
-        m_simTargetCombo->addItem("Left Y-Edge (X=0)", 5);
-
-        auto* simHitBtn = createRibbonButton("⚡", "Simulate Hit", "#d19a66", "#e5c07b", "#1e2227");
-        connect(simHitBtn, &QPushButton::clicked, this, &MainWindow::onSimulateHitClicked);
-
-        auto* autoProbeCadBtn = createRibbonButton("🎯", "Auto-Probe CAD", "#2b6cb0", "#61afef", "#ffffff");
-        autoProbeCadBtn->setToolTip("Automatically sample and solve the currently selected 3D CAD face (or Ctrl+Left-Click on CAD to probe individual points)");
-        connect(autoProbeCadBtn, &QPushButton::clicked, this, &MainWindow::onAutoProbeCadFaceClicked);
-
-        auto* saveDmisHomeBtn = createRibbonButton("💾", "Save DMIS", "#1e3a8a", "#60a5fa", "#ffffff");
-        saveDmisHomeBtn->setToolTip("Export solved features, CAD touch points, and 3-2-1 Datums to a DMIS 5.3 (.dmis) program");
-        connect(saveDmisHomeBtn, &QPushButton::clicked, this, &MainWindow::onExportDmisProgramClicked);
-
-        auto* loadDmisHomeBtn = createRibbonButton("📂", "Load DMIS", "#1f7a8c", "#61afef", "#ffffff");
-        loadDmisHomeBtn->setToolTip("Load a DMIS 5.3 (.dmis) inspection program and display 3D target guide markers");
-        connect(loadDmisHomeBtn, &QPushButton::clicked, this, &MainWindow::onLoadDmisProgramClicked);
-
-        m_autoRunDmisBtnHome = createRibbonButton("▶", "Run DMIS", "#2f855a", "#98c379", "#ffffff");
-        m_autoRunDmisBtnHome->setToolTip("Animate the Digital Twin CMM through all loaded DMIS target points offline");
-        connect(m_autoRunDmisBtnHome, &QPushButton::clicked, this, &MainWindow::onToggleAutoRunDmisClicked);
-
-        ribbonTabs->addTab(makeRibbonPage({
-            createRibbonGroup("System & Hardware",{ m_settingsBtn, aboutBtn }),
-            createRibbonGroup("Machine DRO",{ zeroBtn, unitsBtn }),
-            createRibbonGroup("Point Buffer",{ clearBtn }),
-            createRibbonGroup("Offline Simulator & CAD",{ makeStackedControl("Virtual Target:", m_simTargetCombo), simHitBtn, autoProbeCadBtn }),
-            createRibbonGroup("DMIS 5.3 Program",{ saveDmisHomeBtn, loadDmisHomeBtn, m_autoRunDmisBtnHome })
-            }), "Home");
-
-        // --- Probe & Alignment Tab ---
-        m_compModeCombo = new QComboBox(this);
-        m_compModeCombo->addItem("External (-R)", static_cast<int>(ProbeCompMode::External));
-        m_compModeCombo->addItem("Internal (+R)", static_cast<int>(ProbeCompMode::Internal));
-        m_compModeCombo->addItem("Uncomp (0)", static_cast<int>(ProbeCompMode::Uncompensated));
-
-        auto* calBtn = createRibbonButton("🔴", "Calibrate Tip", "#5a32a3", "#8957e5", "#ffffff");
-        connect(calBtn, &QPushButton::clicked, this, &MainWindow::onCalibrateProbeClicked);
-
-        auto* alignBtn = createRibbonButton("📐", "3-2-1 Align...", "#9b2c2c", "#e06c75", "#ffffff");
-        connect(alignBtn, &QPushButton::clicked, this, &MainWindow::onRun321AlignmentClicked);
-
-        m_alignStatusBtn = createRibbonButton("🌐", "Coord: MCS", "#3a3f4b", "#e5c07b", "#e5c07b");
-        m_alignStatusBtn->setCheckable(true);
-        m_alignStatusBtn->setChecked(false);
-        connect(m_alignStatusBtn, &QPushButton::clicked, this, [this](bool checked) {
-            if (!m_isPartAligned && checked) {
-                QMessageBox::warning(this, "No Alignment Active", "Please run a 3-2-1 alignment first.");
-                m_alignStatusBtn->setChecked(false);
-                return;
+        // --- Offline Simulator & CAD Authoring ---
+        if (cmdId == "sim_target_combo") {
+            auto* combo = new QComboBox(this);
+            combo->addItem("Master Ball Ø25.4mm", 0);
+            combo->addItem("Bore #1 Ø20.0mm (50,30)", 1);
+            combo->addItem("Bore #2 Ø12.0mm (100,30)", 2);
+            combo->addItem("Top Datum Plane (Z=20)", 3);
+            combo->addItem("Front X-Edge (Y=0)", 4);
+            combo->addItem("Left Y-Edge (X=0)", 5);
+            if (!m_simTargetCombo) {
+                m_simTargetCombo = combo;
+            } else {
+                combo->setCurrentIndex(m_simTargetCombo->currentIndex());
+                connect(combo, QOverload<int>::of(&QComboBox::currentIndexChanged), m_simTargetCombo, &QComboBox::setCurrentIndex);
+                connect(m_simTargetCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), combo, &QComboBox::setCurrentIndex);
             }
-            if (checked) {
-                m_alignStatusBtn->setText("🌐\nPCS (Aligned)");
-                m_alignStatusBtn->setStyleSheet("QPushButton { background-color: #1e4620; color: #98c379; border: 1px solid #98c379; border-radius: 4px; padding: 4px 8px; font-size: 11px; font-weight: bold; }");
+            return makeStackedControl("Virtual Target:", combo);
+        }
+        if (cmdId == "sim_hit") {
+            auto* btn = createRibbonButton("⚡", "Simulate Hit", "#d19a66", "#e5c07b", "#1e2227");
+            connect(btn, &QPushButton::clicked, this, &MainWindow::onSimulateHitClicked);
+            return btn;
+        }
+        if (cmdId == "cad_auto_probe") {
+            auto* btn = createRibbonButton("🎯", "Auto-Probe CAD", "#2b6cb0", "#61afef", "#ffffff");
+            btn->setToolTip("Automatically sample and solve the currently selected 3D CAD face (or Ctrl+Left-Click on CAD to probe individual points)");
+            connect(btn, &QPushButton::clicked, this, &MainWindow::onAutoProbeCadFaceClicked);
+            return btn;
+        }
+
+        // --- DMIS 5.3 Program ---
+        if (cmdId == "dmis_save") {
+            auto* btn = createRibbonButton("💾", "Save DMIS", "#1e3a8a", "#60a5fa", "#ffffff");
+            btn->setToolTip("Export solved features, CAD touch points, and 3-2-1 Datums to a DMIS 5.3 (.dmis) program");
+            connect(btn, &QPushButton::clicked, this, &MainWindow::onExportDmisProgramClicked);
+            return btn;
+        }
+        if (cmdId == "dmis_load") {
+            auto* btn = createRibbonButton("📂", "Load DMIS", "#1f7a8c", "#61afef", "#ffffff");
+            btn->setToolTip("Load a DMIS 5.3 (.dmis) inspection program and display 3D target guide markers");
+            connect(btn, &QPushButton::clicked, this, &MainWindow::onLoadDmisProgramClicked);
+            return btn;
+        }
+        if (cmdId == "dmis_run") {
+            const bool running = (m_dmisPlaybackTimer && m_dmisPlaybackTimer->isActive());
+            auto* btn = createRibbonButton(running ? "⏹" : "▶", running ? "Stop DMIS" : "Run DMIS", "#2f855a", "#98c379", "#ffffff");
+            btn->setToolTip("Animate the Digital Twin CMM through all loaded DMIS target points offline");
+            connect(btn, &QPushButton::clicked, this, &MainWindow::onToggleAutoRunDmisClicked);
+            if (!m_autoRunDmisBtnHome) m_autoRunDmisBtnHome = btn;
+            else if (!m_autoRunDmisBtnCad) m_autoRunDmisBtnCad = btn;
+            return btn;
+        }
+
+        // --- Probe & Alignment ---
+        if (cmdId == "probe_comp_combo") {
+            auto* combo = new QComboBox(this);
+            combo->addItem("External (-R)", static_cast<int>(ProbeCompMode::External));
+            combo->addItem("Internal (+R)", static_cast<int>(ProbeCompMode::Internal));
+            combo->addItem("Uncomp (0)", static_cast<int>(ProbeCompMode::Uncompensated));
+            if (!m_compModeCombo) {
+                m_compModeCombo = combo;
+            } else {
+                combo->setCurrentIndex(m_compModeCombo->currentIndex());
+                connect(combo, QOverload<int>::of(&QComboBox::currentIndexChanged), m_compModeCombo, &QComboBox::setCurrentIndex);
+                connect(m_compModeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), combo, &QComboBox::setCurrentIndex);
             }
-            else {
-                m_alignStatusBtn->setText("🌐\nCoord: MCS");
-                m_alignStatusBtn->setStyleSheet("QPushButton { background-color: #3a3f4b; color: #e5c07b; border: 1px solid #e5c07b; border-radius: 4px; padding: 4px 8px; font-size: 11px; font-weight: bold; }");
-            }
-            updateDroDisplay();
+            return makeStackedControl("Tip Compensation:", combo);
+        }
+        if (cmdId == "probe_calibrate") {
+            auto* btn = createRibbonButton("🔴", "Calibrate Tip", "#5a32a3", "#8957e5", "#ffffff");
+            connect(btn, &QPushButton::clicked, this, &MainWindow::onCalibrateProbeClicked);
+            return btn;
+        }
+        if (cmdId == "datum_set_a") {
+            auto* btn = createRibbonButton("🅰", "Set Datum A", "#1e3a8a", "#60a5fa", "#ffffff");
+            btn->setToolTip("Probe selected CAD face (or use highlighted feature) as Primary Datum A (Level +Z)");
+            connect(btn, &QPushButton::clicked, this, [this]() { onAssignCadDatumClicked("A"); });
+            return btn;
+        }
+        if (cmdId == "datum_set_b") {
+            auto* btn = createRibbonButton("🅱", "Set Datum B", "#14532d", "#4ade80", "#ffffff");
+            btn->setToolTip("Probe selected CAD face (or use highlighted feature) as Secondary Datum B (Rotate +X)");
+            connect(btn, &QPushButton::clicked, this, [this]() { onAssignCadDatumClicked("B"); });
+            return btn;
+        }
+        if (cmdId == "datum_set_c") {
+            auto* btn = createRibbonButton("🅲", "Set Datum C", "#78350f", "#fbbf24", "#ffffff");
+            btn->setToolTip("Probe selected CAD face (or use highlighted feature) as Tertiary Datum C (Origin 0,0,0)");
+            connect(btn, &QPushButton::clicked, this, [this]() { onAssignCadDatumClicked("C"); });
+            return btn;
+        }
+        if (cmdId == "pcs_align_321") {
+            auto* btn = createRibbonButton("📐", "3-2-1 Align...", "#9b2c2c", "#e06c75", "#ffffff");
+            connect(btn, &QPushButton::clicked, this, &MainWindow::onRun321AlignmentClicked);
+            return btn;
+        }
+        if (cmdId == "pcs_coord_toggle") {
+            auto* btn = createRibbonButton("🌐", m_isPartAligned ? "PCS (Aligned)" : "Coord: MCS", "#3a3f4b", "#e5c07b", "#e5c07b");
+            btn->setCheckable(true);
+            btn->setChecked(m_isPartAligned);
+            connect(btn, &QPushButton::clicked, this, [this, btn](bool checked) {
+                if (!m_isPartAligned && checked) {
+                    QMessageBox::warning(this, "No Alignment Active", "Please run a 3-2-1 alignment first.");
+                    btn->setChecked(false);
+                    return;
+                }
+                if (checked) {
+                    btn->setText("🌐\nPCS (Aligned)");
+                    btn->setStyleSheet("QPushButton { background-color: #1e4620; color: #98c379; border: 1px solid #98c379; border-radius: 4px; padding: 4px 8px; font-size: 11px; font-weight: bold; }");
+                } else {
+                    btn->setText("🌐\nCoord: MCS");
+                    btn->setStyleSheet("QPushButton { background-color: #3a3f4b; color: #e5c07b; border: 1px solid #e5c07b; border-radius: 4px; padding: 4px 8px; font-size: 11px; font-weight: bold; }");
+                }
+                updateDroDisplay();
             });
+            if (!m_alignStatusBtn) m_alignStatusBtn = btn;
+            return btn;
+        }
 
-        auto* clearBtnTab2 = createRibbonButton("🗑", "Clear Hits", "#5c2b29", "#e06c75", "#ffffff");
-        connect(clearBtnTab2, &QPushButton::clicked, this, &MainWindow::onClearPointsClicked);
-
-        auto* setDatABtn = createRibbonButton("🅰", "Set Datum A", "#1e3a8a", "#60a5fa", "#ffffff");
-        setDatABtn->setToolTip("Probe selected CAD face (or use last solved feature) as Primary Datum A (Level +Z)");
-        connect(setDatABtn, &QPushButton::clicked, this, [this]() { onAssignCadDatumClicked("A"); });
-
-        auto* setDatBBtn = createRibbonButton("🅱", "Set Datum B", "#14532d", "#4ade80", "#ffffff");
-        setDatBBtn->setToolTip("Probe selected CAD face (or use last solved feature) as Secondary Datum B (Rotate +X)");
-        connect(setDatBBtn, &QPushButton::clicked, this, [this]() { onAssignCadDatumClicked("B"); });
-
-        auto* setDatCBtn = createRibbonButton("🅲", "Set Datum C", "#78350f", "#fbbf24", "#ffffff");
-        setDatCBtn->setToolTip("Probe selected CAD face (or use last solved feature) as Tertiary Datum C (Origin 0,0,0)");
-        connect(setDatCBtn, &QPushButton::clicked, this, [this]() { onAssignCadDatumClicked("C"); });
-
-        ribbonTabs->addTab(makeRibbonPage({
-            createRibbonGroup("Stylus Compensation",{ makeStackedControl("Tip Compensation:", m_compModeCombo), calBtn }),
-            createRibbonGroup("CAD / Feature Datums (A-B-C)",{ setDatABtn, setDatBBtn, setDatCBtn }),
-            createRibbonGroup("Part Coordinate System (PCS)",{ alignBtn, m_alignStatusBtn }),
-            createRibbonGroup("Quick Buffer",{ clearBtnTab2 })
-            }), "Probe & Alignment");
-
-        // --- Measure Tab ---
-        m_workplaneCombo = new QComboBox(this);
-        m_workplaneCombo->addItem("XY (+Z)", static_cast<int>(StandardWorkplane::XY_PlusZ));
-        m_workplaneCombo->addItem("YZ (+X)", static_cast<int>(StandardWorkplane::YZ_PlusX));
-        m_workplaneCombo->addItem("ZX (+Y)", static_cast<int>(StandardWorkplane::ZX_PlusY));
-        m_workplaneCombo->addItem("Last Fitted Plane", static_cast<int>(StandardWorkplane::CustomPlane));
-
-        auto* fitPlaneBtn = createRibbonButton("▱", "Fit Plane");
-        connect(fitPlaneBtn, &QPushButton::clicked, this, &MainWindow::onFitPlaneClicked);
-        auto* fitSphereBtn = createRibbonButton("🌐", "Fit Sphere");
-        connect(fitSphereBtn, &QPushButton::clicked, this, &MainWindow::onFitSphereClicked);
-        auto* fitCircleBtn = createRibbonButton("⭕", "Fit 2D Circle", "#2b6cb0", "#61afef", "#ffffff");
-        connect(fitCircleBtn, &QPushButton::clicked, this, &MainWindow::onFitCircleClicked);
-        auto* fitLineBtn = createRibbonButton("╱", "Fit 2D Line", "#2b6cb0", "#61afef", "#ffffff");
-        connect(fitLineBtn, &QPushButton::clicked, this, &MainWindow::onFitLineClicked);
-        auto* relBtn = createRibbonButton("↔", "Distance / ∠", "#2f855a", "#98c379", "#ffffff");
-        connect(relBtn, &QPushButton::clicked, this, &MainWindow::onMeasureRelationClicked);
-
-        m_featureRenderCombo = new QComboBox(this);
-        m_featureRenderCombo->addItem("Fully Rendered (Shaded)", 0);
-        m_featureRenderCombo->addItem("Wireframe", 1);
-        connect(m_featureRenderCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
-            if (m_viewport) {
-                m_viewport->setFittedFeaturesWireframe(index == 1);
+        // --- Measure ---
+        if (cmdId == "meas_workplane") {
+            auto* combo = new QComboBox(this);
+            combo->addItem("XY (+Z)", static_cast<int>(StandardWorkplane::XY_PlusZ));
+            combo->addItem("YZ (+X)", static_cast<int>(StandardWorkplane::YZ_PlusX));
+            combo->addItem("ZX (+Y)", static_cast<int>(StandardWorkplane::ZX_PlusY));
+            combo->addItem("Last Fitted Plane", static_cast<int>(StandardWorkplane::CustomPlane));
+            if (!m_workplaneCombo) {
+                m_workplaneCombo = combo;
+            } else {
+                combo->setCurrentIndex(m_workplaneCombo->currentIndex());
+                connect(combo, QOverload<int>::of(&QComboBox::currentIndexChanged), m_workplaneCombo, &QComboBox::setCurrentIndex);
+                connect(m_workplaneCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), combo, &QComboBox::setCurrentIndex);
             }
+            return makeStackedControl("2D Workplane:", combo);
+        }
+        if (cmdId == "meas_style") {
+            auto* combo = new QComboBox(this);
+            combo->addItem("Fully Rendered (Shaded)", 0);
+            combo->addItem("Wireframe", 1);
+            connect(combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
+                if (m_viewport) {
+                    m_viewport->setFittedFeaturesWireframe(index == 1);
+                }
             });
+            if (!m_featureRenderCombo) m_featureRenderCombo = combo;
+            return makeStackedControl("Feature Style:", combo);
+        }
+        if (cmdId == "meas_fit_plane") {
+            auto* btn = createRibbonButton("▱", "Fit Plane");
+            connect(btn, &QPushButton::clicked, this, &MainWindow::onFitPlaneClicked);
+            return btn;
+        }
+        if (cmdId == "meas_fit_sphere") {
+            auto* btn = createRibbonButton("🌐", "Fit Sphere");
+            connect(btn, &QPushButton::clicked, this, &MainWindow::onFitSphereClicked);
+            return btn;
+        }
+        if (cmdId == "meas_fit_circle") {
+            auto* btn = createRibbonButton("⭕", "Fit 2D Circle", "#2b6cb0", "#61afef", "#ffffff");
+            connect(btn, &QPushButton::clicked, this, &MainWindow::onFitCircleClicked);
+            return btn;
+        }
+        if (cmdId == "meas_fit_line") {
+            auto* btn = createRibbonButton("╱", "Fit 2D Line", "#2b6cb0", "#61afef", "#ffffff");
+            connect(btn, &QPushButton::clicked, this, &MainWindow::onFitLineClicked);
+            return btn;
+        }
+        if (cmdId == "meas_relation") {
+            auto* btn = createRibbonButton("↔", "Distance / ∠", "#2f855a", "#98c379", "#ffffff");
+            connect(btn, &QPushButton::clicked, this, &MainWindow::onMeasureRelationClicked);
+            return btn;
+        }
 
-        // auto* clearFeatBtn = createRibbonButton("🧹", "Clear Features", "#5c2b29", "#e06c75", "#ffffff");
-        // connect(clearFeatBtn, &QPushButton::clicked, this, [this]() {
-        //     if (m_viewport) {
-        ///         m_viewport->clearFittedFeatures();
-        //     }
-        //     statusBar()->showMessage("Cleared fitted 3D feature visuals from viewport.");
-        //     });
+        // --- CAD & Deviation ---
+        if (cmdId == "cad_load_step") {
+            auto* btn = createRibbonButton("📦", "Load STEP", "#2d5a88", "#61afef", "#ffffff");
+            connect(btn, &QPushButton::clicked, this, &MainWindow::onLoadStepClicked);
+            return btn;
+        }
+        if (cmdId == "cad_orient") {
+            auto* btn = createRibbonButton("🧭", "Orient CAD...", "#3b6998", "#61afef", "#ffffff");
+            connect(btn, &QPushButton::clicked, this, &MainWindow::onTransformCadClicked);
+            return btn;
+        }
+        if (cmdId == "cad_surface_dev") {
+            auto* btn = createRibbonButton("🌡", "Surface Dev", "#0d9488", "#4fd1c5", "#ffffff");
+            connect(btn, &QPushButton::clicked, this, &MainWindow::onEvaluateCadDeviationClicked);
+            return btn;
+        }
 
-        ribbonTabs->addTab(makeRibbonPage({
-            createRibbonGroup("Active Projection",{ makeStackedControl("2D Workplane:", m_workplaneCombo) }),
-            createRibbonGroup("Feature Display",{ makeStackedControl("Feature Style:", m_featureRenderCombo) }),
-            createRibbonGroup("3D Features",{ fitPlaneBtn, fitSphereBtn }),
-            createRibbonGroup("2D Workplane Features",{ fitCircleBtn, fitLineBtn }),
-            createRibbonGroup("Dimensions & Relations",{ relBtn })
-            }), "Measure");
+        // --- Reporting ---
+        if (cmdId == "rep_edit_tol") {
+            auto* btn = createRibbonButton("±", "Edit Tol...", "#2d3748", "#e5c07b", "#e5c07b");
+            connect(btn, &QPushButton::clicked, this, &MainWindow::onEditToleranceClicked);
+            return btn;
+        }
+        if (cmdId == "rep_clear_all") {
+            auto* btn = createRibbonButton("🧹", "Clear All", "#5c2b29", "#e06c75", "#ffffff");
+            connect(btn, &QPushButton::clicked, this, &MainWindow::onClearAllFeaturesClicked);
+            return btn;
+        }
+        if (cmdId == "rep_export_report") {
+            auto* btn = createRibbonButton("📄", "Export Report", "#1f7a8c", "#61afef", "#ffffff");
+            connect(btn, &QPushButton::clicked, this, &MainWindow::onExportReportClicked);
+            return btn;
+        }
 
-        // --- CAD & Deviation Tab ---
-        auto* loadStepBtn = createRibbonButton("📦", "Load STEP", "#2d5a88", "#61afef", "#ffffff");
-        connect(loadStepBtn, &QPushButton::clicked, this, &MainWindow::onLoadStepClicked);
-        auto* transformCadBtn = createRibbonButton("🧭", "Orient CAD...", "#3b6998", "#61afef", "#ffffff");
-        connect(transformCadBtn, &QPushButton::clicked, this, &MainWindow::onTransformCadClicked);
-        auto* autoProbeTabBtn = createRibbonButton("🎯", "Auto-Probe Face", "#2b6cb0", "#61afef", "#ffffff");
-        connect(autoProbeTabBtn, &QPushButton::clicked, this, &MainWindow::onAutoProbeCadFaceClicked);
-        auto* saveDmisCadBtn = createRibbonButton("💾", "Save DMIS", "#1e3a8a", "#60a5fa", "#ffffff");
-        saveDmisCadBtn->setToolTip("Export authored CAD features and Datums to a DMIS 5.3 (.dmis) inspection program");
-        connect(saveDmisCadBtn, &QPushButton::clicked, this, &MainWindow::onExportDmisProgramClicked);
-        auto* loadDmisCadBtn = createRibbonButton("📂", "Load DMIS", "#1f7a8c", "#61afef", "#ffffff");
-        connect(loadDmisCadBtn, &QPushButton::clicked, this, &MainWindow::onLoadDmisProgramClicked);
-        m_autoRunDmisBtnCad = createRibbonButton("▶", "Run DMIS", "#2f855a", "#98c379", "#ffffff");
-        connect(m_autoRunDmisBtnCad, &QPushButton::clicked, this, &MainWindow::onToggleAutoRunDmisClicked);
-        auto* cadDevBtn = createRibbonButton("🌡", "Surface Dev", "#0d9488", "#4fd1c5", "#ffffff");
-        connect(cadDevBtn, &QPushButton::clicked, this, &MainWindow::onEvaluateCadDeviationClicked);
-
-        auto* cadDatABtn = createRibbonButton("🅰", "CAD Datum A", "#1e3a8a", "#60a5fa", "#ffffff");
-        cadDatABtn->setToolTip("Auto-probe the selected CAD face and assign it as Primary Datum A (Level +Z)");
-        connect(cadDatABtn, &QPushButton::clicked, this, [this]() { onAssignCadDatumClicked("A"); });
-
-        auto* cadDatBBtn = createRibbonButton("🅱", "CAD Datum B", "#14532d", "#4ade80", "#ffffff");
-        cadDatBBtn->setToolTip("Auto-probe the selected CAD face and assign it as Secondary Datum B (Rotate +X)");
-        connect(cadDatBBtn, &QPushButton::clicked, this, [this]() { onAssignCadDatumClicked("B"); });
-
-        auto* cadDatCBtn = createRibbonButton("🅲", "CAD Datum C", "#78350f", "#fbbf24", "#ffffff");
-        cadDatCBtn->setToolTip("Auto-probe the selected CAD face and assign it as Tertiary Datum C (Origin 0,0,0)");
-        connect(cadDatCBtn, &QPushButton::clicked, this, [this]() { onAssignCadDatumClicked("C"); });
-
-        ribbonTabs->addTab(makeRibbonPage({
-            createRibbonGroup("3D CAD Model",{ loadStepBtn, transformCadBtn }),
-            createRibbonGroup("Offline CAD Authoring",{ autoProbeTabBtn, saveDmisCadBtn, loadDmisCadBtn, m_autoRunDmisBtnCad }),
-            createRibbonGroup("Specify CAD Datums (3-2-1)",{ cadDatABtn, cadDatBBtn, cadDatCBtn }),
-            createRibbonGroup("Point Cloud vs. CAD",{ cadDevBtn })
-            }), "CAD & Deviation");
-
-        // --- Reporting Tab ---
-        auto* editTolBtn = createRibbonButton("±", "Edit Tol...", "#2d3748", "#e5c07b", "#e5c07b");
-        connect(editTolBtn, &QPushButton::clicked, this, &MainWindow::onEditToleranceClicked);
-
-        auto* clearAllFeaturesBtn = createRibbonButton("🧹", "Clear All", "#5c2b29", "#e06c75", "#ffffff");
-        connect(clearAllFeaturesBtn, &QPushButton::clicked, this, &MainWindow::onClearAllFeaturesClicked);
-
-        auto* saveDmisRepBtn = createRibbonButton("💾", "Export DMIS", "#1e3a8a", "#60a5fa", "#ffffff");
-        saveDmisRepBtn->setToolTip("Export inspection program to DMIS 5.3 (.dmis)");
-        connect(saveDmisRepBtn, &QPushButton::clicked, this, &MainWindow::onExportDmisProgramClicked);
-
-        auto* exportBtn = createRibbonButton("📄", "Export Report", "#1f7a8c", "#61afef", "#ffffff");
-        connect(exportBtn, &QPushButton::clicked, this, &MainWindow::onExportReportClicked);
-
-        ribbonTabs->addTab(makeRibbonPage({
-            createRibbonGroup("Feature Evaluation",{ editTolBtn }),
-            createRibbonGroup("Manage Features",{ clearAllFeaturesBtn }),
-            createRibbonGroup("Quality & DMIS Export",{ saveDmisRepBtn, exportBtn })
-            }), "Reporting");
-
-        setMenuWidget(ribbonTabs);
+        return nullptr;
     }
 
     void MainWindow::setupDroDock() {
@@ -2234,34 +2275,26 @@ namespace OpenCMM {
 
     void MainWindow::onCalibrateProbeClicked() {
         if (m_recordedHits.size() < 4) {
-            QMessageBox::warning(this, "Insufficient Points", "Please record at least 4 hits on the Master Ball to calibrate the stylus tip.");
+            QMessageBox::warning(this, "Insufficient Points", "Please record at least 4 hits on the Master Ball before launching the calibration wizard.");
             return;
         }
 
-        bool ok = false;
-        double certDiam = QInputDialog::getDouble(
-            this,
-            "Master Ball Calibration",
-            "Certified Master Sphere Diameter (mm):",
-            m_certifiedBallDiameterMm,
-            1.0, 200.0, 4, &ok
-        );
-        if (!ok) return;
+        CalibrationWidget wizard(m_effectiveProbeRadius, m_certifiedBallDiameterMm, this);
 
-        ProbeCalibrationResult cal = MetrologyMath::calibrateProbeOnMasterBall(m_recordedHits, certDiam);
-        if (!cal.success) {
-            playSolveChime(false);
-            QMessageBox::critical(this, "Calibration Failed", "Could not solve sphere fit for probe calibration.");
-            return;
+        // Feed active recorded hits into the wizard buffer
+        for (const auto& pt : m_recordedHits) {
+            wizard.addCalibrationHit(pt);
         }
 
-        m_certifiedBallDiameterMm = certDiam;
-        m_effectiveProbeRadius = cal.effectiveRadius;
-        m_lastProbeLobingMm = cal.formError;
+        if (wizard.exec() != QDialog::Accepted) return;
+
+        m_effectiveProbeRadius = wizard.getEffectiveProbeRadius();
+        m_lastProbeLobingMm = wizard.getSphericityError();
+        m_certifiedBallDiameterMm = wizard.getCertifiedBallDiameter();
         m_isProbeCalibrated = true;
 
         updateProbeStatusDisplay();
-        playSolveChime(cal.formError <= m_defaultTolMm);
+        playSolveChime(m_lastProbeLobingMm <= m_defaultTolMm);
         finishFeatureBuffer();
 
         statusBar()->showMessage(QString("Stylus calibrated: R_eff = %1 mm, Lobing = %2 mm")
@@ -3190,6 +3223,170 @@ namespace OpenCMM {
 
             statusBar()->setStyleSheet("background-color: #0284c7; color: white; font-weight: bold;");
             statusBar()->showMessage("Switched to Light Inspection Theme.");
+        }
+    }
+    void MainWindow::onRibbonContextMenuRequested(const QPoint& pos) {
+        auto* ribbonTabs = findChild<QTabWidget*>("RibbonBar");
+        if (!ribbonTabs) return;
+
+        QMenu contextMenu(this);
+        QAction* customizeAction = contextMenu.addAction("🛠 Customize Ribbon Tabs & Commands...");
+        QAction* addTabAction = contextMenu.addAction("➕ Add New Custom Tab...");
+        contextMenu.addSeparator();
+        QAction* resetAction = contextMenu.addAction("↺ Reset Ribbon to Factory Defaults");
+
+        QAction* selectedAction = contextMenu.exec(ribbonTabs->mapToGlobal(pos));
+        if (!selectedAction) return;
+
+        if (selectedAction == customizeAction) {
+            onCustomizeRibbonClicked();
+        }
+        else if (selectedAction == addTabAction) {
+            bool ok = false;
+            QString tabName = QInputDialog::getText(
+                this,
+                "New Custom Ribbon Tab",
+                "Enter a name for the new Ribbon Tab:",
+                QLineEdit::Normal,
+                "Shop Floor",
+                &ok
+            ).trimmed();
+            if (ok && !tabName.isEmpty()) {
+                auto layout = RibbonCustomizeDialog::loadSavedLayout();
+                RibbonTabConfig customTab;
+                customTab.name = tabName;
+                customTab.visible = true;
+                customTab.isCustom = true;
+                customTab.commandIds = { "dro_zero", "cad_auto_probe", "dmis_run", "rep_export_report" };
+                layout.push_back(customTab);
+                RibbonCustomizeDialog::saveLayout(layout);
+                loadRibbonCustomization();
+                ribbonTabs->setCurrentIndex(ribbonTabs->count() - 1);
+                statusBar()->showMessage(QString("Created custom Ribbon tab '%1' — right-click the ribbon to customize its commands.").arg(tabName));
+            }
+        }
+        else if (selectedAction == resetAction) {
+            const auto resp = QMessageBox::question(
+                this,
+                "Reset Ribbon to Defaults",
+                "Restore all default Ribbon tabs and command ordering?",
+                QMessageBox::Yes | QMessageBox::No,
+                QMessageBox::No
+            );
+            if (resp == QMessageBox::Yes) {
+                RibbonCustomizeDialog::saveLayout(RibbonCustomizeDialog::defaultRibbonLayout());
+                loadRibbonCustomization();
+                statusBar()->showMessage("Restored Ribbon tabs and commands to factory defaults.");
+            }
+        }
+    }
+
+    void MainWindow::onCustomizeRibbonClicked() {
+        RibbonCustomizeDialog dlg(m_isDarkMode, this);
+        if (dlg.exec() != QDialog::Accepted) return;
+
+        loadRibbonCustomization();
+        statusBar()->showMessage("Ribbon tabs and command order updated.");
+    }
+
+    void MainWindow::loadRibbonCustomization() {
+        auto* ribbonTabs = findChild<QTabWidget*>("RibbonBar");
+        if (!ribbonTabs) return;
+
+        // Preserve active dropdown indices before rebuilding ribbon widgets
+        const int savedSimIdx = m_simTargetCombo ? m_simTargetCombo->currentIndex() : 0;
+        const int savedCompIdx = m_compModeCombo ? m_compModeCombo->currentIndex() : 0;
+        const int savedWpIdx = m_workplaneCombo ? m_workplaneCombo->currentIndex() : 0;
+        const int savedStyleIdx = m_featureRenderCombo ? m_featureRenderCombo->currentIndex() : 0;
+        const QString prevTabTitle = (ribbonTabs->currentIndex() >= 0)
+            ? ribbonTabs->tabText(ribbonTabs->currentIndex())
+            : QString();
+
+        // Reset tracked widget pointers before deleting old tab pages
+        m_settingsBtn = nullptr;
+        m_simTargetCombo = nullptr;
+        m_compModeCombo = nullptr;
+        m_workplaneCombo = nullptr;
+        m_featureRenderCombo = nullptr;
+        m_alignStatusBtn = nullptr;
+        m_autoRunDmisBtnHome = nullptr;
+        m_autoRunDmisBtnCad = nullptr;
+
+        while (ribbonTabs->count() > 0) {
+            QWidget* page = ribbonTabs->widget(0);
+            ribbonTabs->removeTab(0);
+            delete page;
+        }
+
+        const std::vector<RibbonTabConfig> layout = RibbonCustomizeDialog::loadSavedLayout();
+        int restoreTabIdx = -1;
+
+        for (size_t tIdx = 0; tIdx < layout.size(); ++tIdx) {
+            const auto& tabCfg = layout[tIdx];
+
+            auto* page = new QWidget(this);
+            auto* pageLayout = new QHBoxLayout(page);
+            pageLayout->setContentsMargins(6, 2, 6, 2);
+            pageLayout->setSpacing(2);
+
+            // Bundle consecutive commands with the same groupTitle into a single RibbonGroup
+            QString currentGroupTitle;
+            QList<QWidget*> currentGroupWidgets;
+
+            auto flushGroup = [&]() {
+                if (!currentGroupWidgets.isEmpty()) {
+                    pageLayout->addWidget(createRibbonGroup(currentGroupTitle, currentGroupWidgets));
+                    currentGroupWidgets.clear();
+                }
+            };
+
+            for (const QString& cmdId : tabCfg.commandIds) {
+                const RibbonCommandMeta* meta = RibbonCustomizeDialog::findCommandMeta(cmdId);
+                if (!meta) continue;
+
+                QWidget* w = createCommandWidgetForId(cmdId);
+                if (!w) continue;
+
+                if (!currentGroupWidgets.isEmpty() && currentGroupTitle != meta->groupTitle) {
+                    flushGroup();
+                }
+                currentGroupTitle = meta->groupTitle;
+                currentGroupWidgets.append(w);
+            }
+            flushGroup();
+
+            pageLayout->addStretch(1);
+            const int addedIdx = ribbonTabs->addTab(page, tabCfg.name);
+            ribbonTabs->setTabVisible(addedIdx, tabCfg.visible);
+
+            if (!prevTabTitle.isEmpty() && tabCfg.name == prevTabTitle && tabCfg.visible) {
+                restoreTabIdx = addedIdx;
+            }
+        }
+
+        // Restore previous dropdown states
+        if (m_simTargetCombo && savedSimIdx >= 0 && savedSimIdx < m_simTargetCombo->count()) {
+            m_simTargetCombo->setCurrentIndex(savedSimIdx);
+        }
+        if (m_compModeCombo && savedCompIdx >= 0 && savedCompIdx < m_compModeCombo->count()) {
+            m_compModeCombo->setCurrentIndex(savedCompIdx);
+        }
+        if (m_workplaneCombo && savedWpIdx >= 0 && savedWpIdx < m_workplaneCombo->count()) {
+            m_workplaneCombo->setCurrentIndex(savedWpIdx);
+        }
+        if (m_featureRenderCombo && savedStyleIdx >= 0 && savedStyleIdx < m_featureRenderCombo->count()) {
+            m_featureRenderCombo->setCurrentIndex(savedStyleIdx);
+        }
+
+        if (restoreTabIdx >= 0) {
+            ribbonTabs->setCurrentIndex(restoreTabIdx);
+        } else {
+            for (int i = 0; i < ribbonTabs->count(); ++i) {
+                if (ribbonTabs->isTabVisible(i)) {
+                    ribbonTabs->setCurrentIndex(i);
+                    break;
+                }
+            }
         }
     }
 

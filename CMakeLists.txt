@@ -47,9 +47,13 @@ set(PROJECT_SOURCES
     include/ui/SettingsDialog.h
     src/dmis/QifExporter.cpp       # <--- Add this line
     include/dmis/QifExporter.h
+    src/ui/CalibrationWidget.cpp      # <--- Add this line
+    include/ui/CalibrationWidget.h
+    src/ui/RibbonCustomizeDialog.cpp
+    include/ui/RibbonCustomizeDialog.h
 )
 
-add_executable(OpenCMM ${PROJECT_SOURCES} "include/DMIS/QifExporter.h" "include/DMIS/DmisToken.h" "include/DMIS/DmisAst.h" "include/DMIS/DmisParser.h" "include/DMIS/DmisContext.h" "include/DMIS/DmisInterpreter.h")
+add_executable(OpenCMM ${PROJECT_SOURCES} )
 
 
 target_include_directories(OpenCMM PRIVATE
@@ -96,7 +100,7 @@ add_executable(dmis_parser_test
     src/dmis/DMIS53Parser.cpp
     include/dmis/DMIS53Parser.h
     src/dmis/DMIS53ParserTest.cpp
- "include/DMIS/QifExporter.h" "include/DMIS/DmisToken.h" "include/DMIS/DmisAst.h" "include/DMIS/DmisParser.h" "include/DMIS/DmisContext.h" "include/DMIS/DmisInterpreter.h")
+ )
 
 target_include_directories(dmis_parser_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
