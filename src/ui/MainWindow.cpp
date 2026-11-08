@@ -383,8 +383,21 @@ namespace OpenCMM {
         auto* clearBtnTab2 = createRibbonButton("🗑", "Clear Hits", "#5c2b29", "#e06c75", "#ffffff");
         connect(clearBtnTab2, &QPushButton::clicked, this, &MainWindow::onClearPointsClicked);
 
+        auto* setDatABtn = createRibbonButton("🅰", "Set Datum A", "#1e3a8a", "#60a5fa", "#ffffff");
+        setDatABtn->setToolTip("Probe selected CAD face (or use last solved feature) as Primary Datum A (Level +Z)");
+        connect(setDatABtn, &QPushButton::clicked, this, [this]() { onAssignCadDatumClicked("A"); });
+
+        auto* setDatBBtn = createRibbonButton("🅱", "Set Datum B", "#14532d", "#4ade80", "#ffffff");
+        setDatBBtn->setToolTip("Probe selected CAD face (or use last solved feature) as Secondary Datum B (Rotate +X)");
+        connect(setDatBBtn, &QPushButton::clicked, this, [this]() { onAssignCadDatumClicked("B"); });
+
+        auto* setDatCBtn = createRibbonButton("🅲", "Set Datum C", "#78350f", "#fbbf24", "#ffffff");
+        setDatCBtn->setToolTip("Probe selected CAD face (or use last solved feature) as Tertiary Datum C (Origin 0,0,0)");
+        connect(setDatCBtn, &QPushButton::clicked, this, [this]() { onAssignCadDatumClicked("C"); });
+
         ribbonTabs->addTab(makeRibbonPage({
             createRibbonGroup("Stylus Compensation",{ makeStackedControl("Tip Compensation:", m_compModeCombo), calBtn }),
+            createRibbonGroup("CAD / Feature Datums (A-B-C)",{ setDatABtn, setDatBBtn, setDatCBtn }),
             createRibbonGroup("Part Coordinate System (PCS)",{ alignBtn, m_alignStatusBtn }),
             createRibbonGroup("Quick Buffer",{ clearBtnTab2 })
             }), "Probe & Alignment");
@@ -446,9 +459,22 @@ namespace OpenCMM {
         auto* cadDevBtn = createRibbonButton("🌡", "Surface Dev", "#0d9488", "#4fd1c5", "#ffffff");
         connect(cadDevBtn, &QPushButton::clicked, this, &MainWindow::onEvaluateCadDeviationClicked);
 
+        auto* cadDatABtn = createRibbonButton("🅰", "CAD Datum A", "#1e3a8a", "#60a5fa", "#ffffff");
+        cadDatABtn->setToolTip("Auto-probe the selected CAD face and assign it as Primary Datum A (Level +Z)");
+        connect(cadDatABtn, &QPushButton::clicked, this, [this]() { onAssignCadDatumClicked("A"); });
+
+        auto* cadDatBBtn = createRibbonButton("🅱", "CAD Datum B", "#14532d", "#4ade80", "#ffffff");
+        cadDatBBtn->setToolTip("Auto-probe the selected CAD face and assign it as Secondary Datum B (Rotate +X)");
+        connect(cadDatBBtn, &QPushButton::clicked, this, [this]() { onAssignCadDatumClicked("B"); });
+
+        auto* cadDatCBtn = createRibbonButton("🅲", "CAD Datum C", "#78350f", "#fbbf24", "#ffffff");
+        cadDatCBtn->setToolTip("Auto-probe the selected CAD face and assign it as Tertiary Datum C (Origin 0,0,0)");
+        connect(cadDatCBtn, &QPushButton::clicked, this, [this]() { onAssignCadDatumClicked("C"); });
+
         ribbonTabs->addTab(makeRibbonPage({
             createRibbonGroup("3D CAD Model",{ loadStepBtn, transformCadBtn }),
             createRibbonGroup("Offline CAD Authoring",{ autoProbeTabBtn, loadDmisCadBtn, m_autoRunDmisBtnCad }),
+            createRibbonGroup("Specify CAD Datums (3-2-1)",{ cadDatABtn, cadDatBBtn, cadDatCBtn }),
             createRibbonGroup("Point Cloud vs. CAD",{ cadDevBtn })
             }), "CAD & Deviation");
 
@@ -473,7 +499,6 @@ namespace OpenCMM {
 
     void MainWindow::setupDroDock() {
         auto* droDock = new QDockWidget("LIVE CMM DRO & PROBE STATUS", this);
-        droDock->setObjectName("LiveDroDock");
         m_droContainer = new QWidget(droDock);
         m_droContainer->setStyleSheet(m_isDarkMode ? "background-color: #181a1f;" : "background-color: #f8fafc;");
         auto* layout = new QVBoxLayout(m_droContainer);
@@ -523,7 +548,6 @@ namespace OpenCMM {
 
     void MainWindow::setupFeatureTreeDock() {
         auto* treeDock = new QDockWidget("INSPECTION FEATURE TREE", this);
-        treeDock->setObjectName("FeatureTreeDock");
         m_treeContainer = new QWidget(treeDock);
         m_treeContainer->setStyleSheet(m_isDarkMode ? "background-color: #181a1f;" : "background-color: #f8fafc;");
         auto* dockLayout = new QVBoxLayout(m_treeContainer);
@@ -1073,6 +1097,151 @@ namespace OpenCMM {
         }
     }
 
+    void MainWindow::onAssignCadDatumClicked(const QString& datumLetter) {
+        const size_t prevCount = m_solvedFeatures.size();
+
+        // If a 3D CAD face is currently selected, auto-probe and solve it right on the model
+        if (m_viewport && m_viewport->hasCadModel() && m_viewport->hasSelectedCadFace()) {
+            onAutoProbeCadFaceClicked();
+            if (m_solvedFeatures.size() > prevCount) {
+                assignFeatureAsDatum(m_solvedFeatures.back().id, datumLetter, true);
+                return;
+            }
+        }
+
+        // Otherwise, if a solved feature is highlighted in the Inspection Feature Tree, assign it
+        QTreeWidgetItem* cur = m_featureTree->currentItem();
+        while (cur && cur->parent() != nullptr) {
+            cur = cur->parent();
+        }
+        if (cur && cur != m_activePointsGroup && cur->data(0, ROLE_FEATURE_ID).isValid()) {
+            assignFeatureAsDatum(cur->data(0, ROLE_FEATURE_ID).toInt(), datumLetter, true);
+            return;
+        }
+
+        // Or fallback to the most recently solved feature if one exists
+        if (!m_solvedFeatures.empty()) {
+            assignFeatureAsDatum(m_solvedFeatures.back().id, datumLetter, true);
+            return;
+        }
+
+        QMessageBox::information(
+            this,
+            "Specify Datum " + datumLetter,
+            QString("To specify Datum %1:\n\n"
+                    "1. Left-click any face (Plane, Bore, Boss, or Edge) directly on the 3D CAD model and click 'CAD Datum %1', OR\n"
+                    "2. Right-click any solved feature in the Inspection Feature Tree and choose 'Set as Datum %1'.")
+                .arg(datumLetter)
+        );
+    }
+
+    void MainWindow::assignFeatureAsDatum(int featureId, const QString& datumLetter, bool autoSolve321) {
+        const QString letter = datumLetter.trimmed().toUpper();
+        if (letter != "A" && letter != "B" && letter != "C") return;
+
+        // Clear any previous feature holding the same datum letter
+        for (auto it = m_featureDatumLetters.begin(); it != m_featureDatumLetters.end(); ) {
+            if (it->second == letter && it->first != featureId) {
+                int oldId = it->first;
+                it = m_featureDatumLetters.erase(it);
+                for (int i = 0; i < m_featureTree->topLevelItemCount(); ++i) {
+                    QTreeWidgetItem* top = m_featureTree->topLevelItem(i);
+                    if (top && top->data(0, ROLE_FEATURE_ID).toInt() == oldId) {
+                        QString t = top->text(0);
+                        t.remove(QString(" [DAT %1]").arg(letter));
+                        top->setText(0, t);
+                    }
+                }
+            }
+            else {
+                ++it;
+            }
+        }
+
+        m_featureDatumLetters[featureId] = letter;
+        if (letter == "A") m_datumAFeatureId = featureId;
+        else if (letter == "B") m_datumBFeatureId = featureId;
+        else if (letter == "C") m_datumCFeatureId = featureId;
+
+        // Tag the feature in m_solvedFeatures and QTreeWidget with [DAT A/B/C]
+        const QString badge = QString(" [DAT %1]").arg(letter);
+        for (auto& mf : m_solvedFeatures) {
+            if (mf.id == featureId) {
+                QString n = QString::fromStdString(mf.name);
+                n.remove(" [DAT A]"); n.remove(" [DAT B]"); n.remove(" [DAT C]");
+                n += badge;
+                mf.name = n.toStdString();
+            }
+        }
+
+        for (int i = 0; i < m_featureTree->topLevelItemCount(); ++i) {
+            QTreeWidgetItem* top = m_featureTree->topLevelItem(i);
+            if (top && top->data(0, ROLE_FEATURE_ID).isValid() && top->data(0, ROLE_FEATURE_ID).toInt() == featureId) {
+                QString title = top->text(0);
+                title.remove(" [DAT A]"); title.remove(" [DAT B]"); title.remove(" [DAT C]");
+                title += badge;
+                top->setText(0, title);
+                break;
+            }
+        }
+
+        statusBar()->showMessage(QString("Assigned Feature #%1 as Datum %2.").arg(featureId).arg(letter));
+
+        if (autoSolve321 && m_datumAFeatureId > 0 && m_datumBFeatureId > 0 && m_datumCFeatureId > 0) {
+            tryAutoSolve321Alignment(false);
+        }
+    }
+
+    bool MainWindow::tryAutoSolve321Alignment(bool showFailureDialog) {
+        const MeasuredFeature* featA = nullptr;
+        const MeasuredFeature* featB = nullptr;
+        const MeasuredFeature* featC = nullptr;
+
+        for (const auto& mf : m_solvedFeatures) {
+            if (mf.id == m_datumAFeatureId) featA = &mf;
+            if (mf.id == m_datumBFeatureId) featB = &mf;
+            if (mf.id == m_datumCFeatureId) featC = &mf;
+        }
+
+        if (!featA || !featB || !featC) {
+            return false;
+        }
+
+        Alignment321Result alignRes = MetrologyMath::compute321Alignment(*featA, *featB, *featC);
+        if (!alignRes.success) {
+            if (showFailureDialog) {
+                playSolveChime(false);
+                QMessageBox::warning(this, "3-2-1 Alignment Notice",
+                    "Could not compute an orthogonal 3-2-1 coordinate frame from Datums A, B, and C.\n"
+                    "Ensure Datum A is a 3D Plane and Datums B & C define a non-collinear axis/origin.");
+            }
+            return false;
+        }
+
+        m_pcsMatrix = alignRes.transformationMatrix;
+        m_isPartAligned = true;
+
+        if (m_alignStatusBtn) {
+            m_alignStatusBtn->setChecked(true);
+            m_alignStatusBtn->setText("🌐\nPCS (A-B-C)");
+            m_alignStatusBtn->setStyleSheet(
+                "QPushButton { background-color: #1e4620; color: #98c379; border: 1px solid #98c379; "
+                "border-radius: 4px; padding: 4px 8px; font-size: 11px; font-weight: bold; }");
+        }
+
+        if (m_viewport) {
+            m_viewport->setPcsTriadVisual(m_pcsMatrix, 45.0);
+        }
+
+        updateDroDisplay();
+        playSolveChime(true);
+        statusBar()->showMessage(QString("3-2-1 Part Coordinate System (PCS) Active — Aligned to Datums A (%1), B (%2), C (%3).")
+            .arg(QString::fromStdString(featA->name))
+            .arg(QString::fromStdString(featB->name))
+            .arg(QString::fromStdString(featC->name)));
+        return true;
+    }
+
     void MainWindow::onLoadDmisProgramClicked() {
         stopDmisAutoRun();
 
@@ -1100,6 +1269,15 @@ namespace OpenCMM {
         m_solvedFeatures.clear();
         m_featureDmisHits.clear();
         m_featureRefIds.clear();
+        m_featureDatumLetters.clear();
+        m_datumAFeatureId = -1;
+        m_datumBFeatureId = -1;
+        m_datumCFeatureId = -1;
+        m_isPartAligned = false;
+        m_pcsMatrix = Eigen::Matrix4d::Identity();
+        if (m_viewport) {
+            m_viewport->clearPcsTriadVisual();
+        }
         m_featureCounter = 1;
         m_plannedDmisTreeItems.clear();
         m_activeDmisTreeItem = nullptr;
@@ -1130,8 +1308,11 @@ namespace OpenCMM {
         // Populate Inspection Feature Tree with PLANNED DMIS features
         for (size_t i = 0; i < m_dmisProgram.features.size(); ++i) {
             const auto& df = m_dmisProgram.features[i];
-            const QString featTitle = QString("%1 (%2)")
-                .arg(QString::fromStdString(df.label), QString::fromStdString(df.featureType));
+            const QString datSuffix = df.datumLetter.empty()
+                ? QString()
+                : QString(" [DAT %1]").arg(QString::fromStdString(df.datumLetter));
+            const QString featTitle = QString("%1 (%2)%3")
+                .arg(QString::fromStdString(df.label), QString::fromStdString(df.featureType), datSuffix);
             const double nomVal = (df.featureType == "CIRCLE" || df.featureType == "CYLNDR" || df.featureType == "CYL" || df.featureType == "SPHERE")
                 ? df.nominalDiameter : 0.0;
 
@@ -1501,6 +1682,16 @@ namespace OpenCMM {
                 else if (fType == "LINE" && count >= 2) {
                     onFitLineClicked();
                 }
+
+                // If the just-solved DMIS feature is a declared Datum (DATDEF A, B, or C), assign it and auto-align when A-B-C are ready
+                if (!df.datumLetter.empty() && !m_solvedFeatures.empty()) {
+                    assignFeatureAsDatum(
+                        m_solvedFeatures.back().id,
+                        QString::fromStdString(df.datumLetter),
+                        m_dmisProgram.datumAlignment.has321Alignment
+                    );
+                }
+
                 startDmisGuidedFeature(m_activeDmisFeatureIdx + 1);
             }
         }
@@ -1633,7 +1824,20 @@ namespace OpenCMM {
                          << QString::number(pt.normalVec.y(), 'f', 5) << ", "
                          << QString::number(pt.normalVec.z(), 'f', 5) << "\n";
                 }
-                dmis << "ENDMES\n\n";
+                dmis << "ENDMES\n";
+
+                if (m_featureDatumLetters.count(mf.id) && !m_featureDatumLetters[mf.id].isEmpty()) {
+                    const QString datLet = m_featureDatumLetters[mf.id];
+                    dmis << "DATDEF/F(" << rawLabel << "), DAT(" << datLet << ")\n";
+                }
+                dmis << "\n";
+            }
+
+            if (m_datumAFeatureId > 0 && m_datumBFeatureId > 0 && m_datumCFeatureId > 0) {
+                dmis << "$$ =========================================================\n"
+                     << "$$ Automated 3-2-1 Datum Reference Frame Alignment (PCS)\n"
+                     << "D(PCS_ABC) = DATSET/DAT(A), ZDIR, ZORIG, DAT(B), XDIR, YORIG, DAT(C), XORIG\n"
+                     << "SAVE/D(PCS_ABC)\n\n";
             }
 
             dmis << "ENDFIL\n";
@@ -2402,28 +2606,13 @@ namespace OpenCMM {
         const MeasuredFeature& rotateFeat = m_solvedFeatures[rotateCombo->currentData().toInt()];
         const MeasuredFeature& originFeat = m_solvedFeatures[originCombo->currentData().toInt()];
 
-        Alignment321Result alignRes = MetrologyMath::compute321Alignment(levelFeat, rotateFeat, originFeat);
-        if (!alignRes.success) {
-            playSolveChime(false);
-            QMessageBox::critical(this, "Alignment Failed",
-                "Could not build an orthogonal 3-2-1 coordinate frame from the selected features.");
+        assignFeatureAsDatum(levelFeat.id, "A", false);
+        assignFeatureAsDatum(rotateFeat.id, "B", false);
+        assignFeatureAsDatum(originFeat.id, "C", false);
+
+        if (!tryAutoSolve321Alignment(true)) {
             return;
         }
-
-        m_pcsMatrix = alignRes.transformationMatrix;
-        m_isPartAligned = true;
-
-        if (m_alignStatusBtn) {
-            m_alignStatusBtn->setChecked(true);
-            m_alignStatusBtn->setText("🌐\nPCS (Aligned)");
-            m_alignStatusBtn->setStyleSheet(
-                "QPushButton { background-color: #1e4620; color: #98c379; border: 1px solid #98c379; "
-                "border-radius: 4px; padding: 4px 8px; font-size: 11px; font-weight: bold; }");
-        }
-
-        updateDroDisplay();
-        playSolveChime(true);
-        statusBar()->showMessage("3-2-1 Part Coordinate System (PCS) active.");
     }
 
     void MainWindow::onEditToleranceClicked() {
@@ -2559,12 +2748,34 @@ namespace OpenCMM {
             return; // Don't show context menu for empty space or the active point buffer header
         }
 
+        QTreeWidgetItem* topItem = item;
+        while (topItem->parent() != nullptr && topItem->parent() != m_activePointsGroup) {
+            topItem = topItem->parent();
+        }
+
         QMenu contextMenu(this);
+        QAction* datAAction = nullptr;
+        QAction* datBAction = nullptr;
+        QAction* datCAction = nullptr;
+        if (topItem && topItem != m_activePointsGroup && topItem->data(0, ROLE_FEATURE_ID).isValid()) {
+            datAAction = contextMenu.addAction("🅰 Set as Primary Datum A (Level +Z)");
+            datBAction = contextMenu.addAction("🅱 Set as Secondary Datum B (Rotate +X)");
+            datCAction = contextMenu.addAction("🅲 Set as Tertiary Datum C (Origin 0,0,0)");
+            contextMenu.addSeparator();
+        }
         QAction* deleteAction = contextMenu.addAction("🗑 Delete Feature");
 
         QAction* selectedAction = contextMenu.exec(m_featureTree->mapToGlobal(pos));
+        if (!selectedAction) return;
+
         if (selectedAction == deleteAction) {
             onDeleteSelectedFeature();
+        }
+        else if (topItem && topItem->data(0, ROLE_FEATURE_ID).isValid()) {
+            const int fId = topItem->data(0, ROLE_FEATURE_ID).toInt();
+            if (selectedAction == datAAction) assignFeatureAsDatum(fId, "A", true);
+            else if (selectedAction == datBAction) assignFeatureAsDatum(fId, "B", true);
+            else if (selectedAction == datCAction) assignFeatureAsDatum(fId, "C", true);
         }
     }
 
@@ -2627,9 +2838,14 @@ namespace OpenCMM {
         m_activeDmisRefId.clear();
         m_featureDmisHits.clear();
         m_featureRefIds.clear();
+        m_featureDatumLetters.clear();
+        m_datumAFeatureId = -1;
+        m_datumBFeatureId = -1;
+        m_datumCFeatureId = -1;
         if (m_viewport) {
             m_viewport->clearProgramTargetMarkers();
             m_viewport->clearHitMarkers();
+            m_viewport->clearPcsTriadVisual();
         }
         m_solvedFeatures.clear();
         m_featureCounter = 1;

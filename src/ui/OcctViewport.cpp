@@ -452,6 +452,78 @@ namespace OpenCMM {
         m_context->UpdateCurrentViewer();
     }
 
+    void OcctViewport::clearPcsTriadVisual() {
+        if (m_context.IsNull()) {
+            return;
+        }
+        for (const auto& ais : m_pcsTriadShapes) {
+            if (!ais.IsNull()) {
+                m_context->Remove(ais, Standard_False);
+            }
+        }
+        m_pcsTriadShapes.clear();
+        m_context->UpdateCurrentViewer();
+    }
+
+    void OcctViewport::setPcsTriadVisual(const Eigen::Matrix4d& pcsMatrix, double axisLengthMm) {
+        if (m_context.IsNull()) {
+            return;
+        }
+
+        for (const auto& ais : m_pcsTriadShapes) {
+            if (!ais.IsNull()) {
+                m_context->Remove(ais, Standard_False);
+            }
+        }
+        m_pcsTriadShapes.clear();
+
+        // pcsMatrix maps Machine (World) -> PCS: P_pcs = R * P_world + t
+        // Therefore, PCS Origin in World is O_world = -R^T * t,
+        // and PCS unit axes in World are rows 0, 1, 2 of R.
+        const Eigen::Matrix3d R = pcsMatrix.block<3, 3>(0, 0);
+        const Eigen::Vector3d t = pcsMatrix.block<3, 1>(0, 3);
+        const Eigen::Vector3d originW = -R.transpose() * t;
+
+        const gp_Pnt origPt(originW.x(), originW.y(), originW.z());
+
+        // Golden origin sphere at PCS (0,0,0)
+        TopoDS_Shape origSph = BRepPrimAPI_MakeSphere(origPt, 2.2).Shape();
+        Handle(AIS_Shape) aisOrig = new AIS_Shape(origSph);
+        aisOrig->SetColor(Quantity_NOC_GOLD);
+        m_context->Display(aisOrig, AIS_Shaded, -1, Standard_False);
+        m_pcsTriadShapes.push_back(aisOrig);
+
+        const Quantity_Color axisColors[3] = {
+            Quantity_Color(0.88, 0.42, 0.46, Quantity_TOC_RGB), // +X Datum Red
+            Quantity_Color(0.60, 0.76, 0.47, Quantity_TOC_RGB), // +Y Datum Green
+            Quantity_Color(0.38, 0.69, 0.94, Quantity_TOC_RGB)  // +Z Datum Blue
+        };
+
+        for (int a = 0; a < 3; ++a) {
+            Eigen::Vector3d dirVec = R.row(a).transpose();
+            if (dirVec.norm() <= 1e-6) continue;
+            dirVec.normalize();
+
+            gp_Dir gDir(dirVec.x(), dirVec.y(), dirVec.z());
+            gp_Ax2 ax(origPt, gDir);
+            TopoDS_Shape axisCyl = BRepPrimAPI_MakeCylinder(ax, 0.95, axisLengthMm).Shape();
+            Handle(AIS_Shape) aisAxis = new AIS_Shape(axisCyl);
+            aisAxis->SetColor(axisColors[a]);
+            m_context->Display(aisAxis, AIS_Shaded, -1, Standard_False);
+            m_pcsTriadShapes.push_back(aisAxis);
+
+            // Tip marker sphere at end of axis
+            gp_Pnt tipPt = origPt.Translated(gp_Vec(gDir).Multiplied(axisLengthMm));
+            TopoDS_Shape tipSph = BRepPrimAPI_MakeSphere(tipPt, 1.8).Shape();
+            Handle(AIS_Shape) aisTip = new AIS_Shape(tipSph);
+            aisTip->SetColor(axisColors[a]);
+            m_context->Display(aisTip, AIS_Shaded, -1, Standard_False);
+            m_pcsTriadShapes.push_back(aisTip);
+        }
+
+        m_context->UpdateCurrentViewer();
+    }
+
     void OcctViewport::setProgramTargetMarkers(
         const std::vector<gp_Pnt>& surfacePts,
         const std::vector<gp_Dir>& normals,

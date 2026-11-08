@@ -454,6 +454,19 @@ namespace OpenCMM {
         if (rotateFeat.kind == FeatureKind::Line2D) {
             rawX = rotateFeat.primaryVector;
         }
+        else if (rotateFeat.kind == FeatureKind::Plane3D) {
+            // Secondary Datum is a side plane (e.g., front or side wall):
+            // The intersection line of Primary Plane (Z) and Secondary Plane runs along zAxis.cross(nB)
+            Eigen::Vector3d nB = rotateFeat.primaryVector.normalized();
+            Eigen::Vector3d edgeDir = nB.cross(zAxis);
+            if (edgeDir.norm() > 1e-4) {
+                // Keep +X pointing in the positive world X/Y hemisphere by default
+                if (edgeDir.x() < -1e-4 || (std::abs(edgeDir.x()) <= 1e-4 && edgeDir.y() < 0.0)) {
+                    edgeDir = -edgeDir;
+                }
+                rawX = edgeDir;
+            }
+        }
         else {
             Eigen::Vector3d diff = rotateFeat.location - originFeat.location;
             if (diff.norm() > 1e-4) {
@@ -469,12 +482,40 @@ namespace OpenCMM {
         Eigen::Vector3d xAxis = rawX.normalized();
         Eigen::Vector3d yAxis = zAxis.cross(xAxis).normalized();
 
+        // Compute true 3-2-1 datum origin:
+        // Start from originFeat.location, project Z onto Primary Datum Plane (levelPlane),
+        // and if rotateFeat/originFeat are Planes, intersect the three datum planes!
+        Eigen::Vector3d origin = originFeat.location;
+        if (rotateFeat.kind == FeatureKind::Plane3D && originFeat.kind == FeatureKind::Plane3D) {
+            // Solve 3-plane intersection:
+            // nA . P = nA . pA
+            // nB . P = nB . pB
+            // nC . P = nC . pC
+            Eigen::Matrix3d M;
+            M.row(0) = zAxis.transpose();
+            M.row(1) = rotateFeat.primaryVector.normalized().transpose();
+            M.row(2) = originFeat.primaryVector.normalized().transpose();
+            if (std::abs(M.determinant()) > 1e-5) {
+                Eigen::Vector3d rhs(
+                    zAxis.dot(levelPlane.location),
+                    M.row(1).dot(rotateFeat.location),
+                    M.row(2).dot(originFeat.location)
+                );
+                origin = M.colPivHouseholderQr().solve(rhs);
+            }
+            else {
+                origin = origin - ((origin - levelPlane.location).dot(zAxis)) * zAxis;
+            }
+        }
+        else {
+            // Project originFeat (e.g. Bore center or point) onto Primary Datum Plane (Z = 0 on Datum A)
+            origin = origin - ((origin - levelPlane.location).dot(zAxis)) * zAxis;
+        }
+
         Eigen::Matrix3d R;
         R.row(0) = xAxis.transpose();
         R.row(1) = yAxis.transpose();
         R.row(2) = zAxis.transpose();
-
-        Eigen::Vector3d origin = originFeat.location;
 
         res.transformationMatrix.setIdentity();
         res.transformationMatrix.block<3, 3>(0, 0) = R;

@@ -5,6 +5,7 @@
 
 #include <string>
 #include <vector>
+#include <unordered_map>
 
 namespace OpenCMM {
 
@@ -27,6 +28,7 @@ namespace OpenCMM {
     struct DmisPlannedFeature {
         std::string label;        // e.g., "FEAT_1"
         std::string refId;        // Persistent QIF QPId UUID from REFID/
+        std::string datumLetter;  // "A", "B", "C", or "" if not a datum
         std::string featureType;  // "PLANE", "CIRCLE", "CYLNDR", "SPHERE", "LINE"
         std::string boundarySub;  // "INNER", "OUTER", "CART", "UNBND"
         double nomX = 0.0;
@@ -41,6 +43,16 @@ namespace OpenCMM {
         std::vector<DmisTargetPoint> points;
     };
 
+    struct DmisDatumSetRule {
+        bool has321Alignment = false;
+        std::string primaryDatumLetter = "A";   // Level (+Z)
+        std::string secondaryDatumLetter = "B"; // Rotate (+X)
+        std::string tertiaryDatumLetter = "C";  // Origin (0,0,0)
+        std::string primaryFeatureLabel;
+        std::string secondaryFeatureLabel;
+        std::string tertiaryFeatureLabel;
+    };
+
     struct DmisProgramData {
         bool valid = false;
         std::string partName = "DMIS-PART";
@@ -48,6 +60,8 @@ namespace OpenCMM {
         double stylusDiameterMm = 3.0;
         double clearanceZMm = 100.0;
         std::vector<DmisPlannedFeature> features;
+        std::unordered_map<std::string, std::string> datumLetterToFeature; // e.g. "A" -> "DATUM_A"
+        DmisDatumSetRule datumAlignment;
         std::string errorMessage;
     };
 

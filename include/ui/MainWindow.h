@@ -48,6 +48,7 @@ namespace OpenCMM {
 
         void onSimulateHitClicked();
         void onAutoProbeCadFaceClicked();
+        void onAssignCadDatumClicked(const QString& datumLetter);
         void onLoadDmisProgramClicked();
         void onToggleAutoRunDmisClicked();
         void onDmisPlaybackTick();
@@ -88,6 +89,8 @@ namespace OpenCMM {
         void startDmisGuidedFeature(int featureIndex);
         void updateDmisTargetVisuals();
         void stopDmisAutoRun();
+        void assignFeatureAsDatum(int featureId, const QString& datumLetter, bool autoSolve321 = true);
+        bool tryAutoSolve321Alignment(bool showFailureDialog = false);
 
         void applyEvaluationToTreeItem(QTreeWidgetItem* item,
             double actualMm,
@@ -130,11 +133,15 @@ namespace OpenCMM {
         Eigen::Matrix4d m_pcsMatrix = Eigen::Matrix4d::Identity();
         bool m_isPartAligned = false;
         QPushButton* m_alignStatusBtn = nullptr;
+        int m_datumAFeatureId = -1;
+        int m_datumBFeatureId = -1;
+        int m_datumCFeatureId = -1;
 
         ::std::vector<Eigen::Vector3d> m_recordedHits;
         ::std::vector<DmisPointRecord> m_recordedDmisHits;
         ::std::map<int, ::std::vector<DmisPointRecord>> m_featureDmisHits;
         ::std::map<int, QString> m_featureRefIds;
+        ::std::map<int, QString> m_featureDatumLetters; // featureId -> "A", "B", "C"
         ::std::vector<MeasuredFeature> m_solvedFeatures;
 
         // DMIS 5.3 Guided Execution & Offline Playback State

@@ -90,6 +90,10 @@ namespace OpenCMM {
             double probeRadiusMm = 1.5);
         void clearProgramTargetMarkers();
 
+        // 3-2-1 Part Coordinate System (PCS) Datum Triad Visualization
+        void setPcsTriadVisual(const Eigen::Matrix4d& pcsMatrix, double axisLengthMm = 45.0);
+        void clearPcsTriadVisual();
+
         void setModelDisplayMode(ModelDisplayMode mode);
         void setModelTransparency(double transparency);
         void setGraniteVisible(bool visible);
@@ -164,6 +168,7 @@ namespace OpenCMM {
         std::vector<Handle(AIS_Shape)> m_activeHitMarkers;
         std::vector<Handle(AIS_Shape)> m_solvedHitMarkers;
         std::vector<Handle(AIS_Shape)> m_programTargetMarkers;
+        std::vector<Handle(AIS_Shape)> m_pcsTriadShapes;
 
         ModelDisplayMode m_displayMode = ModelDisplayMode::ShadedWithEdges;
         double m_transparency = 0.0;

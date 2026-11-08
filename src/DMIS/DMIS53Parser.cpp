@@ -32,12 +32,21 @@ namespace OpenCMM {
             return t;
         }
 
+        std::string extractParenLabel(const std::string& token, const std::string& prefix) {
+            std::string t = trimStr(token);
+            std::string u = toUpperStr(t);
+            std::string p = toUpperStr(prefix) + "(";
+            if (u.rfind(p, 0) == 0 && u.back() == ')' && t.size() > p.size() + 1) {
+                return trimStr(t.substr(p.size(), t.size() - p.size() - 1));
+            }
+            return t;
+        }
+
         std::string extractFeatureLabel(const std::string& token) {
             std::string t = trimStr(token);
             std::string u = toUpperStr(t);
-            if (u.rfind("F(", 0) == 0 && u.back() == ')' && t.size() > 3) {
-                return trimStr(t.substr(2, t.size() - 3));
-            }
+            if (u.rfind("F(", 0) == 0) return extractParenLabel(t, "F");
+            if (u.rfind("FA(", 0) == 0) return extractParenLabel(t, "FA");
             return t;
         }
 
@@ -91,14 +100,11 @@ namespace OpenCMM {
     DMIS53Parser::~DMIS53Parser() = default;
 
     bool DMIS53Parser::runSelfTest() {
-        // Basic self-test check for DMIS 5.3 Conformance (64-char limit & REFID)
         return true;
     }
 
     std::string DMIS53Parser::validateAndTrimIdentifier(const std::string& rawIdent) {
         std::string ident = trimStr(rawIdent);
-
-        // DMIS 5.3 specification limit: max 64 characters
         if (ident.length() > 64) {
             throw std::runtime_error("DMIS 5.3 Error: Identifier exceeds the maximum 64-character limit: " + ident);
         }
@@ -125,11 +131,7 @@ namespace OpenCMM {
         mapping.targetObject = tokens[0];
         mapping.idType = tokens[1];
 
-        if (mapping.idType == "NAME" && tokens.size() >= 4) {
-            mapping.keyOrDocId = unquoteStr(tokens[2]);
-            mapping.valueOrObjId = unquoteStr(tokens[3]);
-        }
-        else if (mapping.idType == "QIF" && tokens.size() >= 4) {
+        if ((mapping.idType == "NAME" || mapping.idType == "QIF") && tokens.size() >= 4) {
             mapping.keyOrDocId = unquoteStr(tokens[2]);
             mapping.valueOrObjId = unquoteStr(tokens[3]);
         }
@@ -191,7 +193,6 @@ namespace OpenCMM {
                 continue;
             }
 
-            // Handle DMIS line continuation character '&' or '$'
             if (!line.empty() && line.back() == '&') {
                 accumulatedLine += line.substr(0, line.size() - 1) + " ";
                 continue;
@@ -201,7 +202,6 @@ namespace OpenCMM {
                 accumulatedLine.clear();
             }
 
-            // Strip trailing '$' statement terminator if present
             if (!line.empty() && line.back() == '$') {
                 line.pop_back();
                 line = trimStr(line);
@@ -272,7 +272,46 @@ namespace OpenCMM {
                 continue;
             }
 
-            // 6. Feature Definition: F(LABEL) = FEAT/TYPE, ...
+            // 6. DATDEF/FA(DATUM_A), DAT(A)  or  DATDEF/F(DATUM_A), DAT(A)
+            if (upperLine.rfind("DATDEF/", 0) == 0) {
+                auto tokens = splitCsvRespectingQuotes(upperLine.substr(7));
+                if (tokens.size() >= 2) {
+                    std::string featLbl = extractFeatureLabel(tokens[0]);
+                    std::string datLetter = extractParenLabel(tokens[1], "DAT");
+                    if (!featLbl.empty() && !datLetter.empty()) {
+                        prog.datumLetterToFeature[datLetter] = featLbl;
+                        auto it = featureIndexByLabel.find(featLbl);
+                        if (it != featureIndexByLabel.end()) {
+                            prog.features[it->second].datumLetter = datLetter;
+                        }
+                    }
+                }
+                continue;
+            }
+
+            // 7. DATSET/DAT(A), ZDIR, ZORIG, DAT(B), XDIR, YORIG, DAT(C), XORIG
+            if (upperLine.find("DATSET/") != std::string::npos) {
+                size_t dsPos = upperLine.find("DATSET/");
+                auto tokens = splitCsvRespectingQuotes(upperLine.substr(dsPos + 7));
+                std::vector<std::string> datLetters;
+                for (const auto& tk : tokens) {
+                    if (tk.rfind("DAT(", 0) == 0) {
+                        std::string dl = extractParenLabel(tk, "DAT");
+                        if (!dl.empty() && std::find(datLetters.begin(), datLetters.end(), dl) == datLetters.end()) {
+                            datLetters.push_back(dl);
+                        }
+                    }
+                }
+                if (datLetters.size() >= 3) {
+                    prog.datumAlignment.has321Alignment = true;
+                    prog.datumAlignment.primaryDatumLetter = datLetters[0];
+                    prog.datumAlignment.secondaryDatumLetter = datLetters[1];
+                    prog.datumAlignment.tertiaryDatumLetter = datLetters[2];
+                }
+                continue;
+            }
+
+            // 8. Feature Definition: F(LABEL) = FEAT/TYPE, ...
             if (upperLine.rfind("F(", 0) == 0 && upperLine.find("FEAT/") != std::string::npos) {
                 size_t eqPos = line.find('=');
                 size_t featPos = upperLine.find("FEAT/");
@@ -329,7 +368,7 @@ namespace OpenCMM {
                 continue;
             }
 
-            // 7. MEAS/TYPE, F(LABEL), COUNT
+            // 9. MEAS/TYPE, F(LABEL), COUNT
             if (upperLine.rfind("MEAS/", 0) == 0) {
                 auto tokens = splitCsvRespectingQuotes(line.substr(5));
                 if (tokens.size() >= 2) {
@@ -345,13 +384,13 @@ namespace OpenCMM {
                 continue;
             }
 
-            // 8. ENDMES
+            // 10. ENDMES
             if (upperLine.rfind("ENDMES", 0) == 0) {
                 insideMeasBlock = false;
                 continue;
             }
 
-            // 9. PTMEAS/CART, X, Y, Z, I, J, K
+            // 11. PTMEAS/CART, X, Y, Z, I, J, K
             if (insideMeasBlock && upperLine.rfind("PTMEAS/", 0) == 0 && currentMeasFeatureIdx < prog.features.size()) {
                 auto tokens = splitCsvRespectingQuotes(line.substr(7));
                 std::vector<double> nums;
@@ -378,6 +417,28 @@ namespace OpenCMM {
                 }
                 continue;
             }
+        }
+
+        // Resolve DATDEF feature labels into DmisPlannedFeature::datumLetter and DmisDatumSetRule
+        for (const auto& kv : prog.datumLetterToFeature) {
+            auto it = featureIndexByLabel.find(kv.second);
+            if (it != featureIndexByLabel.end()) {
+                prog.features[it->second].datumLetter = kv.first;
+            }
+        }
+        if (prog.datumAlignment.has321Alignment) {
+            prog.datumAlignment.primaryFeatureLabel = prog.datumLetterToFeature[prog.datumAlignment.primaryDatumLetter];
+            prog.datumAlignment.secondaryFeatureLabel = prog.datumLetterToFeature[prog.datumAlignment.secondaryDatumLetter];
+            prog.datumAlignment.tertiaryFeatureLabel = prog.datumLetterToFeature[prog.datumAlignment.tertiaryDatumLetter];
+        }
+        else if (prog.datumLetterToFeature.count("A") && prog.datumLetterToFeature.count("B") && prog.datumLetterToFeature.count("C")) {
+            prog.datumAlignment.has321Alignment = true;
+            prog.datumAlignment.primaryDatumLetter = "A";
+            prog.datumAlignment.secondaryDatumLetter = "B";
+            prog.datumAlignment.tertiaryDatumLetter = "C";
+            prog.datumAlignment.primaryFeatureLabel = prog.datumLetterToFeature["A"];
+            prog.datumAlignment.secondaryFeatureLabel = prog.datumLetterToFeature["B"];
+            prog.datumAlignment.tertiaryFeatureLabel = prog.datumLetterToFeature["C"];
         }
 
         prog.valid = !prog.features.empty();
