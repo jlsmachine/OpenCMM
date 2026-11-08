@@ -50,6 +50,7 @@ namespace OpenCMM {
         void onAutoProbeCadFaceClicked();
         void onAssignCadDatumClicked(const QString& datumLetter);
         void onLoadDmisProgramClicked();
+        void onExportDmisProgramClicked();
         void onToggleAutoRunDmisClicked();
         void onDmisPlaybackTick();
         void onCalibrateProbeClicked();
@@ -91,6 +92,7 @@ namespace OpenCMM {
         void stopDmisAutoRun();
         void assignFeatureAsDatum(int featureId, const QString& datumLetter, bool autoSolve321 = true);
         bool tryAutoSolve321Alignment(bool showFailureDialog = false);
+        bool writeDmisProgramToFile(const QString& filePath, const QString& partName);
 
         void applyEvaluationToTreeItem(QTreeWidgetItem* item,
             double actualMm,

@@ -46,6 +46,9 @@
 #include <QMenu>
 #include <QShortcut>
 #include <QSettings>
+#include <QPdfWriter>
+#include <QPageLayout>
+#include <QPainter>
 #include "dmis/QifExporter.h"
 
 namespace {
@@ -332,6 +335,10 @@ namespace OpenCMM {
         autoProbeCadBtn->setToolTip("Automatically sample and solve the currently selected 3D CAD face (or Ctrl+Left-Click on CAD to probe individual points)");
         connect(autoProbeCadBtn, &QPushButton::clicked, this, &MainWindow::onAutoProbeCadFaceClicked);
 
+        auto* saveDmisHomeBtn = createRibbonButton("💾", "Save DMIS", "#1e3a8a", "#60a5fa", "#ffffff");
+        saveDmisHomeBtn->setToolTip("Export solved features, CAD touch points, and 3-2-1 Datums to a DMIS 5.3 (.dmis) program");
+        connect(saveDmisHomeBtn, &QPushButton::clicked, this, &MainWindow::onExportDmisProgramClicked);
+
         auto* loadDmisHomeBtn = createRibbonButton("📂", "Load DMIS", "#1f7a8c", "#61afef", "#ffffff");
         loadDmisHomeBtn->setToolTip("Load a DMIS 5.3 (.dmis) inspection program and display 3D target guide markers");
         connect(loadDmisHomeBtn, &QPushButton::clicked, this, &MainWindow::onLoadDmisProgramClicked);
@@ -345,7 +352,7 @@ namespace OpenCMM {
             createRibbonGroup("Machine DRO",{ zeroBtn, unitsBtn }),
             createRibbonGroup("Point Buffer",{ clearBtn }),
             createRibbonGroup("Offline Simulator & CAD",{ makeStackedControl("Virtual Target:", m_simTargetCombo), simHitBtn, autoProbeCadBtn }),
-            createRibbonGroup("DMIS 5.3 Execution",{ loadDmisHomeBtn, m_autoRunDmisBtnHome })
+            createRibbonGroup("DMIS 5.3 Program",{ saveDmisHomeBtn, loadDmisHomeBtn, m_autoRunDmisBtnHome })
             }), "Home");
 
         // --- Probe & Alignment Tab ---
@@ -452,6 +459,9 @@ namespace OpenCMM {
         connect(transformCadBtn, &QPushButton::clicked, this, &MainWindow::onTransformCadClicked);
         auto* autoProbeTabBtn = createRibbonButton("🎯", "Auto-Probe Face", "#2b6cb0", "#61afef", "#ffffff");
         connect(autoProbeTabBtn, &QPushButton::clicked, this, &MainWindow::onAutoProbeCadFaceClicked);
+        auto* saveDmisCadBtn = createRibbonButton("💾", "Save DMIS", "#1e3a8a", "#60a5fa", "#ffffff");
+        saveDmisCadBtn->setToolTip("Export authored CAD features and Datums to a DMIS 5.3 (.dmis) inspection program");
+        connect(saveDmisCadBtn, &QPushButton::clicked, this, &MainWindow::onExportDmisProgramClicked);
         auto* loadDmisCadBtn = createRibbonButton("📂", "Load DMIS", "#1f7a8c", "#61afef", "#ffffff");
         connect(loadDmisCadBtn, &QPushButton::clicked, this, &MainWindow::onLoadDmisProgramClicked);
         m_autoRunDmisBtnCad = createRibbonButton("▶", "Run DMIS", "#2f855a", "#98c379", "#ffffff");
@@ -473,7 +483,7 @@ namespace OpenCMM {
 
         ribbonTabs->addTab(makeRibbonPage({
             createRibbonGroup("3D CAD Model",{ loadStepBtn, transformCadBtn }),
-            createRibbonGroup("Offline CAD Authoring",{ autoProbeTabBtn, loadDmisCadBtn, m_autoRunDmisBtnCad }),
+            createRibbonGroup("Offline CAD Authoring",{ autoProbeTabBtn, saveDmisCadBtn, loadDmisCadBtn, m_autoRunDmisBtnCad }),
             createRibbonGroup("Specify CAD Datums (3-2-1)",{ cadDatABtn, cadDatBBtn, cadDatCBtn }),
             createRibbonGroup("Point Cloud vs. CAD",{ cadDevBtn })
             }), "CAD & Deviation");
@@ -485,13 +495,17 @@ namespace OpenCMM {
         auto* clearAllFeaturesBtn = createRibbonButton("🧹", "Clear All", "#5c2b29", "#e06c75", "#ffffff");
         connect(clearAllFeaturesBtn, &QPushButton::clicked, this, &MainWindow::onClearAllFeaturesClicked);
 
+        auto* saveDmisRepBtn = createRibbonButton("💾", "Export DMIS", "#1e3a8a", "#60a5fa", "#ffffff");
+        saveDmisRepBtn->setToolTip("Export inspection program to DMIS 5.3 (.dmis)");
+        connect(saveDmisRepBtn, &QPushButton::clicked, this, &MainWindow::onExportDmisProgramClicked);
+
         auto* exportBtn = createRibbonButton("📄", "Export Report", "#1f7a8c", "#61afef", "#ffffff");
         connect(exportBtn, &QPushButton::clicked, this, &MainWindow::onExportReportClicked);
 
         ribbonTabs->addTab(makeRibbonPage({
             createRibbonGroup("Feature Evaluation",{ editTolBtn }),
             createRibbonGroup("Manage Features",{ clearAllFeaturesBtn }),
-            createRibbonGroup("Quality Documentation",{ exportBtn })
+            createRibbonGroup("Quality & DMIS Export",{ saveDmisRepBtn, exportBtn })
             }), "Reporting");
 
         setMenuWidget(ribbonTabs);
@@ -499,6 +513,7 @@ namespace OpenCMM {
 
     void MainWindow::setupDroDock() {
         auto* droDock = new QDockWidget("LIVE CMM DRO & PROBE STATUS", this);
+        droDock->setObjectName("LiveDroDock");
         m_droContainer = new QWidget(droDock);
         m_droContainer->setStyleSheet(m_isDarkMode ? "background-color: #181a1f;" : "background-color: #f8fafc;");
         auto* layout = new QVBoxLayout(m_droContainer);
@@ -548,6 +563,7 @@ namespace OpenCMM {
 
     void MainWindow::setupFeatureTreeDock() {
         auto* treeDock = new QDockWidget("INSPECTION FEATURE TREE", this);
+        treeDock->setObjectName("FeatureTreeDock");
         m_treeContainer = new QWidget(treeDock);
         m_treeContainer->setStyleSheet(m_isDarkMode ? "background-color: #181a1f;" : "background-color: #f8fafc;");
         auto* dockLayout = new QVBoxLayout(m_treeContainer);
@@ -1707,17 +1723,135 @@ namespace OpenCMM {
         m_activePointsGroup->setText(2, "0 pts");
         if (m_viewport) { m_viewport->commitActiveHitMarkers(); }
     }
-    void MainWindow::onExportReportClicked() {
-        if (m_featureTree->topLevelItemCount() <= 1) {
-            QMessageBox::information(this, "No Features to Export", "Please measure and solve at least one feature before exporting an inspection report.");
+    bool MainWindow::writeDmisProgramToFile(const QString& filePath, const QString& partName) {
+        QFile dmisFile(filePath);
+        if (!dmisFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            QMessageBox::critical(this, "Export Error", "Could not write DMIS 5.3 file to:\n" + filePath);
+            return false;
+        }
+
+        QTextStream dmis(&dmisFile);
+        const QString timestamp = QDateTime::currentDateTime().toString(Qt::ISODate);
+
+        double zClearMm = 100.0;
+        double xmin = 0, ymin = 0, zmin = 0, xmax = 0, ymax = 0, zmax = 0;
+        if (m_viewport && m_viewport->getCadBoundingBox(xmin, ymin, zmin, xmax, ymax, zmax)) {
+            zClearMm = zmax + 25.0;
+        }
+
+        dmis << "DMISMN/'OpenCMM Offline Inspection Program', 05.3\n"
+             << "$$ Generated by OpenCMM Studio (JLS Machine LLC) on " << timestamp << "\n"
+             << "FILNAM/'" << partName << "', 05.3\n"
+             << "UNITS/MM, ANGDEC\n"
+             << "WKPLAN/XYPLAN\n"
+             << "MODE/PROG, MAN\n"
+             << "SNSTYP/INDEX, 1, " << QString::number(m_effectiveProbeRadius * 2.0, 'f', 4) << "\n"
+             << "CLEARP/ZPLUS, " << QString::number(zClearMm, 'f', 4) << "\n\n";
+
+        for (const auto& mf : m_solvedFeatures) {
+            const QString rawLabel = QString("FEAT_%1").arg(mf.id);
+            const QString qpidUuid = m_featureRefIds.count(mf.id) && !m_featureRefIds[mf.id].isEmpty()
+                ? m_featureRefIds[mf.id]
+                : QString("10000000-0000-4000-8000-%1").arg(mf.id, 12, 10, QChar('0'));
+
+            dmis << "$$ =========================================================\n"
+                 << "$$ Feature: " << QString::fromStdString(mf.name) << "\n"
+                 << "REFID/F(" << rawLabel << "), QIF, 'QPId', '" << qpidUuid << "'\n";
+
+            if (mf.kind == FeatureKind::Plane3D) {
+                dmis << "F(" << rawLabel << ") = FEAT/PLANE, CART, "
+                     << QString::number(mf.location.x(), 'f', 4) << ", "
+                     << QString::number(mf.location.y(), 'f', 4) << ", "
+                     << QString::number(mf.location.z(), 'f', 4) << ", "
+                     << QString::number(mf.primaryVector.x(), 'f', 5) << ", "
+                     << QString::number(mf.primaryVector.y(), 'f', 5) << ", "
+                     << QString::number(mf.primaryVector.z(), 'f', 5) << "\n";
+            }
+            else if (mf.kind == FeatureKind::Circle2D) {
+                dmis << "F(" << rawLabel << ") = FEAT/CIRCLE, INNER, CART, "
+                     << QString::number(mf.location.x(), 'f', 4) << ", "
+                     << QString::number(mf.location.y(), 'f', 4) << ", "
+                     << QString::number(mf.location.z(), 'f', 4) << ", "
+                     << QString::number(mf.primaryVector.x(), 'f', 5) << ", "
+                     << QString::number(mf.primaryVector.y(), 'f', 5) << ", "
+                     << QString::number(mf.primaryVector.z(), 'f', 5) << ", "
+                     << QString::number(mf.diameter, 'f', 4) << "\n";
+            }
+            else if (mf.kind == FeatureKind::Sphere3D) {
+                dmis << "F(" << rawLabel << ") = FEAT/SPHERE, OUTER, CART, "
+                     << QString::number(mf.location.x(), 'f', 4) << ", "
+                     << QString::number(mf.location.y(), 'f', 4) << ", "
+                     << QString::number(mf.location.z(), 'f', 4) << ", "
+                     << QString::number(mf.diameter, 'f', 4) << "\n";
+            }
+            else if (mf.kind == FeatureKind::Line2D) {
+                dmis << "F(" << rawLabel << ") = FEAT/LINE, UNBND, CART, "
+                     << QString::number(mf.location.x(), 'f', 4) << ", "
+                     << QString::number(mf.location.y(), 'f', 4) << ", "
+                     << QString::number(mf.location.z(), 'f', 4) << ", "
+                     << QString::number(mf.primaryVector.x(), 'f', 5) << ", "
+                     << QString::number(mf.primaryVector.y(), 'f', 5) << ", "
+                     << QString::number(mf.primaryVector.z(), 'f', 5) << ", "
+                     << QString::number(mf.secondaryVector.x(), 'f', 5) << ", "
+                     << QString::number(mf.secondaryVector.y(), 'f', 5) << ", "
+                     << QString::number(mf.secondaryVector.z(), 'f', 5) << "\n";
+            }
+
+            const auto& pts = m_featureDmisHits[mf.id];
+            const QString dmisMeasType = (mf.kind == FeatureKind::Plane3D) ? "PLANE"
+                : (mf.kind == FeatureKind::Circle2D ? "CIRCLE"
+                : (mf.kind == FeatureKind::Sphere3D ? "SPHERE" : "LINE"));
+
+            dmis << "MEAS/" << dmisMeasType << ", F(" << rawLabel << "), " << pts.size() << "\n";
+            for (const auto& pt : pts) {
+                dmis << "  PTMEAS/CART, "
+                     << QString::number(pt.surfacePt.x(), 'f', 4) << ", "
+                     << QString::number(pt.surfacePt.y(), 'f', 4) << ", "
+                     << QString::number(pt.surfacePt.z(), 'f', 4) << ", "
+                     << QString::number(pt.normalVec.x(), 'f', 5) << ", "
+                     << QString::number(pt.normalVec.y(), 'f', 5) << ", "
+                     << QString::number(pt.normalVec.z(), 'f', 5) << "\n";
+            }
+            dmis << "ENDMES\n";
+
+            if (m_featureDatumLetters.count(mf.id) && !m_featureDatumLetters[mf.id].isEmpty()) {
+                const QString datLet = m_featureDatumLetters[mf.id];
+                dmis << "DATDEF/F(" << rawLabel << "), DAT(" << datLet << ")\n";
+            }
+            dmis << "\n";
+        }
+
+        if (m_datumAFeatureId > 0 && m_datumBFeatureId > 0 && m_datumCFeatureId > 0) {
+            dmis << "$$ =========================================================\n"
+                 << "$$ Automated 3-2-1 Datum Reference Frame Alignment (PCS)\n"
+                 << "D(PCS_ABC) = DATSET/DAT(A), ZDIR, ZORIG, DAT(B), XDIR, YORIG, DAT(C), XORIG\n"
+                 << "SAVE/D(PCS_ABC)\n\n";
+        }
+
+        dmis << "ENDFIL\n";
+        dmisFile.close();
+        statusBar()->showMessage("Saved DMIS 5.3 Inspection Program to: " + filePath);
+        return true;
+    }
+
+    void MainWindow::onExportDmisProgramClicked() {
+        // If the user has points in the active buffer that haven't been fitted yet, offer to fit or inform them
+        if (m_solvedFeatures.empty()) {
+            QMessageBox::information(
+                this,
+                "No Solved Features to Export",
+                "Please solve at least one feature before saving a DMIS 5.3 (.dmis) program:\n\n"
+                "• Click any CAD face and press '🎯 Auto-Probe CAD' (or '🅰/🅱/🅲 CAD Datum'), OR\n"
+                "• Probe points (Ctrl + Left-Click on CAD) and click Fit Plane / Fit 2D Circle / Fit Sphere."
+            );
             return;
         }
 
         bool ok = false;
         QString partName = QInputDialog::getText(
             this,
-            "Inspection Report Header",
-            "Enter Part / Job Number / Description:",
+            "Save DMIS 5.3 Inspection Program",
+            "Enter Part / Job Number / Program Name:",
             QLineEdit::Normal,
             "JLS-PART-001",
             &ok
@@ -1725,125 +1859,183 @@ namespace OpenCMM {
         if (!ok) return;
         if (partName.trimmed().isEmpty()) partName = "JLS-PART-001";
 
-        QString selectedFilter;
         QString filePath = QFileDialog::getSaveFileName(
             this,
-            "Export Inspection Report or DMIS 5.3 Program",
-            partName + "_Inspection_Report.html",
-            "HTML Printable Inspection Report (*.html);;DMIS 5.3 Inspection Program (*.dmis);;QIF 2.1 Quality Information Framework (*.qif);;CSV Spreadsheet (*.csv)",
-            &selectedFilter
+            "Save DMIS 5.3 Inspection Program (.dmis)",
+            partName + ".dmis",
+            "DMIS 5.3 Inspection Program (*.dmis);;All Files (*.*)"
         );
         if (filePath.isEmpty()) return;
 
-        // --- 0. DMIS 5.3 Program Export (.dmis) ---
-        if (filePath.endsWith(".dmis", Qt::CaseInsensitive)) {
-            QFile dmisFile(filePath);
-            if (!dmisFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
-                QMessageBox::critical(this, "Export Error", "Could not write DMIS 5.3 file to: " + filePath);
-                return;
+        if (!filePath.endsWith(".dmis", Qt::CaseInsensitive)) {
+            filePath += ".dmis";
+        }
+
+        writeDmisProgramToFile(filePath, partName);
+    }
+
+    void MainWindow::onExportReportClicked() {
+        if (m_featureTree->topLevelItemCount() <= 1) {
+            QMessageBox::information(this, "No Features to Export", "Please measure and solve at least one feature before exporting an inspection report or DMIS program.");
+            return;
+        }
+
+        // Custom Export Dialog with explicit Format Selector
+        QDialog expDlg(this);
+        expDlg.setWindowTitle("Export Inspection Report / DMIS 5.3 Program");
+        expDlg.setMinimumWidth(420);
+
+        auto* dlgLayout = new QVBoxLayout(&expDlg);
+        auto* formLayout = new QFormLayout();
+        formLayout->setSpacing(10);
+
+        auto* partEdit = new QLineEdit("JLS-PART-001", &expDlg);
+        auto* formatCombo = new QComboBox(&expDlg);
+        formatCombo->addItem("PDF Printable Inspection Certificate (.pdf)", "pdf"); // <--- Add this option
+        formatCombo->addItem("DMIS 5.3 Inspection Program (.dmis)", "dmis");
+        formatCombo->addItem("HTML Printable Inspection Report (.html)", "html");
+        formatCombo->addItem("QIF 2.1 Quality Information Framework (.qif)", "qif");
+        formatCombo->addItem("CSV Spreadsheet (.csv)", "csv");
+
+        formLayout->addRow("Part / Job Number:", partEdit);
+        formLayout->addRow("Export Format:", formatCombo);
+        dlgLayout->addLayout(formLayout);
+
+        auto* btnBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &expDlg);
+        connect(btnBox, &QDialogButtonBox::accepted, &expDlg, &QDialog::accept);
+        connect(btnBox, &QDialogButtonBox::rejected, &expDlg, &QDialog::reject);
+        dlgLayout->addWidget(btnBox);
+
+        if (expDlg.exec() != QDialog::Accepted) return;
+
+        QString partName = partEdit->text().trimmed();
+        if (partName.isEmpty()) partName = "JLS-PART-001";
+
+        const QString fmt = formatCombo->currentData().toString();
+        QString defaultFileName;
+        QString filterStr;
+
+        if (fmt == "pdf") {
+            defaultFileName = partName + "_Inspection_Certificate.pdf";
+            filterStr = "PDF Inspection Certificate (*.pdf);;All Files (*.*)";
+        }
+        else if (fmt == "dmis") {
+            defaultFileName = partName + ".dmis";
+            filterStr = "DMIS 5.3 Inspection Program (*.dmis);;All Files (*.*)";
+        }
+        else if (fmt == "qif") {
+            defaultFileName = partName + "_Inspection.qif";
+            filterStr = "QIF 2.1 Quality Information Framework (*.qif);;All Files (*.*)";
+        }
+        else if (fmt == "csv") {
+            defaultFileName = partName + "_Inspection_Report.csv";
+            filterStr = "CSV Spreadsheet (*.csv);;All Files (*.*)";
+        }
+        else {
+            defaultFileName = partName + "_Inspection_Report.html";
+            filterStr = "HTML Printable Inspection Report (*.html);;All Files (*.*)";
+        }
+
+        QString filePath = QFileDialog::getSaveFileName(
+            this,
+            "Save Exported File",
+            defaultFileName,
+            filterStr
+        );
+        if (filePath.isEmpty()) return;
+
+        // Guarantee correct extension
+        if (fmt == "pdf" && !filePath.endsWith(".pdf", Qt::CaseInsensitive)) filePath += ".pdf";
+        else if (fmt == "dmis" && !filePath.endsWith(".dmis", Qt::CaseInsensitive)) filePath += ".dmis";
+        else if (fmt == "qif" && !filePath.endsWith(".qif", Qt::CaseInsensitive)) filePath += ".qif";
+        else if (fmt == "csv" && !filePath.endsWith(".csv", Qt::CaseInsensitive)) filePath += ".csv";
+        else if (fmt == "html" && !filePath.endsWith(".html", Qt::CaseInsensitive)) filePath += ".html";
+
+        // --- 0. Native PDF Inspection Certificate Export (.pdf) ---
+        if (fmt == "pdf" || filePath.endsWith(".pdf", Qt::CaseInsensitive)) {
+            QPdfWriter pdfWriter(filePath);
+            pdfWriter.setPageSize(QPageSize(QPageSize::A4));
+            pdfWriter.setPageOrientation(QPageLayout::Portrait);
+            pdfWriter.setTitle("JLS Machine LLC — Inspection Certificate");
+
+            QPainter painter(&pdfWriter);
+            int yPos = 1200; // coordinate units in 1/10th of a mm
+            const int leftMargin = 1000;
+
+            // Header Title
+            painter.setFont(QFont("Segoe UI", 16, QFont::Bold));
+            painter.drawText(leftMargin, yPos, "JLS MACHINE LLC — INSPECTION CERTIFICATE");
+            yPos += 400;
+
+            // Metadata Block
+            painter.setFont(QFont("Segoe UI", 10, QFont::Normal));
+            const QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
+            painter.drawText(leftMargin, yPos, "Part / Job Number: " + partName); yPos += 250;
+            painter.drawText(leftMargin, yPos, "Inspection Date: " + timestamp); yPos += 250;
+            painter.drawText(leftMargin, yPos, QString("Stylus Effective Radius (R_eff): %1 mm").arg(m_effectiveProbeRadius, 0, 'f', 4)); yPos += 400;
+
+            // Table Header Background
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(QColor(30, 41, 59));
+            painter.drawRect(leftMargin, yPos, 19000, 350);
+
+            painter.setPen(Qt::white);
+            painter.setFont(QFont("Segoe UI", 9, QFont::Bold));
+            painter.drawText(leftMargin + 100, yPos + 240, "Feature / Parameter");
+            painter.drawText(leftMargin + 7000, yPos + 240, "Nominal");
+            painter.drawText(leftMargin + 10500, yPos + 240, "Actual");
+            painter.drawText(leftMargin + 14000, yPos + 240, "±Tol");
+            painter.drawText(leftMargin + 17000, yPos + 240, "Status");
+            yPos += 450;
+
+            // Populate Table Rows from Feature Tree
+            painter.setFont(QFont("Segoe UI", 9, QFont::Normal));
+            for (int i = 0; i < m_featureTree->topLevelItemCount(); ++i) {
+                QTreeWidgetItem* top = m_featureTree->topLevelItem(i);
+                if (top == m_activePointsGroup) continue;
+
+                if (yPos > 26000) { // New page if page full
+                    pdfWriter.newPage();
+                    yPos = 1200;
+                }
+
+                const QString statusTxt = top->text(4);
+                const QColor statusCol = statusTxt.contains("FAIL") ? QColor(185, 28, 28) : QColor(21, 128, 61);
+
+                painter.setPen(QColor(15, 23, 42));
+                painter.drawText(leftMargin + 100, yPos, top->text(0));
+                painter.drawText(leftMargin + 7000, yPos, top->text(1));
+                painter.drawText(leftMargin + 10500, yPos, top->text(2));
+                painter.drawText(leftMargin + 14000, yPos, top->text(3));
+
+                painter.setPen(statusCol);
+                painter.drawText(leftMargin + 17000, yPos, statusTxt);
+
+                yPos += 350;
+
+                // Sub-rows (hits / info)
+                painter.setPen(QColor(100, 116, 139));
+                painter.setFont(QFont("Consolas", 8, QFont::Normal));
+                for (int c = 0; c < top->childCount(); ++c) {
+                    QTreeWidgetItem* child = top->child(c);
+                    if (yPos > 26000) { pdfWriter.newPage(); yPos = 1200; }
+                    painter.drawText(leftMargin + 300, yPos, "  ↳ " + child->text(0) + " : " + child->text(2));
+                    yPos += 280;
+                }
+                painter.setFont(QFont("Segoe UI", 9, QFont::Normal));
+                yPos += 100;
             }
-            QTextStream dmis(&dmisFile);
-            const QString timestamp = QDateTime::currentDateTime().toString(Qt::ISODate);
 
-            double zClearMm = 100.0;
-            double xmin = 0, ymin = 0, zmin = 0, xmax = 0, ymax = 0, zmax = 0;
-            if (m_viewport && m_viewport->getCadBoundingBox(xmin, ymin, zmin, xmax, ymax, zmax)) {
-                zClearMm = zmax + 25.0;
-            }
-
-            dmis << "DMISMN/'OpenCMM Offline Inspection Program', 05.3\n"
-                 << "$$ Generated by OpenCMM Studio (JLS Machine LLC) on " << timestamp << "\n"
-                 << "FILNAM/'" << partName << "', 05.3\n"
-                 << "UNITS/MM, ANGDEC\n"
-                 << "WKPLAN/XYPLAN\n"
-                 << "MODE/PROG, MAN\n"
-                 << "SNSTYP/INDEX, 1, " << QString::number(m_effectiveProbeRadius * 2.0, 'f', 4) << "\n"
-                 << "CLEARP/ZPLUS, " << QString::number(zClearMm, 'f', 4) << "\n\n";
-
-            for (const auto& mf : m_solvedFeatures) {
-                const QString rawLabel = QString("FEAT_%1").arg(mf.id);
-                const QString qpidUuid = m_featureRefIds.count(mf.id) && !m_featureRefIds[mf.id].isEmpty()
-                    ? m_featureRefIds[mf.id]
-                    : QString("10000000-0000-4000-8000-%1").arg(mf.id, 12, 10, QChar('0'));
-
-                dmis << "$$ =========================================================\n"
-                     << "$$ Feature: " << QString::fromStdString(mf.name) << "\n"
-                     << "REFID/F(" << rawLabel << "), QIF, 'QPId', '" << qpidUuid << "'\n";
-
-                if (mf.kind == FeatureKind::Plane3D) {
-                    dmis << "F(" << rawLabel << ") = FEAT/PLANE, CART, "
-                         << QString::number(mf.location.x(), 'f', 4) << ", "
-                         << QString::number(mf.location.y(), 'f', 4) << ", "
-                         << QString::number(mf.location.z(), 'f', 4) << ", "
-                         << QString::number(mf.primaryVector.x(), 'f', 5) << ", "
-                         << QString::number(mf.primaryVector.y(), 'f', 5) << ", "
-                         << QString::number(mf.primaryVector.z(), 'f', 5) << "\n";
-                }
-                else if (mf.kind == FeatureKind::Circle2D) {
-                    dmis << "F(" << rawLabel << ") = FEAT/CIRCLE, INNER, CART, "
-                         << QString::number(mf.location.x(), 'f', 4) << ", "
-                         << QString::number(mf.location.y(), 'f', 4) << ", "
-                         << QString::number(mf.location.z(), 'f', 4) << ", "
-                         << QString::number(mf.primaryVector.x(), 'f', 5) << ", "
-                         << QString::number(mf.primaryVector.y(), 'f', 5) << ", "
-                         << QString::number(mf.primaryVector.z(), 'f', 5) << ", "
-                         << QString::number(mf.diameter, 'f', 4) << "\n";
-                }
-                else if (mf.kind == FeatureKind::Sphere3D) {
-                    dmis << "F(" << rawLabel << ") = FEAT/SPHERE, OUTER, CART, "
-                         << QString::number(mf.location.x(), 'f', 4) << ", "
-                         << QString::number(mf.location.y(), 'f', 4) << ", "
-                         << QString::number(mf.location.z(), 'f', 4) << ", "
-                         << QString::number(mf.diameter, 'f', 4) << "\n";
-                }
-                else if (mf.kind == FeatureKind::Line2D) {
-                    dmis << "F(" << rawLabel << ") = FEAT/LINE, UNBND, CART, "
-                         << QString::number(mf.location.x(), 'f', 4) << ", "
-                         << QString::number(mf.location.y(), 'f', 4) << ", "
-                         << QString::number(mf.location.z(), 'f', 4) << ", "
-                         << QString::number(mf.primaryVector.x(), 'f', 5) << ", "
-                         << QString::number(mf.primaryVector.y(), 'f', 5) << ", "
-                         << QString::number(mf.primaryVector.z(), 'f', 5) << ", "
-                         << QString::number(mf.secondaryVector.x(), 'f', 5) << ", "
-                         << QString::number(mf.secondaryVector.y(), 'f', 5) << ", "
-                         << QString::number(mf.secondaryVector.z(), 'f', 5) << "\n";
-                }
-
-                const auto& pts = m_featureDmisHits[mf.id];
-                const QString dmisMeasType = (mf.kind == FeatureKind::Plane3D) ? "PLANE"
-                    : (mf.kind == FeatureKind::Circle2D ? "CIRCLE"
-                    : (mf.kind == FeatureKind::Sphere3D ? "SPHERE" : "LINE"));
-
-                dmis << "MEAS/" << dmisMeasType << ", F(" << rawLabel << "), " << pts.size() << "\n";
-                for (const auto& pt : pts) {
-                    dmis << "  PTMEAS/CART, "
-                         << QString::number(pt.surfacePt.x(), 'f', 4) << ", "
-                         << QString::number(pt.surfacePt.y(), 'f', 4) << ", "
-                         << QString::number(pt.surfacePt.z(), 'f', 4) << ", "
-                         << QString::number(pt.normalVec.x(), 'f', 5) << ", "
-                         << QString::number(pt.normalVec.y(), 'f', 5) << ", "
-                         << QString::number(pt.normalVec.z(), 'f', 5) << "\n";
-                }
-                dmis << "ENDMES\n";
-
-                if (m_featureDatumLetters.count(mf.id) && !m_featureDatumLetters[mf.id].isEmpty()) {
-                    const QString datLet = m_featureDatumLetters[mf.id];
-                    dmis << "DATDEF/F(" << rawLabel << "), DAT(" << datLet << ")\n";
-                }
-                dmis << "\n";
-            }
-
-            if (m_datumAFeatureId > 0 && m_datumBFeatureId > 0 && m_datumCFeatureId > 0) {
-                dmis << "$$ =========================================================\n"
-                     << "$$ Automated 3-2-1 Datum Reference Frame Alignment (PCS)\n"
-                     << "D(PCS_ABC) = DATSET/DAT(A), ZDIR, ZORIG, DAT(B), XDIR, YORIG, DAT(C), XORIG\n"
-                     << "SAVE/D(PCS_ABC)\n\n";
-            }
-
-            dmis << "ENDFIL\n";
-            dmisFile.close();
+            painter.end();
             QDesktopServices::openUrl(QUrl::fromLocalFile(filePath));
-            statusBar()->showMessage("Exported DMIS 5.3 Inspection Program to: " + filePath);
+            statusBar()->showMessage("Exported PDF Inspection Certificate to: " + filePath);
+            return;
+        }
+
+
+        // --- 0. DMIS 5.3 Program Export (.dmis) ---
+        if (fmt == "dmis" || filePath.endsWith(".dmis", Qt::CaseInsensitive)) {
+            writeDmisProgramToFile(filePath, partName);
             return;
         }
 
