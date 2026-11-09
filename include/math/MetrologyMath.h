@@ -97,6 +97,18 @@ namespace OpenCMM {
         Eigen::Vector3d nearestCadPoint = Eigen::Vector3d::Zero();
         Eigen::Vector3d surfaceNormal = Eigen::Vector3d::UnitZ();
         double signedDeviationMm = 0.0;
+        struct CollisionCheckResult {
+        bool collision = false;
+        bool warningProximity = false;
+        double minDistanceMm = 1e9;
+        std::string message;
+    };
+    };
+    struct CollisionCheckResult {
+        bool collision = false;
+        bool warningProximity = false;
+        double minDistanceMm = 1e9;
+        std::string message;
     };
 
     class MetrologyMath {
@@ -113,7 +125,13 @@ namespace OpenCMM {
             ProbeCompMode compMode = ProbeCompMode::External,
             const Eigen::Vector3d* initialAxisHint = nullptr
         );
-
+        static CollisionCheckResult checkProbeCollision(
+            const Eigen::Vector3d& probePosition,
+            double probeRadiusMm,
+            const TopoDS_Shape& cadShape,
+            double safetyWarningThresholdMm = 10.0,
+            double collisionThresholdMm = 1.5
+        );
         static ProbeCalibrationResult calibrateProbeOnMasterBall(
             const std::vector<Eigen::Vector3d>& hits,
             double certifiedBallDiameterMm = 25.4000

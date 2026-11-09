@@ -16,6 +16,7 @@
 #include <map>
 #include <QTimer>
 #include "dmis/DMIS53Parser.h"
+#include <QTextEdit>
 
 #include "core/Units.h"
 #include "hal/PicoSerialController.h"
@@ -70,6 +71,7 @@ namespace OpenCMM {
         void onConnectionChanged(bool connected, const QString& message);
         void onThemeToggled(bool dark);
         void onFitCylinderClicked();
+        void onCreateOfflineFeatureClicked();
     protected:
         void closeEvent(QCloseEvent* event) override;
     private:
@@ -201,6 +203,14 @@ namespace OpenCMM {
         bool m_isDarkMode = true;
         QWidget* m_droContainer = nullptr;
         QWidget* m_treeContainer = nullptr;
+        
+        void evaluateProbeCollisionSafety(const Eigen::Vector3d& pos);
+
+        void setupCollisionLogDock();
+        void logCollisionEvent(const std::string& message, bool isCollision, bool isWarning);
+
+        QDockWidget* m_collisionDock = nullptr;
+        QTextEdit* m_collisionLogText = nullptr;
     };
 
 } // namespace OpenCMM

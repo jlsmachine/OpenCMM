@@ -18,6 +18,10 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <Bnd_Box.hxx>
+#include <BRepBndLib.hxx>
+#include <BRepPrimAPI_MakeSphere.hxx>
+#include <QString>
 
 namespace OpenCMM {
 
@@ -719,6 +723,79 @@ namespace OpenCMM {
         res.signedDeviationMm = signedCenterDist - compOffset;
         res.success = true;
         return res;
+    }
+
+    CollisionCheckResult MetrologyMath::checkProbeCollision(
+        const Eigen::Vector3d& probePosition,
+        double probeRadiusMm,
+        const TopoDS_Shape& cadShape,
+        double safetyWarningThresholdMm,
+        double collisionThresholdMm) {
+
+        CollisionCheckResult result;
+        if (cadShape.IsNull()) {
+            result.minDistanceMm = 1e9;
+            return result;
+        }
+
+        // 1. Broad-Phase Bounding Box Pre-Check
+        Bnd_Box cadBox;
+        BRepBndLib::Add(cadShape, cadBox);
+
+        if (cadBox.IsVoid()) {
+            return result;
+        }
+
+        double xmin, ymin, zmin, xmax, ymax, zmax;
+        cadBox.Get(xmin, ymin, zmin, xmax, ymax, zmax);
+
+        // Expand CAD bounding box by probe radius for safety envelope
+        xmin -= probeRadiusMm; ymin -= probeRadiusMm; zmin -= probeRadiusMm;
+        xmax += probeRadiusMm; ymax += probeRadiusMm; zmax += probeRadiusMm;
+
+        const double px = probePosition.x();
+        const double py = probePosition.y();
+        const double pz = probePosition.z();
+
+        // Quick AABB containment / intersection test
+        const bool insideBox = (px >= xmin && px <= xmax && py >= ymin && py <= ymax && pz >= zmin && pz <= zmax);
+
+        if (!insideBox) {
+            // Rough distance estimation to box exterior
+            double dx = std::max({ 0.0, xmin - px, px - xmax });
+            double dy = std::max({ 0.0, ymin - py, py - ymax });
+            double dz = std::max({ 0.0, zmin - pz, pz - zmax });
+            double approxDist = std::hypot(dx, std::hypot(dy, dz));
+
+            if (approxDist > safetyWarningThresholdMm) {
+                result.minDistanceMm = approxDist;
+                return result; // Safely outside
+            }
+        }
+
+        // 2. Narrow-Phase Exact Distance Check (Probe Sphere vs. CAD Shape)
+        TopoDS_Shape probeSphere = BRepPrimAPI_MakeSphere(
+            gp_Pnt(px, py, pz),
+            std::max(0.1, probeRadiusMm)
+        ).Shape();
+
+        BRepExtrema_DistShapeShape extrema(probeSphere, cadShape);
+        if (extrema.IsDone() && extrema.NbSolution() > 0) {
+            result.minDistanceMm = extrema.Value();
+
+            if (result.minDistanceMm <= collisionThresholdMm) {
+                result.collision = true;
+                result.message = QString("COLLISION DETECTED! Probe clearance: %1 mm")
+                    .arg(result.minDistanceMm, 0, 'f', 3).toStdString();
+            }
+            else if (result.minDistanceMm <= safetyWarningThresholdMm) {
+                result.warningProximity = true;
+                result.message = QString("Proximity Warning: Probe is %1 mm from CAD surface")
+                    .arg(result.minDistanceMm, 0, 'f', 3).toStdString();
+            }
+        }
+
+        return result;
     }
 
 } // namespace OpenCMM

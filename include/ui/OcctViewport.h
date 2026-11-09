@@ -119,6 +119,7 @@ namespace OpenCMM {
 
         void setBackgroundColor(bool dark);
         void setTheme(bool dark);
+        void setProbeCollisionState(bool collision, bool warning);
 
     protected:
         void paintEvent(QPaintEvent* event) override;

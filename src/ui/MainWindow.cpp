@@ -54,6 +54,7 @@
 #include <QPageSize>
 #include <QPainter>
 #include <QLineEdit>
+#include <QSpinBox>
 
 namespace OpenCMM {
 
@@ -168,6 +169,7 @@ namespace OpenCMM {
         setupToolbar();
         setupDroDock();
         setupFeatureTreeDock();
+        setupCollisionLogDock();
 
         m_viewport = new OcctViewport(this);
         m_viewport->setFaceSelectedCallback([this](const CadFaceInfo& faceInfo) {
@@ -357,6 +359,12 @@ namespace OpenCMM {
             auto* btn = createRibbonButton("🎯", "Auto-Probe CAD", "#2b6cb0", "#61afef", "#ffffff");
             btn->setToolTip("Automatically sample and solve the currently selected 3D CAD face (or Ctrl+Left-Click on CAD to probe individual points)");
             connect(btn, &QPushButton::clicked, this, &MainWindow::onAutoProbeCadFaceClicked);
+            return btn;
+        }
+        if (cmdId == "prog_create_feature") {
+            auto* btn = createRibbonButton("➕", "Create Feature", "#1e4620", "#98c379", "#ffffff");
+            btn->setToolTip("Create a planned offline inspection feature (Cylinder, Plane, Circle, Sphere, Line) from CAD or print nominals");
+            connect(btn, &QPushButton::clicked, this, &MainWindow::onCreateOfflineFeatureClicked);
             return btn;
         }
 
@@ -1584,11 +1592,63 @@ namespace OpenCMM {
             }
         }
     }
+    void MainWindow::evaluateProbeCollisionSafety(const Eigen::Vector3d& pos) {
+        if (!m_viewport || !m_viewport->hasCadModel()) return;
 
+        TopoDS_Shape cadShape = m_viewport->getCombinedCadShape();
+        CollisionCheckResult colRes = MetrologyMath::checkProbeCollision(
+            pos,
+            m_effectiveProbeRadius,
+            cadShape,
+            15.0, // Proximity warning threshold
+            1.5   // Collision threshold
+        );
+
+        static bool lastCollisionState = false;
+        static bool lastWarningState = false;
+
+        if (colRes.collision) {
+            if (m_dmisPlaybackTimer && m_dmisPlaybackTimer->isActive()) {
+                stopDmisAutoRun();
+            }
+            playSolveChime(false);
+            m_viewport->setProbeCollisionState(true, false);
+            statusBar()->setStyleSheet("background-color: #b91c1c; color: white; font-weight: bold;");
+            statusBar()->showMessage(QString::fromStdString(colRes.message));
+
+            if (!lastCollisionState) {
+                logCollisionEvent(colRes.message, true, false);
+                lastCollisionState = true;
+            }
+        }
+        else if (colRes.warningProximity) {
+            lastCollisionState = false;
+            m_viewport->setProbeCollisionState(false, true);
+            statusBar()->setStyleSheet("background-color: #d97706; color: white; font-weight: bold;");
+            statusBar()->showMessage(QString::fromStdString(colRes.message));
+
+            if (!lastWarningState) {
+                logCollisionEvent(colRes.message, false, true);
+                lastWarningState = true;
+            }
+        }
+        else {
+            if (lastCollisionState || lastWarningState) {
+                logCollisionEvent("Probe returned to safe clearance zone.", false, false);
+            }
+            lastCollisionState = false;
+            lastWarningState = false;
+            m_viewport->setProbeCollisionState(false, false);
+            statusBar()->setStyleSheet("background-color: #007acc; color: white; font-weight: bold;");
+        }
+    }
     void MainWindow::onPositionUpdated(const Position3D& pos) {
         m_lastPosition = pos;
         updateDroDisplay();
         if (m_viewport) { m_viewport->updateProbePosition(pos.x, pos.y, pos.z); }
+
+        // Run real-time collision checking against loaded CAD model
+        evaluateProbeCollisionSafety(Eigen::Vector3d(pos.x, pos.y, pos.z));
 
         if (m_isDmisProgramActive && (!m_dmisPlaybackTimer || !m_dmisPlaybackTimer->isActive()) &&
             m_activeDmisFeatureIdx >= 0 && m_activeDmisFeatureIdx < static_cast<int>(m_dmisProgram.features.size())) {
@@ -1832,6 +1892,83 @@ namespace OpenCMM {
             dmis << "\n";
         }
 
+        // Export any remaining unmeasured offline planned features
+        const size_t startPlannedIdx = m_solvedFeatures.size();
+        for (size_t i = startPlannedIdx; i < m_dmisProgram.features.size(); ++i) {
+            const auto& df = m_dmisProgram.features[i];
+            const QString rawLabel = QString::fromStdString(df.label);
+            const QString qpidUuid = df.refId.empty()
+                ? QString("10000000-0000-4000-8000-%1").arg(i + 1, 12, 10, QChar('0'))
+                : QString::fromStdString(df.refId);
+
+            dmis << "$$ =========================================================\n"
+                << "$$ Planned Offline Feature: " << rawLabel << "\n"
+                << "REFID/F(" << rawLabel << "), QIF, 'QPId', '" << qpidUuid << "'\n";
+
+            if (df.featureType == "PLANE") {
+                dmis << "F(" << rawLabel << ") = FEAT/PLANE, CART, "
+                    << QString::number(df.nomX, 'f', 4) << ", "
+                    << QString::number(df.nomY, 'f', 4) << ", "
+                    << QString::number(df.nomZ, 'f', 4) << ", "
+                    << QString::number(df.nomI, 'f', 5) << ", "
+                    << QString::number(df.nomJ, 'f', 5) << ", "
+                    << QString::number(df.nomK, 'f', 5) << "\n";
+            }
+            else if (df.featureType == "CYLNDR" || df.featureType == "CYL") {
+                dmis << "F(" << rawLabel << ") = FEAT/CYLNDR, " << QString::fromStdString(df.boundarySub) << ", CART, "
+                    << QString::number(df.nomX, 'f', 4) << ", "
+                    << QString::number(df.nomY, 'f', 4) << ", "
+                    << QString::number(df.nomZ, 'f', 4) << ", "
+                    << QString::number(df.nomI, 'f', 5) << ", "
+                    << QString::number(df.nomJ, 'f', 5) << ", "
+                    << QString::number(df.nomK, 'f', 5) << ", "
+                    << QString::number(df.nominalDiameter, 'f', 4) << "\n";
+            }
+            else if (df.featureType == "CIRCLE") {
+                dmis << "F(" << rawLabel << ") = FEAT/CIRCLE, " << QString::fromStdString(df.boundarySub) << ", CART, "
+                    << QString::number(df.nomX, 'f', 4) << ", "
+                    << QString::number(df.nomY, 'f', 4) << ", "
+                    << QString::number(df.nomZ, 'f', 4) << ", "
+                    << QString::number(df.nomI, 'f', 5) << ", "
+                    << QString::number(df.nomJ, 'f', 5) << ", "
+                    << QString::number(df.nomK, 'f', 5) << ", "
+                    << QString::number(df.nominalDiameter, 'f', 4) << "\n";
+            }
+            else if (df.featureType == "SPHERE") {
+                dmis << "F(" << rawLabel << ") = FEAT/SPHERE, " << QString::fromStdString(df.boundarySub) << ", CART, "
+                    << QString::number(df.nomX, 'f', 4) << ", "
+                    << QString::number(df.nomY, 'f', 4) << ", "
+                    << QString::number(df.nomZ, 'f', 4) << ", "
+                    << QString::number(df.nominalDiameter, 'f', 4) << "\n";
+            }
+            else if (df.featureType == "LINE") {
+                dmis << "F(" << rawLabel << ") = FEAT/LINE, UNBND, CART, "
+                    << QString::number(df.nomX, 'f', 4) << ", "
+                    << QString::number(df.nomY, 'f', 4) << ", "
+                    << QString::number(df.nomZ, 'f', 4) << ", "
+                    << QString::number(df.nomI, 'f', 5) << ", "
+                    << QString::number(df.nomJ, 'f', 5) << ", "
+                    << QString::number(df.nomK, 'f', 5) << ", 0.00000, 0.00000, 1.00000\n";
+            }
+
+            dmis << "MEAS/" << QString::fromStdString(df.featureType) << ", F(" << rawLabel << "), " << df.points.size() << "\n";
+            for (const auto& pt : df.points) {
+                dmis << "  PTMEAS/CART, "
+                    << QString::number(pt.x, 'f', 4) << ", "
+                    << QString::number(pt.y, 'f', 4) << ", "
+                    << QString::number(pt.z, 'f', 4) << ", "
+                    << QString::number(pt.i, 'f', 5) << ", "
+                    << QString::number(pt.j, 'f', 5) << ", "
+                    << QString::number(pt.k, 'f', 5) << "\n";
+            }
+            dmis << "ENDMES\n";
+
+            if (!df.datumLetter.empty()) {
+                dmis << "DATDEF/F(" << rawLabel << "), DAT(" << QString::fromStdString(df.datumLetter) << ")\n";
+            }
+            dmis << "\n";
+        }
+
         if (m_datumAFeatureId > 0 && m_datumBFeatureId > 0 && m_datumCFeatureId > 0) {
             dmis << "$$ =========================================================\n"
                 << "$$ Automated 3-2-1 Datum Reference Frame Alignment (PCS)\n"
@@ -1846,6 +1983,14 @@ namespace OpenCMM {
     }
 
     void MainWindow::onExportDmisProgramClicked() {
+        if (m_solvedFeatures.empty() && m_dmisProgram.features.empty()) {
+            QMessageBox::information(
+                this,
+                "No Features to Export",
+                "Please create at least one offline feature ('➕ Create Feature') or solve a feature before saving a DMIS 5.3 (.dmis) program."
+            );
+            return;
+        }
         if (m_solvedFeatures.empty()) {
             QMessageBox::information(
                 this,
@@ -3415,6 +3560,410 @@ namespace OpenCMM {
                     break;
                 }
             }
+        }
+    }
+    void MainWindow::setupCollisionLogDock() {
+        m_collisionDock = new QDockWidget("COLLISION & CLEARANCE LOG", this);
+        m_collisionDock->setObjectName("CollisionLogDock");
+        m_collisionDock->setAllowedAreas(Qt::BottomDockWidgetArea | Qt::TopDockWidgetArea);
+
+        auto* container = new QWidget(m_collisionDock);
+        container->setStyleSheet(m_isDarkMode ? "background-color: #181a1f;" : "background-color: #f8fafc;");
+        auto* layout = new QVBoxLayout(container);
+
+        m_collisionLogText = new QTextEdit(container);
+        m_collisionLogText->setReadOnly(true);
+        m_collisionLogText->setStyleSheet(
+            "QTextEdit { background-color: #0d0f12; color: #98c379; border: 1px solid #3a3f4b; font-family: 'Consolas', monospace; font-size: 11px; }"
+        );
+        layout->addWidget(m_collisionLogText);
+
+        auto* btnRow = new QHBoxLayout();
+        auto* clearLogBtn = new QPushButton("Clear Log", container);
+        connect(clearLogBtn, &QPushButton::clicked, this, [this]() {
+            if (m_collisionLogText) m_collisionLogText->clear();
+            });
+        btnRow->addStretch(1);
+        btnRow->addWidget(clearLogBtn);
+        layout->addLayout(btnRow);
+
+        m_collisionDock->setWidget(container);
+        addDockWidget(Qt::BottomDockWidgetArea, m_collisionDock);
+
+        // Ensure it stays hidden on startup until a warning or collision occurs
+        m_collisionDock->hide();
+    }
+    void MainWindow::logCollisionEvent(const std::string& message, bool isCollision, bool isWarning) {
+        if (!m_collisionLogText) return;
+
+        // Auto-show / popup the dock when a warning or collision occurs
+        if ((isCollision || isWarning) && m_collisionDock) {
+            m_collisionDock->show();
+            m_collisionDock->raise();
+        }
+
+        const QString timestamp = QDateTime::currentDateTime().toString("hh:mm:ss.zzz");
+        QString color = "#98c379"; // Green (Safe / Clear)
+        QString tag = "[CLEAR]";
+
+        if (isCollision) {
+            color = "#e06c75"; // Red
+            tag = "[COLLISION]";
+        }
+        else if (isWarning) {
+            color = "#e5c07b"; // Amber / Yellow
+            tag = "[PROXIMITY WARNING]";
+        }
+
+        const QString htmlEntry = QString("<span style='color: #7f848e;'>[%1]</span> <span style='color: %2; font-weight: bold;'>%3</span> <span style='color: #abb2bf;'>%4</span>")
+            .arg(timestamp, color, tag, QString::fromStdString(message));
+
+        m_collisionLogText->append(htmlEntry);
+    }
+    void MainWindow::onCreateOfflineFeatureClicked() {
+        const int decimals = (m_unitSystem == UnitSystem::Millimeters) ? 4 : 5;
+        const QString unitStr = (m_unitSystem == UnitSystem::Millimeters) ? " mm" : " in";
+        const double toDisp = (m_unitSystem == UnitSystem::Millimeters) ? 1.0 : (1.0 / 25.4);
+        const double toMm = (m_unitSystem == UnitSystem::Millimeters) ? 1.0 : 25.4;
+
+        QDialog dlg(this);
+        dlg.setWindowTitle("Create Offline Inspection Feature (DMIS Path Generator)");
+        dlg.setMinimumWidth(480);
+
+        auto* mainLayout = new QVBoxLayout(&dlg);
+        auto* form = new QFormLayout();
+        form->setSpacing(8);
+
+        const int nextNum = static_cast<int>(m_dmisProgram.features.size() + m_solvedFeatures.size()) + 1;
+        auto* labelEdit = new QLineEdit(QString("FEAT_%1").arg(nextNum), &dlg);
+
+        auto* typeCombo = new QComboBox(&dlg);
+        typeCombo->addItem("3D Cylinder (FEAT/CYLNDR)", "CYLNDR");
+        typeCombo->addItem("2D Circle (FEAT/CIRCLE)", "CIRCLE");
+        typeCombo->addItem("3D Plane (FEAT/PLANE)", "PLANE");
+        typeCombo->addItem("3D Sphere (FEAT/SPHERE)", "SPHERE");
+        typeCombo->addItem("2D Line (FEAT/LINE)", "LINE");
+
+        auto* boundCombo = new QComboBox(&dlg);
+        boundCombo->addItem("Internal Bore / Cavity (INNER)", "INNER");
+        boundCombo->addItem("External Boss / Stud (OUTER)", "OUTER");
+        boundCombo->addItem("Unbounded / Surface (UNBND)", "UNBND");
+
+        auto* datumCombo = new QComboBox(&dlg);
+        datumCombo->addItem("None (Inspection Feature Only)", "");
+        datumCombo->addItem("Primary Datum A (Level +Z)", "A");
+        datumCombo->addItem("Secondary Datum B (Rotate +X)", "B");
+        datumCombo->addItem("Tertiary Datum C (Origin)", "C");
+
+        auto makeCoordSpin = [&](double valMm) {
+            auto* s = new QDoubleSpinBox(&dlg);
+            s->setRange(-10000.0, 10000.0);
+            s->setDecimals(decimals);
+            s->setSuffix(unitStr);
+            s->setValue(valMm * toDisp);
+            return s;
+            };
+
+        auto makeVecSpin = [&](double val) {
+            auto* s = new QDoubleSpinBox(&dlg);
+            s->setRange(-1.0, 1.0);
+            s->setSingleStep(0.1);
+            s->setDecimals(5);
+            s->setValue(val);
+            return s;
+            };
+
+        auto* nomXSpin = makeCoordSpin(0.0);
+        auto* nomYSpin = makeCoordSpin(0.0);
+        auto* nomZSpin = makeCoordSpin(0.0);
+
+        auto* nomISpin = makeVecSpin(0.0);
+        auto* nomJSpin = makeVecSpin(0.0);
+        auto* nomKSpin = makeVecSpin(1.0);
+
+        auto* diamSpin = makeCoordSpin(20.0);
+        diamSpin->setRange(0.1 * toDisp, 5000.0 * toDisp);
+
+        auto* depthSpanSpin = makeCoordSpin(12.0);
+        depthSpanSpin->setRange(-2000.0 * toDisp, 2000.0 * toDisp);
+        depthSpanSpin->setToolTip("For Cylinders: axial depth span (negative = down into bore). For Planes/Lines: sampling spread/length.");
+
+        auto* ptsPerRingSpin = new QSpinBox(&dlg);
+        ptsPerRingSpin->setRange(2, 36);
+        ptsPerRingSpin->setValue(4);
+
+        auto* numRingsSpin = new QSpinBox(&dlg);
+        numRingsSpin->setRange(1, 10);
+        numRingsSpin->setValue(2);
+
+        auto* useCadUvCheck = new QCheckBox("Sample touch points directly from selected 3D CAD face UV", &dlg);
+        const bool hasCadFace = (m_viewport && m_viewport->hasSelectedCadFace());
+        useCadUvCheck->setEnabled(hasCadFace);
+        useCadUvCheck->setChecked(hasCadFace);
+
+        auto* modeCombo = new QComboBox(&dlg);
+        modeCombo->addItem("Add to Planned DMIS Program Queue (Offline Path)", 0);
+        modeCombo->addItem("Simulate & Solve Immediately", 1);
+
+        auto populateFromCadFace = [&]() {
+            if (!m_viewport || !m_viewport->hasSelectedCadFace()) return;
+            const CadFaceInfo& fi = m_viewport->lastSelectedFace();
+            const QString st = QString::fromStdString(fi.surfaceType);
+
+            nomXSpin->setValue(fi.centerOrCentroid.X() * toDisp);
+            nomYSpin->setValue(fi.centerOrCentroid.Y() * toDisp);
+            nomZSpin->setValue(fi.centerOrCentroid.Z() * toDisp);
+            nomISpin->setValue(fi.normalOrAxis.X());
+            nomJSpin->setValue(fi.normalOrAxis.Y());
+            nomKSpin->setValue(fi.normalOrAxis.Z());
+
+            if (st.contains("Cylinder")) {
+                typeCombo->setCurrentIndex(0);
+                boundCombo->setCurrentIndex(fi.isInternal ? 0 : 1);
+                diamSpin->setValue(fi.nominalDiameter * toDisp);
+                numRingsSpin->setValue(3);
+                ptsPerRingSpin->setValue(4);
+                labelEdit->setText(QString("CYL_%1").arg(nextNum));
+            }
+            else if (st.contains("Plane")) {
+                typeCombo->setCurrentIndex(2);
+                boundCombo->setCurrentIndex(2);
+                numRingsSpin->setValue(1);
+                ptsPerRingSpin->setValue(4);
+                labelEdit->setText(QString("PLN_%1").arg(nextNum));
+            }
+            else if (st.contains("Sphere")) {
+                typeCombo->setCurrentIndex(3);
+                boundCombo->setCurrentIndex(fi.isInternal ? 0 : 1);
+                diamSpin->setValue(fi.nominalDiameter * toDisp);
+                numRingsSpin->setValue(1);
+                ptsPerRingSpin->setValue(6);
+                labelEdit->setText(QString("SPH_%1").arg(nextNum));
+            }
+            };
+
+        if (hasCadFace) {
+            populateFromCadFace();
+        }
+
+        connect(typeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), &dlg, [&](int idx) {
+            const QString fType = typeCombo->itemData(idx).toString();
+            const bool isCyl = (fType == "CYLNDR");
+            const bool hasDiam = (fType == "CYLNDR" || fType == "CIRCLE" || fType == "SPHERE");
+            diamSpin->setEnabled(hasDiam);
+            numRingsSpin->setEnabled(isCyl);
+            if (!isCyl) numRingsSpin->setValue(1);
+            else if (numRingsSpin->value() < 2) numRingsSpin->setValue(2);
+            });
+
+        form->addRow("Feature Label:", labelEdit);
+        form->addRow("Feature Type:", typeCombo);
+        form->addRow("Boundary Subtype:", boundCombo);
+        form->addRow("Assign Datum:", datumCombo);
+        form->addRow("Nominal Center X:", nomXSpin);
+        form->addRow("Nominal Center Y:", nomYSpin);
+        form->addRow("Nominal Center Z:", nomZSpin);
+        form->addRow("Axis / Normal I:", nomISpin);
+        form->addRow("Axis / Normal J:", nomJSpin);
+        form->addRow("Axis / Normal K:", nomKSpin);
+        form->addRow("Nominal Ø:", diamSpin);
+        form->addRow("Axial Depth / Span:", depthSpanSpin);
+        form->addRow("Points per Ring:", ptsPerRingSpin);
+        form->addRow("Depth Rings (Cyl):", numRingsSpin);
+        form->addRow("", useCadUvCheck);
+        form->addRow("Action:", modeCombo);
+
+        mainLayout->addLayout(form);
+
+        auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+        connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+        connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+        mainLayout->addWidget(buttons);
+
+        if (dlg.exec() != QDialog::Accepted) return;
+
+        using DmisFeatureT = typename decltype(m_dmisProgram.features)::value_type;
+        DmisFeatureT df;
+        using DmisPointT = typename decltype(df.points)::value_type;
+
+        df.label = labelEdit->text().trimmed().isEmpty()
+            ? QString("FEAT_%1").arg(nextNum).toStdString()
+            : labelEdit->text().trimmed().toStdString();
+        df.refId = QString("10000000-0000-4000-8000-%1").arg(nextNum, 12, 10, QChar('0')).toStdString();
+        df.featureType = typeCombo->currentData().toString().toStdString();
+        df.boundarySub = boundCombo->currentData().toString().toStdString();
+        df.datumLetter = datumCombo->currentData().toString().toStdString();
+        df.nomX = nomXSpin->value() * toMm;
+        df.nomY = nomYSpin->value() * toMm;
+        df.nomZ = nomZSpin->value() * toMm;
+
+        Eigen::Vector3d axisVec(nomISpin->value(), nomJSpin->value(), nomKSpin->value());
+        if (axisVec.norm() < 1e-6) axisVec = Eigen::Vector3d::UnitZ();
+        axisVec.normalize();
+        df.nomI = axisVec.x();
+        df.nomJ = axisVec.y();
+        df.nomK = axisVec.z();
+        df.nominalDiameter = diamSpin->value() * toMm;
+
+        const double spanMm = depthSpanSpin->value() * toMm;
+        const int ptsPerRing = ptsPerRingSpin->value();
+        const int numRings = (df.featureType == "CYLNDR") ? std::max(2, numRingsSpin->value()) : 1;
+        const bool isInternal = (df.boundarySub == "INNER");
+
+        if (useCadUvCheck->isChecked() && m_viewport && m_viewport->hasSelectedCadFace()) {
+            std::vector<CadSurfaceHit> uvHits = m_viewport->sampleSelectedCadFace(ptsPerRing);
+            for (const auto& h : uvHits) {
+                DmisPointT tp;
+                tp.x = h.surfacePoint.X();
+                tp.y = h.surfacePoint.Y();
+                tp.z = h.surfacePoint.Z();
+                tp.i = h.surfaceNormal.X();
+                tp.j = h.surfaceNormal.Y();
+                tp.k = h.surfaceNormal.Z();
+                df.points.push_back(tp);
+            }
+        }
+
+        if (df.points.empty()) {
+            const Eigen::Vector3d center(df.nomX, df.nomY, df.nomZ);
+            WorkplaneFrame frame = WorkplaneFrame::fromPlane(center, axisVec);
+            const double radius = 0.5 * df.nominalDiameter;
+
+            auto appendPt = [&](const Eigen::Vector3d& p, const Eigen::Vector3d& n) {
+                DmisPointT tp;
+                tp.x = p.x();
+                tp.y = p.y();
+                tp.z = p.z();
+                tp.i = n.x();
+                tp.j = n.y();
+                tp.k = n.z();
+                df.points.push_back(tp);
+                };
+
+            if (df.featureType == "CYLNDR" || df.featureType == "CIRCLE") {
+                for (int r = 0; r < numRings; ++r) {
+                    const double axialOffset = (numRings > 1)
+                        ? (spanMm * (static_cast<double>(r) / (numRings - 1)))
+                        : 0.0;
+                    const Eigen::Vector3d ringCenter = center + axialOffset * axisVec;
+
+                    for (int i = 0; i < ptsPerRing; ++i) {
+                        const double theta = (2.0 * 3.14159265358979323846 * i) / ptsPerRing;
+                        const Eigen::Vector3d radialOut = std::cos(theta) * frame.uAxis + std::sin(theta) * frame.vAxis;
+                        const Eigen::Vector3d surfPt = ringCenter + radius * radialOut;
+                        const Eigen::Vector3d surfNorm = isInternal ? -radialOut : radialOut;
+                        appendPt(surfPt, surfNorm);
+                    }
+                }
+            }
+            else if (df.featureType == "PLANE") {
+                const double spread = std::max(5.0, std::abs(spanMm));
+                for (int i = 0; i < ptsPerRing; ++i) {
+                    const double theta = (2.0 * 3.14159265358979323846 * i) / ptsPerRing + 0.25;
+                    const Eigen::Vector3d surfPt = center + spread * (std::cos(theta) * frame.uAxis + std::sin(theta) * frame.vAxis);
+                    appendPt(surfPt, axisVec);
+                }
+            }
+            else if (df.featureType == "SPHERE") {
+                const double goldenAngle = 2.399963229728653;
+                for (int i = 0; i < ptsPerRing; ++i) {
+                    const double theta = i * goldenAngle;
+                    const double phi = std::acos(1.0 - 0.65 * (i + 0.5) / ptsPerRing);
+                    const Eigen::Vector3d localDir =
+                        std::sin(phi) * std::cos(theta) * frame.uAxis +
+                        std::sin(phi) * std::sin(theta) * frame.vAxis +
+                        std::cos(phi) * frame.wAxis;
+                    const Eigen::Vector3d surfPt = center + radius * localDir;
+                    const Eigen::Vector3d surfNorm = isInternal ? -localDir : localDir;
+                    appendPt(surfPt, surfNorm);
+                }
+            }
+            else if (df.featureType == "LINE") {
+                const double len = std::max(5.0, std::abs(spanMm));
+                for (int i = 0; i < ptsPerRing; ++i) {
+                    const double t = (ptsPerRing > 1) ? (-0.5 + static_cast<double>(i) / (ptsPerRing - 1)) : 0.0;
+                    const Eigen::Vector3d surfPt = center + (t * len) * frame.uAxis;
+                    appendPt(surfPt, axisVec);
+                }
+            }
+        }
+
+        if (modeCombo->currentData().toInt() == 1) {
+            finishFeatureBuffer();
+            m_hasArmedCadNominal = true;
+            m_armedCadDiameterMm = df.nominalDiameter;
+            m_armedCadLocationMm = Eigen::Vector3d(df.nomX, df.nomY, df.nomZ);
+            m_armedCadNormalMm = axisVec;
+            m_armedCadIsInternal = isInternal;
+            m_activeDmisFeatureName = QString("%1 (%2)").arg(QString::fromStdString(df.label), QString::fromStdString(df.featureType));
+            m_activeDmisRefId = QString::fromStdString(df.refId);
+
+            if (m_compModeCombo) {
+                if (df.featureType == "CYLNDR" || df.featureType == "CIRCLE" || df.featureType == "SPHERE") {
+                    m_compModeCombo->setCurrentIndex(isInternal ? 1 : 0);
+                }
+                else {
+                    m_compModeCombo->setCurrentIndex(0);
+                }
+            }
+
+            m_suppressDmisStepAdvance = true;
+            for (const auto& pt : df.points) {
+                CadSurfaceHit simHit;
+                simHit.success = true;
+                simHit.surfacePoint = gp_Pnt(pt.x, pt.y, pt.z);
+                simHit.surfaceNormal = gp_Dir(pt.i, pt.j, pt.k);
+                onCadSurfaceProbed(simHit);
+            }
+            m_suppressDmisStepAdvance = false;
+
+            if (df.featureType == "CYLNDR") onFitCylinderClicked();
+            else if (df.featureType == "CIRCLE") onFitCircleClicked();
+            else if (df.featureType == "PLANE") onFitPlaneClicked();
+            else if (df.featureType == "SPHERE") onFitSphereClicked();
+            else if (df.featureType == "LINE") onFitLineClicked();
+
+            if (!df.datumLetter.empty() && !m_solvedFeatures.empty()) {
+                assignFeatureAsDatum(m_solvedFeatures.back().id, QString::fromStdString(df.datumLetter), true);
+            }
+            return;
+        }
+
+        m_dmisProgram.valid = true;
+        m_dmisProgram.stylusDiameterMm = m_effectiveProbeRadius * 2.0;
+        if (!df.datumLetter.empty()) {
+            m_dmisProgram.datumAlignment.has321Alignment = true;
+        }
+        const int numPts = static_cast<int>(df.points.size());
+        m_dmisProgram.features.push_back(df);
+
+        const QString datSuffix = df.datumLetter.empty()
+            ? QString()
+            : QString(" [DAT %1]").arg(QString::fromStdString(df.datumLetter));
+        const QString featTitle = QString("%1 (%2)%3")
+            .arg(QString::fromStdString(df.label), QString::fromStdString(df.featureType), datSuffix);
+        const double nomVal = (df.featureType == "CIRCLE" || df.featureType == "CYLNDR" || df.featureType == "SPHERE")
+            ? df.nominalDiameter : 0.0;
+
+        auto* item = new QTreeWidgetItem(m_featureTree, {
+            featTitle,
+            QString("%1%2").arg(toDisplayUnit(nomVal, m_unitSystem), 0, 'f', decimals).arg(unitStr),
+            "--",
+            QString("±%1").arg(toDisplayUnit(m_defaultTolMm, m_unitSystem), 0, 'f', decimals),
+            QString("PLANNED (0/%1 pts)").arg(numPts)
+            });
+        item->setForeground(4, QBrush(QColor("#e5c07b")));
+        m_plannedDmisTreeItems.push_back(item);
+
+        const int newIdx = static_cast<int>(m_dmisProgram.features.size()) - 1;
+        if (!m_isDmisProgramActive) {
+            m_isDmisProgramActive = true;
+            startDmisGuidedFeature(newIdx);
+        }
+        else {
+            statusBar()->showMessage(QString("Queued offline feature '%1' (%2 touch points) — click 'Run DMIS' or 'Save DMIS' anytime.")
+                .arg(featTitle)
+                .arg(numPts));
         }
     }
 

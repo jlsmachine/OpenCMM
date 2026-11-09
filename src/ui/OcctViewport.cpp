@@ -1310,5 +1310,19 @@ namespace OpenCMM {
             m_view->Redraw();
         }
     }
+    void OcctViewport::setProbeCollisionState(bool collision, bool warning) {
+        if (m_context.IsNull() || m_probeRuby.IsNull()) return;
 
+        if (collision) {
+            m_probeRuby->SetColor(Quantity_NOC_RED);
+        }
+        else if (warning) {
+            m_probeRuby->SetColor(Quantity_NOC_ORANGE);
+        }
+        else {
+            m_probeRuby->SetColor(Quantity_NOC_RED); // Normal probe ruby red
+        }
+        m_context->Redisplay(m_probeRuby, Standard_False);
+        m_context->UpdateCurrentViewer();
+    }
 } // namespace OpenCMM

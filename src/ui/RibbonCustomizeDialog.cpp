@@ -20,39 +20,40 @@ namespace OpenCMM {
 
     std::vector<RibbonCommandMeta> RibbonCustomizeDialog::availableCommandsCatalog() {
         return {
-            { "sys_settings",       "Settings...",        "⚙",  "System & Hardware" },
-            { "sys_about",          "About",              "ℹ",  "System & Hardware" },
-            { "sys_customize",      "Customize Ribbon",   "🛠", "System & Hardware" },
-            { "dro_zero",           "Zero XYZ",           "🎯", "Machine DRO" },
-            { "dro_units",          "Units (mm/in)",      "📏", "Machine DRO" },
-            { "buf_clear_points",   "Clear Points",       "🗑", "Point Buffer" },
-            { "sim_target_combo",   "Virtual Target",     "🎯", "Offline Simulator & CAD" },
-            { "sim_hit",            "Simulate Hit",       "⚡", "Offline Simulator & CAD" },
-            { "cad_auto_probe",     "Auto-Probe CAD",     "🎯", "Offline Simulator & CAD" },
-            { "dmis_save",          "Save DMIS",          "💾", "DMIS 5.3 Program" },
-            { "dmis_load",          "Load DMIS",          "📂", "DMIS 5.3 Program" },
-            { "dmis_run",           "Run DMIS",           "▶",  "DMIS 5.3 Program" },
-            { "probe_comp_combo",   "Tip Compensation",   "🧭", "Stylus Compensation" },
-            { "probe_calibrate",    "Calibrate Tip",      "🔴", "Stylus Compensation" },
-            { "datum_set_a",        "Set Datum A",        "🅰", "CAD / Feature Datums (A-B-C)" },
-            { "datum_set_b",        "Set Datum B",        "🅱", "CAD / Feature Datums (A-B-C)" },
-            { "datum_set_c",        "Set Datum C",        "🅲", "CAD / Feature Datums (A-B-C)" },
-            { "pcs_align_321",      "3-2-1 Align...",     "📐", "Part Coordinate System (PCS)" },
-            { "pcs_coord_toggle",   "Coord: MCS / PCS",   "🌐", "Part Coordinate System (PCS)" },
-            { "meas_workplane",     "2D Workplane",       "📐", "Active Projection" },
-            { "meas_style",         "Feature Style",      "👁", "Feature Display" },
-            { "meas_fit_plane",     "Fit Plane",          "▱",  "3D Features" },
-            { "meas_fit_sphere",    "Fit Sphere",         "🌐", "3D Features" },
-            { "meas_fit_cylinder",  "Fit Cylinder",       "⌭",  "3D Features" },
-            { "meas_fit_circle",    "Fit 2D Circle",      "⭕", "2D Workplane Features" },
-            { "meas_fit_line",      "Fit 2D Line",        "╱",  "2D Workplane Features" },
-            { "meas_relation",      "Distance / Angle",   "↔",  "Dimensions & Relations" },
-            { "cad_load_step",      "Load STEP",          "📦", "3D CAD Model" },
-            { "cad_orient",         "Orient CAD...",      "🧭", "3D CAD Model" },
-            { "cad_surface_dev",    "Surface Dev",        "🌡", "Point Cloud vs. CAD" },
-            { "rep_edit_tol",       "Edit Tol...",        "±",  "Feature Evaluation" },
-            { "rep_clear_all",      "Clear All",          "🧹", "Manage Features" },
-            { "rep_export_report",  "Export Report",      "📄", "Quality & DMIS Export" }
+            { "sys_settings",        "Settings...",        "⚙",  "System & Hardware" },
+            { "sys_about",           "About",              "ℹ",  "System & Hardware" },
+            { "sys_customize",       "Customize Ribbon",   "🛠", "System & Hardware" },
+            { "dro_zero",            "Zero XYZ",           "🎯", "Machine DRO" },
+            { "dro_units",           "Units (mm/in)",      "📏", "Machine DRO" },
+            { "buf_clear_points",    "Clear Points",       "🗑", "Point Buffer" },
+            { "sim_target_combo",    "Virtual Target",     "🎯", "Offline Simulator & CAD" },
+            { "sim_hit",             "Simulate Hit",       "⚡", "Offline Simulator & CAD" },
+            { "cad_auto_probe",      "Auto-Probe CAD",     "🎯", "Offline Simulator & CAD" },
+            { "prog_create_feature", "Create Feature...",  "➕", "Offline Simulator & CAD" },
+            { "dmis_save",           "Save DMIS",          "💾", "DMIS 5.3 Program" },
+            { "dmis_load",           "Load DMIS",          "📂", "DMIS 5.3 Program" },
+            { "dmis_run",            "Run DMIS",           "▶",  "DMIS 5.3 Program" },
+            { "probe_comp_combo",    "Tip Compensation",   "🧭", "Stylus Compensation" },
+            { "probe_calibrate",     "Calibrate Tip",      "🔴", "Stylus Compensation" },
+            { "datum_set_a",         "Set Datum A",        "🅰", "CAD / Feature Datums (A-B-C)" },
+            { "datum_set_b",         "Set Datum B",        "🅱", "CAD / Feature Datums (A-B-C)" },
+            { "datum_set_c",         "Set Datum C",        "🅲", "CAD / Feature Datums (A-B-C)" },
+            { "pcs_align_321",       "3-2-1 Align...",     "📐", "Part Coordinate System (PCS)" },
+            { "pcs_coord_toggle",    "Coord: MCS / PCS",   "🌐", "Part Coordinate System (PCS)" },
+            { "meas_workplane",      "2D Workplane",       "📐", "Active Projection" },
+            { "meas_style",          "Feature Style",      "👁", "Feature Display" },
+            { "meas_fit_plane",      "Fit Plane",          "▱",  "3D Features" },
+            { "meas_fit_sphere",     "Fit Sphere",         "🌐", "3D Features" },
+            { "meas_fit_cylinder",   "Fit Cylinder",       "⌭",  "3D Features" },
+            { "meas_fit_circle",     "Fit 2D Circle",      "⭕", "2D Workplane Features" },
+            { "meas_fit_line",       "Fit 2D Line",        "╱",  "2D Workplane Features" },
+            { "meas_relation",       "Distance / Angle",   "↔",  "Dimensions & Relations" },
+            { "cad_load_step",       "Load STEP",          "📦", "3D CAD Model" },
+            { "cad_orient",          "Orient CAD...",      "🧭", "3D CAD Model" },
+            { "cad_surface_dev",     "Surface Dev",        "🌡", "Point Cloud vs. CAD" },
+            { "rep_edit_tol",        "Edit Tol...",        "±",  "Feature Evaluation" },
+            { "rep_clear_all",       "Clear All",          "🧹", "Manage Features" },
+            { "rep_export_report",   "Export Report",      "📄", "Quality & DMIS Export" }
         };
     }
 
@@ -71,7 +72,8 @@ namespace OpenCMM {
             {
                 "Home", true, false,
                 { "sys_settings", "sys_about", "dro_zero", "dro_units", "buf_clear_points",
-                  "sim_target_combo", "sim_hit", "cad_auto_probe", "dmis_save", "dmis_load", "dmis_run" }
+                  "sim_target_combo", "sim_hit", "cad_auto_probe", "prog_create_feature",
+                  "dmis_save", "dmis_load", "dmis_run" }
             },
             {
                 "Probe & Alignment", true, false,
@@ -80,12 +82,13 @@ namespace OpenCMM {
             },
             {
                 "Measure", true, false,
-                { "meas_workplane", "meas_style", "meas_fit_plane", "meas_fit_sphere",
+                { "meas_workplane", "meas_style", "prog_create_feature", "meas_fit_plane", "meas_fit_sphere",
                   "meas_fit_cylinder", "meas_fit_circle", "meas_fit_line", "meas_relation" }
             },
             {
                 "CAD & Deviation", true, false,
-                { "cad_load_step", "cad_orient", "cad_auto_probe", "dmis_save", "dmis_load", "dmis_run",
+                { "cad_load_step", "cad_orient", "cad_auto_probe", "prog_create_feature",
+                  "dmis_save", "dmis_load", "dmis_run",
                   "datum_set_a", "datum_set_b", "datum_set_c", "cad_surface_dev" }
             },
             {
@@ -130,7 +133,7 @@ namespace OpenCMM {
             }
         }
 
-        std::vector<RibbonTabConfig> defaults = defaultRibbonLayout();
+        std::vector<RibbonTabConfig> defaults = RibbonCustomizeDialog::defaultRibbonLayout();
         settings.beginGroup("RibbonCustomization");
         for (auto& tab : defaults) {
             const QString legacyKey = "Tab_" + tab.name;
@@ -355,7 +358,6 @@ namespace OpenCMM {
                 const RibbonCommandMeta* meta = findCommandMeta(cid);
                 if (!meta) continue;
 
-                // Safely access fields via pointer ->
                 const QString text = QString("%1  %2   —   [%3]")
                     .arg(meta->iconSymbol)
                     .arg(meta->label)
@@ -435,7 +437,7 @@ namespace OpenCMM {
         newTab.name = name;
         newTab.visible = true;
         newTab.isCustom = true;
-        newTab.commandIds = { "dro_zero", "cad_auto_probe", "dmis_run", "rep_export_report" };
+        newTab.commandIds = { "dro_zero", "cad_auto_probe", "prog_create_feature", "dmis_run", "rep_export_report" };
 
         m_tabs.push_back(newTab);
         populateTabList(static_cast<int>(m_tabs.size()) - 1);
@@ -561,7 +563,7 @@ namespace OpenCMM {
         );
         if (resp != QMessageBox::Yes) return;
 
-        m_tabs = defaultRibbonLayout();
+        m_tabs = RibbonCustomizeDialog::defaultRibbonLayout();
         populateTabList(0);
     }
 
