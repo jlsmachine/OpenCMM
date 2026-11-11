@@ -79,6 +79,8 @@
 #include <BRepLProp_SLProps.hxx>
 #include <Precision.hxx>
 #include <gp_Pnt2d.hxx>
+#include <QToolButton>
+#include <QAbstractButton>
 
 namespace OpenCMM {
 
@@ -257,6 +259,67 @@ namespace OpenCMM {
         tryLoadMcpPlugin();
         loadRibbonCustomization();
         applyKeyboardShortcuts();
+        if (auto* ribbonTabs = findChild<QTabWidget*>()) {
+            ribbonTabs->setMinimumWidth(400);
+            ribbonTabs->setMinimumHeight(124);
+            ribbonTabs->setMaximumHeight(128);
+            ribbonTabs->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+
+            if (auto* parentBar = ribbonTabs->parentWidget()) {
+                if (parentBar != this) {
+                    parentBar->setMinimumHeight(128);
+                    parentBar->setMaximumHeight(134);
+                }
+            }
+
+            // Wrap long ribbon button labels onto 2 lines (preserving the top icon/emoji line)
+            const auto ribbonBtns = ribbonTabs->findChildren<QAbstractButton*>();
+            for (QAbstractButton* btn : ribbonBtns) {
+                const QString fullTxt = btn->text().trimmed();
+                if (fullTxt.isEmpty()) continue;
+
+                QStringList lines = fullTxt.split('\n');
+                QString& labelLine = lines.last();
+                if (labelLine.length() > 9 && labelLine.contains(' ')) {
+                    const int mid = labelLine.length() / 2;
+                    int bestSpace = -1;
+                    int bestDist = 999;
+                    for (int i = 0; i < labelLine.length(); ++i) {
+                        if (labelLine[i] == ' ') {
+                            const int dist = std::abs(i - mid);
+                            if (dist < bestDist) {
+                                bestDist = dist;
+                                bestSpace = i;
+                            }
+                        }
+                    }
+                    if (bestSpace > 0) {
+                        labelLine[bestSpace] = '\n';
+                        btn->setText(lines.join('\n'));
+                    }
+                }
+                btn->setMinimumSize(74, 56);
+                btn->setMaximumHeight(58);
+            }
+
+            // Ensure bottom section labels ("SYSTEM & HARDWARE", "MACHINE DRO", etc.) never clip vertically
+            const auto ribbonLabels = ribbonTabs->findChildren<QLabel*>();
+            for (QLabel* lbl : ribbonLabels) {
+                lbl->setMinimumHeight(16);
+            }
+
+            // Give the Virtual Target dropdown enough width for "Master Ball Ø25.4mm"
+            const auto combos = ribbonTabs->findChildren<QComboBox*>();
+            for (QComboBox* cb : combos) {
+                if (cb->minimumWidth() < 155) {
+                    cb->setMinimumWidth(155);
+                }
+            }
+        }
+        statusBar()->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+        statusBar()->setMinimumWidth(200);
+        statusBar()->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+        statusBar()->setMinimumWidth(200);
         statusBar()->setStyleSheet("background-color: #007acc; color: white; font-weight: bold;");
         statusBar()->showMessage("Ready - Click 'Settings...' to configure hardware/units, or probe features to begin inspection.");
     }
@@ -5613,31 +5676,36 @@ namespace OpenCMM {
     void MainWindow::setupManualPromptBanner(QWidget* parentContainer) {
         m_manualPromptBanner = new QFrame(parentContainer);
         m_manualPromptBanner->setObjectName("ManualPromptBanner");
+        // Prevent the banner from forcing MainWindow wider than the display
+        m_manualPromptBanner->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+        m_manualPromptBanner->setMinimumWidth(200);
         m_manualPromptBanner->setStyleSheet(
-            "QFrame#ManualPromptBanner { background-color: #161b22; border-bottom: 2px solid #eab308; padding: 6px 10px; }"
+            "QFrame#ManualPromptBanner { background-color: #161b22; border-bottom: 2px solid #eab308; padding: 4px 8px; }"
             "QPushButton { background-color: #21262d; color: #e6edf3; border: 1px solid #30363d; "
-            "border-radius: 4px; padding: 5px 10px; font-size: 11px; font-weight: bold; }"
+            "border-radius: 4px; padding: 4px 8px; font-size: 11px; font-weight: bold; }"
             "QPushButton:hover { background-color: #30363d; border: 1px solid #58a6ff; }"
             "QPushButton:disabled { color: #484f58; border-color: #21262d; }"
         );
 
         auto* mainLay = new QVBoxLayout(m_manualPromptBanner);
-        mainLay->setContentsMargins(6, 4, 6, 4);
+        mainLay->setContentsMargins(4, 4, 4, 4);
         mainLay->setSpacing(4);
 
         // Top Row: Step Badge + Primary Operator Instruction + Control Buttons
         auto* topRow = new QHBoxLayout();
-        topRow->setSpacing(10);
+        topRow->setSpacing(6);
 
         m_promptStepBadge = new QLabel("STEP 1 / 1", m_manualPromptBanner);
         m_promptStepBadge->setStyleSheet(
             "background-color: #eab308; color: #0f172a; border-radius: 4px; "
-            "padding: 4px 8px; font-size: 12px; font-weight: bold;"
+            "padding: 3px 6px; font-size: 11px; font-weight: bold;"
         );
         topRow->addWidget(m_promptStepBadge, 0);
 
         m_promptInstructionLbl = new QLabel("Ready for Guided Manual Probing", m_manualPromptBanner);
-        m_promptInstructionLbl->setStyleSheet("color: #ffffff; font-size: 16px; font-weight: bold;");
+        m_promptInstructionLbl->setStyleSheet("color: #ffffff; font-size: 14px; font-weight: bold;");
+        m_promptInstructionLbl->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        m_promptInstructionLbl->setMinimumWidth(120);
         topRow->addWidget(m_promptInstructionLbl, 1);
 
         QSettings settings("JLS Machine", "OpenCMM");
@@ -5670,20 +5738,20 @@ namespace OpenCMM {
                 focusViewportOnActiveTarget();
             }
             });
-        topRow->addWidget(m_promptAutoCameraBtn);
+        topRow->addWidget(m_promptAutoCameraBtn, 0);
 
-        auto* simHitBtn = new QPushButton("⚡ Sim Hit (Space)", m_manualPromptBanner);
+        auto* simHitBtn = new QPushButton("⚡ Sim Hit", m_manualPromptBanner);
         simHitBtn->setStyleSheet(
             "QPushButton { background-color: #78350f; color: #fde68a; border: 1px solid #f59e0b; }"
             "QPushButton:hover { background-color: #92400e; color: #ffffff; }"
         );
         connect(simHitBtn, &QPushButton::clicked, this, &MainWindow::onSimulateHitClicked);
-        topRow->addWidget(simHitBtn);
+        topRow->addWidget(simHitBtn, 0);
 
-        m_promptUndoBtn = new QPushButton("↩ Undo Hit (Ctrl+Z)", m_manualPromptBanner);
-        m_promptUndoBtn->setToolTip("Remove the last recorded probe hit if the stylus bumped or false-triggered");
+        m_promptUndoBtn = new QPushButton("↩ Undo", m_manualPromptBanner);
+        m_promptUndoBtn->setToolTip("Remove the last recorded probe hit (Ctrl+Z)");
         connect(m_promptUndoBtn, &QPushButton::clicked, this, &MainWindow::onUndoLastProbeHitClicked);
-        topRow->addWidget(m_promptUndoBtn);
+        topRow->addWidget(m_promptUndoBtn, 0);
 
         m_promptSolveNowBtn = new QPushButton("✓ Solve Early", m_manualPromptBanner);
         m_promptSolveNowBtn->setToolTip("Fit and solve the current feature immediately using the hits collected so far");
@@ -5693,17 +5761,19 @@ namespace OpenCMM {
             "QPushButton:disabled { background-color: #161b22; color: #484f58; border-color: #21262d; }"
         );
         connect(m_promptSolveNowBtn, &QPushButton::clicked, this, &MainWindow::onForceSolveActiveDmisFeatureClicked);
-        topRow->addWidget(m_promptSolveNowBtn);
+        topRow->addWidget(m_promptSolveNowBtn, 0);
 
-        auto* prevFeatBtn = new QPushButton("◀ Prev", m_manualPromptBanner);
+        auto* prevFeatBtn = new QPushButton("◀", m_manualPromptBanner);
+        prevFeatBtn->setToolTip("Previous Feature");
         connect(prevFeatBtn, &QPushButton::clicked, this, [this]() { onSkipDmisFeatureClicked(-1); });
-        topRow->addWidget(prevFeatBtn);
+        topRow->addWidget(prevFeatBtn, 0);
 
-        auto* nextFeatBtn = new QPushButton("Skip ▶", m_manualPromptBanner);
+        auto* nextFeatBtn = new QPushButton("▶", m_manualPromptBanner);
+        nextFeatBtn->setToolTip("Skip to Next Feature");
         connect(nextFeatBtn, &QPushButton::clicked, this, [this]() { onSkipDmisFeatureClicked(1); });
-        topRow->addWidget(nextFeatBtn);
+        topRow->addWidget(nextFeatBtn, 0);
 
-        auto* closeGuideBtn = new QPushButton("✕ Exit Guide", m_manualPromptBanner);
+        auto* closeGuideBtn = new QPushButton("✕ Exit", m_manualPromptBanner);
         closeGuideBtn->setStyleSheet(
             "QPushButton { background-color: #450a0a; color: #fca5a5; border: 1px solid #ef4444; }"
             "QPushButton:hover { background-color: #7f1d1d; color: #ffffff; }"
@@ -5716,24 +5786,28 @@ namespace OpenCMM {
             if (m_manualPromptBanner) m_manualPromptBanner->hide();
             statusBar()->showMessage("Exited Guided Manual Probing mode.");
             });
-        topRow->addWidget(closeGuideBtn);
+        topRow->addWidget(closeGuideBtn, 0);
 
         mainLay->addLayout(topRow);
 
         // Bottom Row: Nominal / Surface Instruction + Live Delta XYZ Bullseye Readout
         auto* botRow = new QHBoxLayout();
-        botRow->setSpacing(12);
+        botRow->setSpacing(8);
 
         m_promptSubDetailLbl = new QLabel("", m_manualPromptBanner);
-        m_promptSubDetailLbl->setStyleSheet("color: #94a3b8; font-size: 12px; font-weight: bold;");
+        m_promptSubDetailLbl->setStyleSheet("color: #94a3b8; font-size: 11px; font-weight: bold;");
+        m_promptSubDetailLbl->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        m_promptSubDetailLbl->setMinimumWidth(120);
         botRow->addWidget(m_promptSubDetailLbl, 1);
 
         m_promptDeltaLbl = new QLabel("Move CMM probe toward Gold Bullseye Target...", m_manualPromptBanner);
+        m_promptDeltaLbl->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+        m_promptDeltaLbl->setMinimumWidth(260);
         m_promptDeltaLbl->setStyleSheet(
             "background-color: #0d0f12; color: #61afef; border: 1px solid #30363d; border-radius: 4px; "
-            "padding: 4px 10px; font-family: 'Consolas', monospace; font-size: 13px; font-weight: bold;"
+            "padding: 3px 8px; font-family: 'Consolas', monospace; font-size: 12px; font-weight: bold;"
         );
-        botRow->addWidget(m_promptDeltaLbl, 0);
+        botRow->addWidget(m_promptDeltaLbl, 1);
 
         mainLay->addLayout(botRow);
         m_manualPromptBanner->hide();
