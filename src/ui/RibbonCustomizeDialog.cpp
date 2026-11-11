@@ -33,6 +33,7 @@ namespace OpenCMM {
             { "dmis_save",           "Save DMIS",          "💾", "DMIS 5.3 Program" },
             { "dmis_load",           "Load DMIS",          "📂", "DMIS 5.3 Program" },
             { "dmis_run",            "Run DMIS",           "▶",  "DMIS 5.3 Program" },
+            { "dmis_preflight",      "Pre-Flight Check",   "🔍", "DMIS 5.3 Program" },
             { "probe_comp_combo",    "Tip Compensation",   "🧭", "Stylus Compensation" },
             { "probe_calibrate",     "Calibrate Tip",      "🔴", "Stylus Compensation" },
             { "datum_set_a",         "Set Datum A",        "🅰", "CAD / Feature Datums (A-B-C)" },
@@ -53,7 +54,11 @@ namespace OpenCMM {
             { "cad_surface_dev",     "Surface Dev",        "🌡", "Point Cloud vs. CAD" },
             { "rep_edit_tol",        "Edit Tol...",        "±",  "Feature Evaluation" },
             { "rep_clear_all",       "Clear All",          "🧹", "Manage Features" },
-            { "rep_export_report",   "Export Report",      "📄", "Quality & DMIS Export" }
+            { "rep_export_report",   "Export Report",      "📄", "Quality & DMIS Export" },
+            { "sys_settings",        "Settings...",        "⚙",  "System & Hardware" },
+            { "sys_about",           "About",              "ℹ",  "System & Hardware" },
+            { "sys_customize",       "Customize Ribbon",   "🛠", "System & Hardware" },
+            { "sys_mcp_toggle",      "MCP Server Toggle",  "🤖", "System & Hardware" }
         };
     }
 
@@ -69,11 +74,11 @@ namespace OpenCMM {
 
     std::vector<RibbonTabConfig> RibbonCustomizeDialog::defaultRibbonLayout() {
         return {
-            {
+          {
                 "Home", true, false,
-                { "sys_settings", "sys_about", "dro_zero", "dro_units", "buf_clear_points",
+                { "sys_settings", "sys_about", "sys_mcp_toggle", "dro_zero", "dro_units", "buf_clear_points",
                   "sim_target_combo", "sim_hit", "cad_auto_probe", "prog_create_feature",
-                  "dmis_save", "dmis_load", "dmis_run" }
+                  "dmis_save", "dmis_load", "dmis_run", "dmis_preflight" }
             },
             {
                 "Probe & Alignment", true, false,
@@ -88,7 +93,7 @@ namespace OpenCMM {
             {
                 "CAD & Deviation", true, false,
                 { "cad_load_step", "cad_orient", "cad_auto_probe", "prog_create_feature",
-                  "dmis_save", "dmis_load", "dmis_run",
+                  "dmis_save", "dmis_load", "dmis_run", "dmis_preflight", // <--- Or here
                   "datum_set_a", "datum_set_b", "datum_set_c", "cad_surface_dev" }
             },
             {

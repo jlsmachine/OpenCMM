@@ -15,6 +15,7 @@
 #include <QCheckBox>
 #include <QGridLayout>
 #include <QMessageBox>
+#include <QSettings>
 
 #include "dmis/ChFileParser.h"
 
@@ -290,46 +291,70 @@ namespace OpenCMM {
 
         mainLayout->addWidget(tabWidget);
 
+        // --- Bottom Action Row ---
+        // --- Bottom Action Row ---
         auto* bottomRow = new QHBoxLayout();
-        auto* factoryResetBtn = new QPushButton("⚠ Reset to Factory Settings...", this);
-        factoryResetBtn->setCursor(Qt::PointingHandCursor);
-        factoryResetBtn->setStyleSheet(
-            "QPushButton { background-color: #5c2b29; color: #ffffff; border: 1px solid #e06c75; "
-            "border-radius: 4px; padding: 6px 14px; font-weight: bold; }"
-            "QPushButton:hover { background-color: #742a2a; }"
-        );
 
+        auto* factoryResetBtn = new QPushButton("⚠ Reset to Factory Settings...", this);
+        factoryResetBtn->setStyleSheet("QPushButton { background-color: #5c2b29; color: #ffffff; border: 1px solid #e06c75; border-radius: 4px; padding: 6px 12px; font-weight: bold; }");
         connect(factoryResetBtn, &QPushButton::clicked, this, [this]() {
-            const auto resp = QMessageBox::warning(
+            const auto resp = QMessageBox::question(
                 this,
-                "Reset to Factory Settings",
-                "Are you sure you want to reset all OpenCMM preferences, encoder calibrations, "
-                "machine packages, and theme settings back to factory defaults?",
+                "Factory Reset",
+                "Are you sure you want to restore all settings to factory defaults?",
+                QMessageBox::Yes | QMessageBox::No,
+                QMessageBox::No
+            );
+            if (resp != QMessageBox::Yes) return;
+            emit factoryResetRequested();
+            });
+
+        // --- New Window Layout Reset Button ---
+        auto* resetLayoutBtn = new QPushButton("🔄 Reset Window Layout", this);
+        resetLayoutBtn->setToolTip("Clears saved window geometry, maximized state, and dock pin/auto-hide positions");
+        resetLayoutBtn->setStyleSheet("QPushButton { background-color: #282c34; color: #abb2bf; border: 1px solid #4b5263; border-radius: 4px; padding: 6px 12px; font-weight: bold; }");
+        connect(resetLayoutBtn, &QPushButton::clicked, this, [this]() {
+            const auto resp = QMessageBox::question(
+                this,
+                "Reset Window Layout",
+                "Clear all saved window sizes, positions, and dock pin states? This will restore default layouts immediately.",
                 QMessageBox::Yes | QMessageBox::No,
                 QMessageBox::No
             );
             if (resp != QMessageBox::Yes) return;
 
-            setCurrentUnitSystem(UnitSystem::Millimeters);
-            setDefaultToleranceMm(0.025);
-            setAudioChimesEnabled(true);
-            setDarkModeEnabled(true);
-            setSelectedMachinePath("");
-            setAxisCalibration(Eigen::Vector3d(0.001, 0.001, 0.001), Eigen::Vector3i(1, 1, 1));
+            QSettings settings("JLS Machine", "OpenCMM");
+            settings.remove("geometry");
+            settings.remove("windowState");
+            settings.remove("maximized");
+            settings.remove("pinned_LiveDroDock");
+            settings.remove("pinned_FeatureTreeDock");
+            settings.remove("pinned_CollisionLogDock");
+            settings.sync();
 
-            emit machinePackageReset();
-            emit factoryResetRequested();
+            emit resetWindowLayoutRequested();
+
+            QMessageBox::information(
+                this,
+                "Layout Reset Successful",
+                "Window layout and docks have been restored to defaults."
+            );
+            accept();
             });
 
-        auto* buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
-        connect(buttonBox, &QDialogButtonBox::accepted, this, &QDialog::accept);
-        connect(buttonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
-
         bottomRow->addWidget(factoryResetBtn);
-        bottomRow->addStretch();
-        bottomRow->addWidget(buttonBox);
+        bottomRow->addWidget(resetLayoutBtn);
+        bottomRow->addStretch(1);
+
+        auto* dialogButtonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
+        connect(dialogButtonBox, &QDialogButtonBox::accepted, this, &QDialog::accept);
+        connect(dialogButtonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
+        bottomRow->addWidget(dialogButtonBox);
+
         mainLayout->addLayout(bottomRow);
-    } // End of setupUi()
+}
+
+
 
     // --- Theme Getters & Setters ---
     bool SettingsDialog::isDarkModeEnabled() const {

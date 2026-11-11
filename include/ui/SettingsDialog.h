@@ -51,6 +51,7 @@ namespace OpenCMM {
         void serialPortConnectRequested(const QString& portName, int baudRate);
         void sendSerialCommandRequested(const QString& cmd);
         void factoryResetRequested();
+        void resetWindowLayoutRequested();
 
     private:
         void setupUi();

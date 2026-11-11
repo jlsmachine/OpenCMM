@@ -20,11 +20,15 @@
 #include <vector>
 #include <map>
 #include <string>
+#include <QPluginLoader>
 
+#include "mcp/IMcpPlugin.h"
 #include "hal/PicoSerialController.h"
 #include "math/MetrologyMath.h"
 #include "dmis/DMIS53Parser.h"
 #include "core/Units.h"
+#include "dmis/DmisParser.h" // Or the exact header file where DmisFeatureData is declared
+
 
 namespace OpenCMM {
 
@@ -37,11 +41,19 @@ namespace OpenCMM {
         Eigen::Vector3d normalVec = Eigen::Vector3d::UnitZ();
     };
 
-    class MainWindow : public QMainWindow {
+    class MainWindow : public QMainWindow, public IMcpHostBridge {
         Q_OBJECT
     public:
         explicit MainWindow(QWidget* parent = nullptr);
         ~MainWindow() override;
+        // IMcpHostBridge implementation
+        QJsonObject getMachineStatusJson() override;
+        QJsonArray getSolvedFeaturesJson() override;
+        QJsonArray getPlannedDmisFeaturesJson() override;
+        QJsonObject runPreFlightCheckJson() override;
+        QJsonObject createOfflineDmisFeatureJson(const QJsonObject& params) override;
+        QJsonObject getCadFacesJson(const QJsonObject& filter = QJsonObject()) override;
+        QJsonObject runDmisPlaybackJson(const QJsonObject& params = QJsonObject()) override;
 
     protected:
         void closeEvent(QCloseEvent* event) override;
@@ -90,6 +102,11 @@ namespace OpenCMM {
 
         void onRibbonContextMenuRequested(const QPoint& pos);
         void onCustomizeRibbonClicked();
+        void resetWindowLayout();
+        void onConfigureShortcutsClicked(); // <--- Add this line
+        void onRunDmisPreFlightCheckClicked();
+        void onToggleMcpServerClicked();
+    
 
     private:
         void setupUi();
@@ -239,6 +256,13 @@ namespace OpenCMM {
         int m_playbackSubStep = 0;
         Eigen::Vector3d m_playbackStartPos = Eigen::Vector3d::Zero();
         Eigen::Vector3d m_playbackEndPos = Eigen::Vector3d::Zero();
+        bool validateDmisFeaturePath(int featureIndex);
+        void tryLoadMcpPlugin();
+
+        QPluginLoader* m_mcpPluginLoader = nullptr;
+        IMcpServerPlugin* m_mcpPlugin = nullptr;
+        void updateMcpButtonStyle();
+        QPushButton* m_mcpStatusBtn = nullptr;
     };
 
 } // namespace OpenCMM

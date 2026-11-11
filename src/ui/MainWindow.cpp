@@ -58,6 +58,20 @@
 #include <QTextEdit>
 #include <QEvent>
 #include <QScreen>
+#include <QScrollArea>
+#include <QCoreApplication>
+#include <QDir>
+#include <TopExp_Explorer.hxx>
+#include <TopoDS.hxx>
+#include <TopoDS_Face.hxx>
+#include <BRepAdaptor_Surface.hxx>
+#include <BRepGProp.hxx>
+#include <GProp_GProps.hxx>
+#include <GeomAbs_SurfaceType.hxx>
+#include <gp_Pln.hxx>
+#include <gp_Cylinder.hxx>
+#include <gp_Sphere.hxx>
+#include <gp_Cone.hxx>
 
 namespace OpenCMM {
 
@@ -223,6 +237,7 @@ namespace OpenCMM {
         setCentralWidget(m_viewport);
 
         m_viewport->setTheme(m_isDarkMode);
+        tryLoadMcpPlugin();
         loadRibbonCustomization();
         statusBar()->setStyleSheet("background-color: #007acc; color: white; font-weight: bold;");
         statusBar()->showMessage("Ready - Click 'Settings...' to configure hardware/units, or probe features to begin inspection.");
@@ -489,6 +504,28 @@ namespace OpenCMM {
             if (!m_settingsBtn) m_settingsBtn = btn;
             return btn;
         }
+        if (cmdId == "sys_mcp_toggle") {
+            // If opencmm_mcp.dll is not installed, return nullptr so the Ribbon omits it
+            if (!m_mcpPlugin) {
+                return nullptr;
+            }
+            const bool running = m_mcpPlugin->isRunning();
+            auto* btn = createRibbonButton(
+                "🤖",
+                running ? QString("MCP :%1").arg(m_mcpPlugin->serverPort()) : "MCP: OFF",
+                running ? "#1e4620" : "#282c34",
+                running ? "#98c379" : "#e5c07b",
+                running ? "#98c379" : "#e5c07b"
+            );
+            btn->setCheckable(true);
+            btn->setChecked(running);
+            btn->setToolTip(running
+                ? QString("MCP Server active on 127.0.0.1:%1 — Click to disable external AI connection").arg(m_mcpPlugin->serverPort())
+                : "MCP Server stopped — Click to start listening on 127.0.0.1:8765");
+            connect(btn, &QPushButton::clicked, this, &MainWindow::onToggleMcpServerClicked);
+            if (!m_mcpStatusBtn) m_mcpStatusBtn = btn;
+            return btn;
+        }
         if (cmdId == "sys_about") {
             auto* btn = createRibbonButton("ℹ", "About", "#282c34", "#abb2bf", "#abb2bf");
             connect(btn, &QPushButton::clicked, this, [this]() {
@@ -587,6 +624,12 @@ namespace OpenCMM {
             connect(btn, &QPushButton::clicked, this, &MainWindow::onToggleAutoRunDmisClicked);
             if (!m_autoRunDmisBtnHome) m_autoRunDmisBtnHome = btn;
             else if (!m_autoRunDmisBtnCad) m_autoRunDmisBtnCad = btn;
+            return btn;
+        }
+        if (cmdId == "dmis_preflight") {
+            auto* btn = createRibbonButton("🔍", "Pre-Flight", "#2b4c7e", "#60a5fa", "#ffffff");
+            btn->setToolTip("Run automated collision and clearance safety checks on all loaded DMIS inspection features");
+            connect(btn, &QPushButton::clicked, this, &MainWindow::onRunDmisPreFlightCheckClicked);
             return btn;
         }
 
@@ -759,10 +802,22 @@ namespace OpenCMM {
     void MainWindow::setupDroDock() {
         m_droDock = new QDockWidget("LIVE CMM DRO & PROBE STATUS", this);
         m_droDock->setObjectName("LiveDroDock");
-        m_droContainer = new QWidget(m_droDock);
+        // Removed setMinimumHeight(280) so it can size compactly without forcing an 845px minimum window height
+
+        auto* scrollArea = new QScrollArea(m_droDock);
+        scrollArea->setWidgetResizable(true);
+        scrollArea->setFrameShape(QFrame::NoFrame);
+        scrollArea->setStyleSheet("QScrollArea { background: transparent; border: none; }");
+
+        m_droContainer = new QWidget(scrollArea);
         m_droContainer->setStyleSheet(m_isDarkMode ? "background-color: #181a1f;" : "background-color: #f8fafc;");
         auto* layout = new QVBoxLayout(m_droContainer);
+        layout->setContentsMargins(4, 4, 4, 4);
+        layout->setSpacing(4);
+
         auto* grid = new QGridLayout();
+        grid->setContentsMargins(0, 0, 0, 0);
+        grid->setSpacing(2);
 
         const char* axisNames[3] = { "X", "Y", "Z" };
         const char* axisColors[3] = { "#e06c75", "#98c379", "#61afef" };
@@ -770,14 +825,14 @@ namespace OpenCMM {
 
         for (int i = 0; i < 3; ++i) {
             auto* axisLbl = new QLabel(axisNames[i], m_droContainer);
-            axisLbl->setStyleSheet(QString("color: %1; font-size: 28px; font-weight: bold; font-family: 'Consolas', monospace;").arg(axisColors[i]));
+            axisLbl->setStyleSheet(QString("color: %1; font-size: 22px; font-weight: bold; font-family: 'Consolas', monospace;").arg(axisColors[i]));
 
             *droPtrs[i] = new QLabel("   0.0000", m_droContainer);
             (*droPtrs[i])->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-            (*droPtrs[i])->setStyleSheet("color: #0f172a; background-color: #ffffff; border: 1px solid #94a3b8; border-radius: 4px; padding: 6px 12px; font-size: 28px; font-weight: bold; font-family: 'Consolas', monospace; min-width: 190px;");
+            (*droPtrs[i])->setStyleSheet("color: #0f172a; background-color: #ffffff; border: 1px solid #94a3b8; border-radius: 4px; padding: 3px 6px; font-size: 22px; font-weight: bold; font-family: 'Consolas', monospace; min-width: 150px;");
 
             m_unitLabels[i] = new QLabel("mm", m_droContainer);
-            m_unitLabels[i]->setStyleSheet("color: #64748b; font-size: 16px; font-weight: bold;");
+            m_unitLabels[i]->setStyleSheet("color: #64748b; font-size: 13px; font-weight: bold;");
 
             grid->addWidget(axisLbl, i, 0);
             grid->addWidget(*droPtrs[i], i, 1);
@@ -790,6 +845,9 @@ namespace OpenCMM {
 
         auto* probeGroup = new QGroupBox("ACTIVE PROBE CALIBRATION", m_droContainer);
         auto* probeLayout = new QVBoxLayout(probeGroup);
+        probeLayout->setContentsMargins(6, 6, 6, 6);
+        probeLayout->setSpacing(2);
+
         m_probeStatusBadge = new QLabel("UNINITIALIZED (Nominal Default)", probeGroup);
         m_probeDiamLabel = new QLabel("Effective Tip Ø: 3.0000 mm", probeGroup);
         m_probeRadLabel = new QLabel("Effective Radius (R_eff): 1.5000 mm", probeGroup);
@@ -802,7 +860,8 @@ namespace OpenCMM {
         layout->addWidget(probeGroup);
         layout->addStretch();
 
-        m_droDock->setWidget(m_droContainer);
+        scrollArea->setWidget(m_droContainer);
+        m_droDock->setWidget(scrollArea);
         addDockWidget(Qt::LeftDockWidgetArea, m_droDock);
         attachPinTitleBar(m_droDock, Qt::LeftDockWidgetArea, true);
     }
@@ -810,15 +869,17 @@ namespace OpenCMM {
     void MainWindow::setupFeatureTreeDock() {
         m_treeDock = new QDockWidget("INSPECTION FEATURE TREE", this);
         m_treeDock->setObjectName("FeatureTreeDock");
+        m_treeDock->setMinimumHeight(250); // <--- Prevent vertical squishing
         m_treeContainer = new QWidget(m_treeDock);
         m_treeContainer->setStyleSheet(m_isDarkMode ? "background-color: #181a1f;" : "background-color: #f8fafc;");
         auto* dockLayout = new QVBoxLayout(m_treeContainer);
         dockLayout->setContentsMargins(4, 4, 4, 4);
 
         m_featureTree = new QTreeWidget(m_treeContainer);
-        m_featureTree->setMinimumHeight(40); // Reduced from 80
+        m_featureTree->setMinimumHeight(180); // <--- Guarantee tree view space
         m_featureTree->setColumnCount(5);
         m_featureTree->setHeaderLabels({ "Feature / Parameter", "Nominal", "Actual", "±Tol", "Dev / Status" });
+
         m_featureTree->setContextMenuPolicy(Qt::CustomContextMenu);
         connect(m_featureTree, &QTreeWidget::customContextMenuRequested,
             this, &MainWindow::onFeatureTreeContextMenuRequested);
@@ -977,6 +1038,9 @@ namespace OpenCMM {
         dlg.setAudioChimesEnabled(m_audioEnabled);
         dlg.setDarkModeEnabled(m_isDarkMode);
         dlg.setSelectedMachinePath(m_machinePackagePath);
+        connect(&dlg, &SettingsDialog::resetWindowLayoutRequested, this, &MainWindow::resetWindowLayout);
+
+        if (dlg.exec() != QDialog::Accepted) return;
 
         if (m_controller) {
             dlg.setAxisCalibration(Eigen::Vector3d(0.001, 0.001, 0.001), Eigen::Vector3i(1, 1, 1));
@@ -1097,7 +1161,7 @@ namespace OpenCMM {
             m_audioEnabled,
             m_isDarkMode
         );
-
+        connect(&dlg, &SettingsDialog::resetWindowLayoutRequested, this, &MainWindow::resetWindowLayout);
         statusBar()->showMessage("Settings updated and saved successfully.");
     }
 
@@ -2204,18 +2268,42 @@ namespace OpenCMM {
         const Eigen::Vector3d touchPos = surfPt + surfNorm * rProbe;
         const Eigen::Vector3d standoffPos = surfPt + surfNorm * (rProbe + 18.0);
 
+        // Use program clearance Z or default to 25mm above highest point
+        const double zClear = std::max(m_dmisProgram.clearanceZMm, std::max(standoffPos.z(), m_lastPosition.z) + 25.0);
+
+        // Phase 0: Retract to clearance plane, traverse to feature standoff, descend
         if (m_playbackPhase == 0) {
-            const int totalSteps = (ptIdx == 0) ? 10 : 6;
+            const int totalSteps = (ptIdx == 0) ? 14 : 8;
             if (m_playbackSubStep == 0) {
                 m_playbackStartPos = Eigen::Vector3d(m_lastPosition.x, m_lastPosition.y, m_lastPosition.z);
             }
             m_playbackSubStep++;
             const double t = std::clamp(static_cast<double>(m_playbackSubStep) / totalSteps, 0.0, 1.0);
-            Eigen::Vector3d interp = m_playbackStartPos + t * (standoffPos - m_playbackStartPos);
+
+            // 3-Stage Arc/Bridge trajectory for inter-feature safety
+            Eigen::Vector3d interp;
             if (ptIdx == 0) {
-                const double zClear = std::max(m_dmisProgram.clearanceZMm, std::max(m_playbackStartPos.z(), standoffPos.z()) + 15.0);
-                interp.z() += 4.0 * t * (1.0 - t) * (zClear - 0.5 * (m_playbackStartPos.z() + standoffPos.z()));
+                // First point in feature: retract up to Z clear, move XY, descend to standoff
+                if (t < 0.33) {
+                    double subT = t / 0.33;
+                    interp = m_playbackStartPos + subT * (Eigen::Vector3d(m_playbackStartPos.x(), m_playbackStartPos.y(), zClear) - m_playbackStartPos);
+                }
+                else if (t < 0.66) {
+                    double subT = (t - 0.33) / 0.33;
+                    Eigen::Vector3d startUp(m_playbackStartPos.x(), m_playbackStartPos.y(), zClear);
+                    Eigen::Vector3d endUp(standoffPos.x(), standoffPos.y(), zClear);
+                    interp = startUp + subT * (endUp - startUp);
+                }
+                else {
+                    double subT = (t - 0.66) / 0.34;
+                    Eigen::Vector3d endUp(standoffPos.x(), standoffPos.y(), zClear);
+                    interp = endUp + subT * (standoffPos - endUp);
+                }
             }
+            else {
+                interp = m_playbackStartPos + t * (standoffPos - m_playbackStartPos);
+            }
+
             onPositionUpdated({ interp.x(), interp.y(), interp.z() });
 
             if (m_playbackSubStep >= totalSteps) {
@@ -2224,8 +2312,9 @@ namespace OpenCMM {
                 m_playbackStartPos = standoffPos;
             }
         }
+        // Phase 1: Controlled feed move from standoff to surface touch point
         else if (m_playbackPhase == 1) {
-            const int totalSteps = 5;
+            const int totalSteps = 6;
             m_playbackSubStep++;
             const double t = std::clamp(static_cast<double>(m_playbackSubStep) / totalSteps, 0.0, 1.0);
             const Eigen::Vector3d interp = standoffPos + t * (touchPos - standoffPos);
@@ -2244,8 +2333,9 @@ namespace OpenCMM {
                 onCadSurfaceProbed(simHit);
             }
         }
+        // Phase 2: Retract back to standoff along normal vector
         else if (m_playbackPhase == 2) {
-            const int totalSteps = 4;
+            const int totalSteps = 5;
             m_playbackSubStep++;
             const double t = std::clamp(static_cast<double>(m_playbackSubStep) / totalSteps, 0.0, 1.0);
             const Eigen::Vector3d interp = m_playbackStartPos + t * (m_playbackEndPos - m_playbackStartPos);
@@ -4047,6 +4137,7 @@ namespace OpenCMM {
         contextMenu.addSeparator();
         QAction* customizeAction = contextMenu.addAction("🛠 Customize Ribbon Tabs & Commands...");
         QAction* addTabAction = contextMenu.addAction("➕ Add New Custom Tab...");
+        QAction* shortcutsAction = contextMenu.addAction("⌨ Configure Keyboard Shortcuts..."); // <--- Add this line
         contextMenu.addSeparator();
         QAction* resetAction = contextMenu.addAction("↺ Reset Ribbon to Factory Defaults");
 
@@ -4079,6 +4170,10 @@ namespace OpenCMM {
                 ribbonTabs->setCurrentIndex(ribbonTabs->count() - 1);
                 statusBar()->showMessage(QString("Created custom Ribbon tab '%1' — right-click the ribbon to customize its commands.").arg(tabName));
             }
+        }
+    
+        else if (selectedAction == shortcutsAction) {
+            onConfigureShortcutsClicked(); // <--- Handle selection
         }
         else if (selectedAction == resetAction) {
             const auto resp = QMessageBox::question(
@@ -4117,6 +4212,7 @@ namespace OpenCMM {
             : QString();
 
         m_settingsBtn = nullptr;
+        m_mcpStatusBtn = nullptr;
         m_simTargetCombo = nullptr;
         m_compModeCombo = nullptr;
         m_workplaneCombo = nullptr;
@@ -4200,6 +4296,606 @@ namespace OpenCMM {
                 }
             }
         }
+    }
+    void MainWindow::resetWindowLayout() {
+        // 1. Clear all saved window geometry and dock pin states from QSettings
+        QSettings settings("JLS Machine", "OpenCMM");
+        settings.remove("geometry");
+        settings.remove("windowState");
+        settings.remove("maximized");
+        settings.remove("pinned_LiveDroDock");
+        settings.remove("pinned_FeatureTreeDock");
+        settings.remove("pinned_CollisionLogDock");
+        settings.sync();
+
+        // 2. Reset window geometry to default startup dimensions
+        showNormal();
+        resize(1280, 800);
+
+        // 3. Forcefully reset in-memory dock states and positions
+        if (m_droDock) {
+            m_droDock->setFloating(false);
+            removeDockWidget(m_droDock);
+            addDockWidget(Qt::LeftDockWidgetArea, m_droDock);
+            setDockPinned(m_droDock, true);
+            m_droDock->show();
+        }
+
+        if (m_treeDock) {
+            m_treeDock->setFloating(false);
+            removeDockWidget(m_treeDock);
+            addDockWidget(Qt::LeftDockWidgetArea, m_treeDock);
+            setDockPinned(m_treeDock, true);
+            m_treeDock->show();
+        }
+
+        if (m_collisionDock) {
+            m_collisionDock->setFloating(false);
+            removeDockWidget(m_collisionDock);
+            addDockWidget(Qt::BottomDockWidgetArea, m_collisionDock);
+            setDockPinned(m_collisionDock, false); // Unpinned / auto-hidden bottom tab
+            m_collisionDock->hide();
+        }
+
+        // 4. Update edge tabs, toolbars, and trigger an immediate layout pass
+        syncAutoHideTabForDock(m_collisionDock);
+        centralWidget()->updateGeometry();
+        update();
+
+        statusBar()->showMessage("Window layout and docks successfully restored to factory defaults.");
+    }
+    void MainWindow::onConfigureShortcutsClicked() {
+        QDialog dlg(this);
+        dlg.setWindowTitle("Configure Keyboard Shortcuts");
+        dlg.resize(500, 400);
+
+        auto* layout = new QVBoxLayout(&dlg);
+        auto* tree = new QTreeWidget(&dlg);
+        tree->setHeaderLabels({ "Command / Action", "Assigned Shortcut" });
+        tree->setColumnCount(2);
+
+        // Populate standard inspect & metrology shortcuts
+        struct ShortcutRow { QString name; QString shortcut; };
+        QList<ShortcutRow> rows = {
+            { "Zero Axes (DRO)", "Ctrl+0" },
+            { "Toggle Units (mm / in)", "Ctrl+U" },
+            { "Simulate Probe Hit", "Space" },
+            { "Auto-Probe Selected CAD Face", "Ctrl+Shift+P" },
+            { "Create Offline Feature", "Ctrl+N" },
+            { "Fit 3D Plane", "Ctrl+P" },
+            { "Fit 3D Sphere", "Ctrl+S" },
+            { "Fit 2D Circle", "Ctrl+C" },
+            { "Fit 2D Line", "Ctrl+L" },
+            { "Fit 3D Cylinder", "Ctrl+Y" },
+            { "Clear Active Point Buffer", "Del / Backspace" },
+            { "Toggle Collision Log", "Ctrl+Shift+L" },
+            { "Open Settings", "Ctrl+," }
+        };
+
+        for (const auto& r : rows) {
+            auto* item = new QTreeWidgetItem(tree, { r.name, r.shortcut });
+            item->setFlags(item->flags() | Qt::ItemIsEditable);
+        }
+
+        layout->addWidget(tree);
+
+        auto* infoLbl = new QLabel("Double-click a shortcut cell to rebind key combinations.", &dlg);
+        infoLbl->setStyleSheet("color: #7f848e; font-size: 11px; font-style: italic;");
+        layout->addWidget(infoLbl);
+
+        auto* btnBox = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, &dlg);
+        connect(btnBox, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+        connect(btnBox, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+        layout->addWidget(btnBox);
+
+        if (dlg.exec() != QDialog::Accepted) return;
+        statusBar()->showMessage("Keyboard shortcut bindings updated.");
+    }
+    bool MainWindow::validateDmisFeaturePath(int featureIndex) {
+        if (!m_isDmisProgramActive || featureIndex < 0 || featureIndex >= static_cast<int>(m_dmisProgram.features.size())) {
+            return true;
+        }
+        const auto& df = m_dmisProgram.features[featureIndex];
+        if (!m_viewport || !m_viewport->hasCadModel()) return true;
+
+        TopoDS_Shape cadShape = m_viewport->getCombinedCadShape();
+        bool pathValid = true;
+
+        for (size_t i = 0; i < df.points.size(); ++i) {
+            const auto& pt = df.points[i];
+            Eigen::Vector3d surfPt(pt.x, pt.y, pt.z);
+            Eigen::Vector3d surfNorm(pt.i, pt.j, pt.k);
+            if (surfNorm.norm() > 1e-9) surfNorm.normalize();
+
+            // Check standoff approach position for proximity or collision
+            Eigen::Vector3d standoffPos = surfPt + surfNorm * (m_effectiveProbeRadius + 18.0);
+            CollisionCheckResult check = MetrologyMath::checkProbeCollision(
+                standoffPos,
+                m_effectiveProbeRadius,
+                cadShape,
+                10.0,
+                1.5
+            );
+
+            if (check.collision || check.warningProximity) {
+                QString warningMsg = QString("Pre-flight Path Warning [Feature %1, Pt #%2]: %3")
+                    .arg(QString::fromStdString(df.label))
+                    .arg(i + 1)
+                    .arg(QString::fromStdString(check.message));
+
+                logCollisionEvent(warningMsg.toStdString(), check.collision, check.warningProximity);
+                if (check.collision) pathValid = false;
+            }
+        }
+
+        return pathValid;
+    }
+   
+    void MainWindow::onRunDmisPreFlightCheckClicked() {
+        if (!m_isDmisProgramActive || m_dmisProgram.features.empty()) {
+            QMessageBox::information(this, "No DMIS Program Loaded", "Please load or generate a DMIS inspection program first.");
+            return;
+        }
+
+        int totalErrors = 0;
+        for (size_t i = 0; i < m_dmisProgram.features.size(); ++i) {
+            if (!validateDmisFeaturePath(static_cast<int>(i))) {
+                totalErrors++;
+            }
+        }
+
+        if (totalErrors == 0) {
+            playSolveChime(true);
+            QMessageBox::information(this, "Pre-Flight Check Passed",
+                QString("All %1 planned DMIS inspection features passed CAD collision and clearance checks successfully.").arg(m_dmisProgram.features.size()));
+            statusBar()->setStyleSheet("background-color: #28a745; color: white; font-weight: bold;");
+            statusBar()->showMessage("Pre-Flight Check Passed: All toolpaths safe.");
+        }
+        else {
+            playSolveChime(false);
+            QMessageBox::warning(this, "Pre-Flight Warnings Found",
+                QString("Pre-flight check completed with %1 collision error(s). Check the Collision & Clearance Log for details.").arg(totalErrors));
+            statusBar()->setStyleSheet("background-color: #b91c1c; color: white; font-weight: bold;");
+            statusBar()->showMessage(QString("Pre-Flight Failed: %1 path collision(s) detected.").arg(totalErrors));
+        }
+    }
+
+    void MainWindow::tryLoadMcpPlugin() {
+        const QString appDir = QCoreApplication::applicationDirPath();
+        const QStringList candidatePaths = {
+            QDir(appDir).filePath("plugins/opencmm_mcp.dll"),
+            QDir(appDir).filePath("opencmm_mcp.dll")
+        };
+
+        for (const QString& path : candidatePaths) {
+            if (!QFile::exists(path)) continue;
+
+            m_mcpPluginLoader = new QPluginLoader(path, this);
+            QObject* pluginInstance = m_mcpPluginLoader->instance();
+            if (pluginInstance) {
+                m_mcpPlugin = qobject_cast<IMcpServerPlugin*>(pluginInstance);
+                if (m_mcpPlugin && m_mcpPlugin->startServer(this, 8765)) {
+                    logCollisionEvent(
+                        QString("MCP Server Module active on 127.0.0.1:%1").arg(m_mcpPlugin->serverPort()).toStdString(),
+                        false, false
+                    );
+                    return;
+                }
+            }
+            delete m_mcpPluginLoader;
+            m_mcpPluginLoader = nullptr;
+        }
+
+        // If opencmm_mcp.dll is not installed, OpenCMM runs in strict ITAR / offline mode
+        logCollisionEvent("ITAR Compliance Mode: MCP Server plugin not installed (Zero external AI endpoints).", false, false);
+    }
+
+    QJsonObject MainWindow::getMachineStatusJson() {
+        return QJsonObject{
+            { "droMm", QJsonObject{
+                { "x", m_lastPosition.x },
+                { "y", m_lastPosition.y },
+                { "z", m_lastPosition.z }
+            } },
+            { "units", (m_unitSystem == UnitSystem::Millimeters) ? "mm" : "in" },
+            { "stylusEffectiveRadiusMm", m_effectiveProbeRadius },
+            { "isProbeCalibrated", m_isProbeCalibrated },
+            { "isPartAligned321", m_isPartAligned },
+            { "isDmisProgramActive", m_isDmisProgramActive }
+        };
+    }
+
+    QJsonArray MainWindow::getSolvedFeaturesJson() {
+        QJsonArray arr;
+        for (const auto& mf : m_solvedFeatures) {
+            arr.append(QJsonObject{
+                { "id", mf.id },
+                { "name", QString::fromStdString(mf.name) },
+                { "diameterMm", mf.diameter },
+                { "formErrorMm", mf.formError },
+                { "locationMm", QJsonArray{ mf.location.x(), mf.location.y(), mf.location.z() } }
+                });
+        }
+        return arr;
+    }
+
+    QJsonArray MainWindow::getPlannedDmisFeaturesJson() {
+        QJsonArray arr;
+        for (size_t i = 0; i < m_dmisProgram.features.size(); ++i) {
+            const auto& df = m_dmisProgram.features[i];
+            arr.append(QJsonObject{
+                { "index", static_cast<int>(i) },
+                { "label", QString::fromStdString(df.label) },
+                { "featureType", QString::fromStdString(df.featureType) },
+                { "boundarySub", QString::fromStdString(df.boundarySub) },
+                { "nominalDiameterMm", df.nominalDiameter },
+                { "pointCount", static_cast<int>(df.points.size()) }
+                });
+        }
+        return arr;
+    }
+
+    QJsonObject MainWindow::runPreFlightCheckJson() {
+        int collisionErrors = 0;
+        for (size_t i = 0; i < m_dmisProgram.features.size(); ++i) {
+            if (!validateDmisFeaturePath(static_cast<int>(i))) {
+                collisionErrors++;
+            }
+        }
+        return QJsonObject{
+            { "checkedFeatures", static_cast<int>(m_dmisProgram.features.size()) },
+            { "collisionErrors", collisionErrors },
+            { "passed", (collisionErrors == 0) }
+        };
+    }
+
+    QJsonObject MainWindow::createOfflineDmisFeatureJson(const QJsonObject& params) {
+        using DmisFeatureT = typename decltype(m_dmisProgram.features)::value_type;
+        using DmisPointT = typename decltype(DmisFeatureT::points)::value_type;
+
+        const int nextNum = static_cast<int>(m_dmisProgram.features.size() + m_solvedFeatures.size()) + 1;
+
+        DmisFeatureT df;
+        df.label = params.value("label").toString(QString("MCP_FEAT_%1").arg(nextNum)).toStdString();
+        df.refId = QString("10000000-0000-4000-8000-%1").arg(nextNum, 12, 10, QChar('0')).toStdString();
+        df.featureType = params.value("featureType").toString("CIRCLE").toUpper().toStdString();
+        df.boundarySub = params.value("boundarySub").toString("INNER").toUpper().toStdString();
+        df.datumLetter = params.value("datumLetter").toString("").trimmed().toUpper().toStdString();
+        if (!df.datumLetter.empty()) {
+            m_dmisProgram.datumAlignment.has321Alignment = true;
+        }
+        df.nomX = params.value("nomX").toDouble(0.0);
+        df.nomY = params.value("nomY").toDouble(0.0);
+        df.nomZ = params.value("nomZ").toDouble(0.0);
+        df.nomI = params.value("nomI").toDouble(0.0);
+        df.nomJ = params.value("nomJ").toDouble(0.0);
+        df.nomK = params.value("nomK").toDouble(1.0);
+        df.nominalDiameter = params.value("nominalDiameter").toDouble(10.0);
+
+        const int defaultHits = (df.featureType == "CYLNDR") ? 6 : 4;
+        const int hitCount = std::max(3, params.value("hitCount").toInt(defaultHits));
+        const double radius = std::max(0.5, df.nominalDiameter * 0.5);
+
+        Eigen::Vector3d n(df.nomI, df.nomJ, df.nomK);
+        if (n.norm() < 1e-6) n = Eigen::Vector3d(0.0, 0.0, 1.0);
+        n.normalize();
+        df.nomI = n.x(); df.nomJ = n.y(); df.nomK = n.z();
+
+        Eigen::Vector3d ref = (std::abs(n.z()) < 0.9) ? Eigen::Vector3d::UnitZ() : Eigen::Vector3d::UnitX();
+        Eigen::Vector3d u = n.cross(ref).normalized();
+        Eigen::Vector3d v = n.cross(u).normalized();
+        Eigen::Vector3d center(df.nomX, df.nomY, df.nomZ);
+
+        if (df.featureType == "CYLNDR") {
+            const int rings = 2;
+            const int ptsPerRing = std::max(3, (hitCount + 1) / 2);
+            for (int r = 0; r < rings; ++r) {
+                const double zOff = (r == 0) ? -2.0 : 2.0;
+                const Eigen::Vector3d ringCenter = center + zOff * n;
+                for (int i = 0; i < ptsPerRing; ++i) {
+                    const double angle = (2.0 * 3.14159265358979323846 * i) / ptsPerRing;
+                    const Eigen::Vector3d radial = std::cos(angle) * u + std::sin(angle) * v;
+                    const Eigen::Vector3d pos = ringCenter + radius * radial;
+                    const Eigen::Vector3d surfNorm = (df.boundarySub == "OUTER") ? radial : -radial;
+                    DmisPointT pt{};
+                    pt.x = pos.x(); pt.y = pos.y(); pt.z = pos.z();
+                    pt.i = surfNorm.x(); pt.j = surfNorm.y(); pt.k = surfNorm.z();
+                    df.points.push_back(pt);
+                }
+            }
+        }
+        else {
+            for (int i = 0; i < hitCount; ++i) {
+                const double angle = (2.0 * 3.14159265358979323846 * i) / hitCount;
+                const Eigen::Vector3d radial = std::cos(angle) * u + std::sin(angle) * v;
+
+                DmisPointT pt{};
+                if (df.featureType == "CIRCLE" || df.featureType == "SPHERE") {
+                    const Eigen::Vector3d pos = center + radius * radial;
+                    const Eigen::Vector3d surfNorm = (df.boundarySub == "OUTER") ? radial : -radial;
+                    pt.x = pos.x(); pt.y = pos.y(); pt.z = pos.z();
+                    pt.i = surfNorm.x(); pt.j = surfNorm.y(); pt.k = surfNorm.z();
+                }
+                else {
+                    const Eigen::Vector3d pos = center + (radius * 0.5) * radial;
+                    pt.x = pos.x(); pt.y = pos.y(); pt.z = pos.z();
+                    pt.i = n.x(); pt.j = n.y(); pt.k = n.z();
+                }
+                df.points.push_back(pt);
+            }
+        }
+
+        m_dmisProgram.valid = true;
+        m_dmisProgram.stylusDiameterMm = m_effectiveProbeRadius * 2.0;
+        m_dmisProgram.features.push_back(df);
+
+        const int decimals = (m_unitSystem == UnitSystem::Millimeters) ? 4 : 5;
+        const QString unitStr = (m_unitSystem == UnitSystem::Millimeters) ? " mm" : " in";
+        const QString featTitle = QString("%1 (%2)").arg(QString::fromStdString(df.label), QString::fromStdString(df.featureType));
+        const double nomVal = (df.featureType == "CIRCLE" || df.featureType == "CYLNDR" || df.featureType == "SPHERE")
+            ? df.nominalDiameter : 0.0;
+
+        auto* item = new QTreeWidgetItem(m_featureTree, {
+            featTitle,
+            QString("%1%2").arg(toDisplayUnit(nomVal, m_unitSystem), 0, 'f', decimals).arg(unitStr),
+            "--",
+            QString("±%1").arg(toDisplayUnit(m_defaultTolMm, m_unitSystem), 0, 'f', decimals),
+            QString("PLANNED (0/%1 pts)").arg(df.points.size())
+            });
+        item->setForeground(4, QBrush(QColor("#e5c07b")));
+        m_plannedDmisTreeItems.push_back(item);
+
+        const int newIdx = static_cast<int>(m_dmisProgram.features.size()) - 1;
+        if (!m_isDmisProgramActive || m_activeDmisFeatureIdx < 0) {
+            m_isDmisProgramActive = true;
+            startDmisGuidedFeature(newIdx);
+        }
+
+        const bool pathSafe = validateDmisFeaturePath(newIdx);
+
+        if (m_autoRunDmisBtnHome) m_autoRunDmisBtnHome->setEnabled(true);
+        if (m_autoRunDmisBtnCad)  m_autoRunDmisBtnCad->setEnabled(true);
+        statusBar()->showMessage(
+            QString("MCP queued feature '%1' (%2 pts) — Pre-Flight: %3")
+            .arg(QString::fromStdString(df.label))
+            .arg(df.points.size())
+            .arg(pathSafe ? "SAFE" : "COLLISION WARNING")
+        );
+
+        return QJsonObject{
+            { "success", true },
+            { "featureIndex", newIdx },
+            { "pointCount", static_cast<int>(df.points.size()) },
+            { "preFlightPathSafe", pathSafe }
+        };
+    }
+
+    void MainWindow::onToggleMcpServerClicked() {
+        if (!m_mcpPlugin) return;
+
+        if (m_mcpPlugin->isRunning()) {
+            m_mcpPlugin->stopServer();
+            logCollisionEvent("MCP Server stopped by user (Local AI endpoint closed).", false, false);
+            statusBar()->showMessage("MCP Server stopped — local AI endpoint closed.");
+        }
+        else {
+            if (m_mcpPlugin->startServer(this, 8765)) {
+                logCollisionEvent(
+                    QString("MCP Server started on 127.0.0.1:%1").arg(m_mcpPlugin->serverPort()).toStdString(),
+                    false, false
+                );
+                statusBar()->showMessage(QString("MCP Server listening on 127.0.0.1:%1").arg(m_mcpPlugin->serverPort()));
+            }
+            else {
+                QMessageBox::warning(this, "MCP Server Error",
+                    "Could not bind MCP Server to 127.0.0.1:8765. Verify that the port is not in use.");
+            }
+        }
+        updateMcpButtonStyle();
+    }
+
+    void MainWindow::updateMcpButtonStyle() {
+        if (!m_mcpStatusBtn || !m_mcpPlugin) return;
+
+        const bool running = m_mcpPlugin->isRunning();
+        m_mcpStatusBtn->setChecked(running);
+        m_mcpStatusBtn->setText(running
+            ? QString("🤖\nMCP :%1").arg(m_mcpPlugin->serverPort())
+            : "🤖\nMCP: OFF");
+        m_mcpStatusBtn->setToolTip(running
+            ? QString("MCP Server active on 127.0.0.1:%1 — Click to disable external AI connection").arg(m_mcpPlugin->serverPort())
+            : "MCP Server stopped — Click to start listening on 127.0.0.1:8765");
+
+        if (running) {
+            m_mcpStatusBtn->setStyleSheet(
+                "QPushButton { background-color: #1e4620; color: #98c379; border: 1px solid #98c379; "
+                "border-radius: 4px; padding: 4px 8px; font-size: 11px; font-weight: bold; }"
+                "QPushButton:hover { background-color: #276749; color: #ffffff; border: 1px solid #98c379; }"
+            );
+        }
+        else {
+            m_mcpStatusBtn->setStyleSheet(
+                "QPushButton { background-color: #282c34; color: #e5c07b; border: 1px solid #e5c07b; "
+                "border-radius: 4px; padding: 4px 8px; font-size: 11px; font-weight: bold; }"
+                "QPushButton:hover { background-color: #3e4451; color: #ffffff; border: 1px solid #e5c07b; }"
+            );
+        }
+    }
+
+    QJsonObject MainWindow::getCadFacesJson(const QJsonObject& filter) {
+        if (!m_viewport || !m_viewport->hasCadModel()) {
+            return QJsonObject{
+                { "success", false },
+                { "error", "No STEP CAD part model is currently loaded." },
+                { "faces", QJsonArray{} }
+            };
+        }
+
+        const TopoDS_Shape partShape = m_viewport->getCombinedCadShape();
+        if (partShape.IsNull()) {
+            return QJsonObject{
+                { "success", false },
+                { "error", "Combined CAD shape is empty." },
+                { "faces", QJsonArray{} }
+            };
+        }
+
+        const QString typeFilter = filter.value("surfaceType").toString("ALL").trimmed().toUpper();
+        const int maxFaces = std::max(1, filter.value("maxFaces").toInt(100));
+
+        QJsonArray facesArray;
+        int faceIndex = 0;
+        int matchedCount = 0;
+
+        for (TopExp_Explorer exp(partShape, TopAbs_FACE); exp.More(); exp.Next(), ++faceIndex) {
+            const TopoDS_Face face = TopoDS::Face(exp.Current());
+            BRepAdaptor_Surface surf(face, true);
+            const GeomAbs_SurfaceType geomType = surf.GetType();
+
+            QString dmisType = "OTHER";
+            if (geomType == GeomAbs_Plane)         dmisType = "PLANE";
+            else if (geomType == GeomAbs_Cylinder) dmisType = "CYLNDR";
+            else if (geomType == GeomAbs_Sphere)   dmisType = "SPHERE";
+            else if (geomType == GeomAbs_Cone)     dmisType = "CONE";
+
+            if (typeFilter != "ALL" && !typeFilter.isEmpty() && dmisType != typeFilter) {
+                continue;
+            }
+
+            GProp_GProps props;
+            BRepGProp::SurfaceProperties(face, props);
+            const gp_Pnt centroid = props.CentreOfMass();
+            const double areaMm2 = props.Mass();
+
+            const bool isReversed = (face.Orientation() == TopAbs_REVERSED);
+            const double orientSign = isReversed ? -1.0 : 1.0;
+
+            QJsonObject faceObj;
+            faceObj["faceIndex"] = faceIndex;
+            faceObj["surfaceType"] = dmisType;
+            faceObj["areaMm2"] = std::round(areaMm2 * 100.0) / 100.0;
+            faceObj["centroid"] = QJsonObject{
+                { "x", std::round(centroid.X() * 10000.0) / 10000.0 },
+                { "y", std::round(centroid.Y() * 10000.0) / 10000.0 },
+                { "z", std::round(centroid.Z() * 10000.0) / 10000.0 }
+            };
+
+            if (geomType == GeomAbs_Plane) {
+                const gp_Pln pln = surf.Plane();
+                const gp_Dir n = pln.Axis().Direction();
+                faceObj["boundarySub"] = "UNBND";
+                faceObj["normal"] = QJsonObject{
+                    { "i", std::round(n.X() * orientSign * 10000.0) / 10000.0 },
+                    { "j", std::round(n.Y() * orientSign * 10000.0) / 10000.0 },
+                    { "k", std::round(n.Z() * orientSign * 10000.0) / 10000.0 }
+                };
+            }
+            else if (geomType == GeomAbs_Cylinder) {
+                const gp_Cylinder cyl = surf.Cylinder();
+                const gp_Dir axis = cyl.Axis().Direction();
+                const gp_Pnt loc = cyl.Location();
+
+                const gp_Vec toCentroid(loc, centroid);
+                const double axialProj = toCentroid.Dot(gp_Vec(axis));
+                const gp_Pnt axisCenter = loc.Translated(gp_Vec(axis).Multiplied(axialProj));
+
+                faceObj["boundarySub"] = isReversed ? "INNER" : "OUTER";
+                faceObj["nominalDiameter"] = std::round(cyl.Radius() * 2.0 * 10000.0) / 10000.0;
+                faceObj["axisCenter"] = QJsonObject{
+                    { "x", std::round(axisCenter.X() * 10000.0) / 10000.0 },
+                    { "y", std::round(axisCenter.Y() * 10000.0) / 10000.0 },
+                    { "z", std::round(axisCenter.Z() * 10000.0) / 10000.0 }
+                };
+                faceObj["axis"] = QJsonObject{
+                    { "i", std::round(axis.X() * 10000.0) / 10000.0 },
+                    { "j", std::round(axis.Y() * 10000.0) / 10000.0 },
+                    { "k", std::round(axis.Z() * 10000.0) / 10000.0 }
+                };
+            }
+            else if (geomType == GeomAbs_Sphere) {
+                const gp_Sphere sph = surf.Sphere();
+                const gp_Pnt center = sph.Location();
+                faceObj["boundarySub"] = isReversed ? "INNER" : "OUTER";
+                faceObj["nominalDiameter"] = std::round(sph.Radius() * 2.0 * 10000.0) / 10000.0;
+                faceObj["sphereCenter"] = QJsonObject{
+                    { "x", std::round(center.X() * 10000.0) / 10000.0 },
+                    { "y", std::round(center.Y() * 10000.0) / 10000.0 },
+                    { "z", std::round(center.Z() * 10000.0) / 10000.0 }
+                };
+            }
+            else if (geomType == GeomAbs_Cone) {
+                const gp_Cone cone = surf.Cone();
+                const gp_Dir axis = cone.Axis().Direction();
+                faceObj["boundarySub"] = isReversed ? "INNER" : "OUTER";
+                faceObj["semiAngleDeg"] = std::round((cone.SemiAngle() * 180.0 / 3.14159265358979323846) * 1000.0) / 1000.0;
+                faceObj["axis"] = QJsonObject{
+                    { "i", std::round(axis.X() * 10000.0) / 10000.0 },
+                    { "j", std::round(axis.Y() * 10000.0) / 10000.0 },
+                    { "k", std::round(axis.Z() * 10000.0) / 10000.0 }
+                };
+            }
+
+            facesArray.append(faceObj);
+            if (++matchedCount >= maxFaces) {
+                break;
+            }
+        }
+
+        return QJsonObject{
+            { "success", true },
+            { "totalFacesScanned", faceIndex },
+            { "returnedFacesCount", matchedCount },
+            { "faces", facesArray }
+        };
+    }
+
+    QJsonObject MainWindow::runDmisPlaybackJson(const QJsonObject& params) {
+        const QString action = params.value("action").toString("start").trimmed().toLower();
+
+        if (m_dmisProgram.features.empty()) {
+            return QJsonObject{
+                { "success", false },
+                { "error", "No DMIS features are loaded or queued for playback." }
+            };
+        }
+
+        if (action == "stop") {
+            stopDmisAutoRun();
+            statusBar()->showMessage("MCP stopped DMIS simulation playback.");
+            return QJsonObject{
+                { "success", true },
+                { "state", "stopped" }
+            };
+        }
+        else if (action == "reset") {
+            stopDmisAutoRun();
+            finishFeatureBuffer();
+            m_isDmisProgramActive = true;
+            startDmisGuidedFeature(0);
+            statusBar()->showMessage("MCP reset DMIS simulation playback to Feature #1.");
+            return QJsonObject{
+                { "success", true },
+                { "state", "reset" }
+            };
+        }
+
+        const QJsonObject preFlight = runPreFlightCheckJson();
+        if (!m_isDmisProgramActive || m_activeDmisFeatureIdx < 0 ||
+            m_activeDmisFeatureIdx >= static_cast<int>(m_dmisProgram.features.size())) {
+            m_isDmisProgramActive = true;
+            startDmisGuidedFeature(0);
+        }
+
+        if (!m_dmisPlaybackTimer || !m_dmisPlaybackTimer->isActive()) {
+            onToggleAutoRunDmisClicked();
+        }
+
+        return QJsonObject{
+            { "success", true },
+            { "state", "running" },
+            { "featureCount", static_cast<int>(m_dmisProgram.features.size()) },
+            { "preFlightSummary", preFlight }
+        };
     }
 
 } // namespace OpenCMM

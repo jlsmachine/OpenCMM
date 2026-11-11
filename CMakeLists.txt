@@ -21,6 +21,9 @@ set(PROJECT_SOURCES
     include/core/AppSettings.h
     include/core/Units.h
 
+    # Pure MCP Host/Plugin Interface Header (ITAR-safe, no implementation)
+    include/mcp/IMcpPlugin.h
+
     # Hardware Abstraction Layer (HAL)
     src/hal/PicoSerialController.cpp
     include/hal/ICmmController.h
@@ -110,3 +113,52 @@ target_link_libraries(dmis_parser_test PRIVATE
 )
 
 add_test(NAME DMIS53ParserValidationTest COMMAND dmis_parser_test --test-dmis)
+
+# --- Optional Modular MCP Server Plugin (Disable or omit for ITAR compliance) ---
+option(OPENCMM_BUILD_MCP_PLUGIN "Build optional modular MCP Server plugin DLL" ON)
+
+if(OPENCMM_BUILD_MCP_PLUGIN)
+    add_library(opencmm_mcp MODULE
+        include/mcp/IMcpPlugin.h
+        src/mcp/OpenCmmMcpPlugin.h
+        src/mcp/OpenCmmMcpPlugin.cpp
+    )
+
+    target_include_directories(opencmm_mcp PRIVATE include)
+    target_link_libraries(opencmm_mcp PRIVATE Qt6::Core ws2_32)
+
+    set_target_properties(opencmm_mcp PROPERTIES
+        AUTOMOC ON
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins"
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins"
+    )
+
+    # Standalone zero-dependency stdio-to-TCP bridge for MCP clients
+    add_executable(opencmm_mcp_bridge
+        src/mcp/mcp_stdio_bridge.cpp
+    )
+    add_Dependencies(OpenCMM opencmm_mcp opencmm_mcp_bridge)
+    target_compile_definitions(opencmm_mcp_bridge PRIVATE OPENCMM_BRIDGE_STANDALONE)
+    target_link_libraries(opencmm_mcp_bridge PRIVATE ws2_32)
+    set_target_properties(opencmm_mcp_bridge PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins"
+    )
+
+    install(TARGETS opencmm_mcp opencmm_mcp_bridge
+        RUNTIME DESTINATION plugins COMPONENT mcp_module
+        LIBRARY DESTINATION plugins COMPONENT mcp_module
+    )
+endif()
+
+# --- CPack Component Configuration for Installer (NSIS / WiX / IFW) ---
+include(CPackComponent)
+cpack_add_component(core_studio
+    DISPLAY_NAME "OpenCMM Metrology Studio (Core)"
+    DESCRIPTION "Core CAD, DRO, DMIS 5.3, and QIF 2.1 inspection studio (ITAR-Safe)."
+    REQUIRED
+)
+cpack_add_component(mcp_module
+    DISPLAY_NAME "AI Model Context Protocol (MCP) Server"
+    DESCRIPTION "Optional local MCP plugin for AI agent integration. Leave unchecked for strict ITAR / air-gapped environments."
+    DISABLED
+)
