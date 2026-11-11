@@ -26,6 +26,8 @@
 #include <gp_Ax2.hxx>
 #include <Quantity_Color.hxx>
 #include <algorithm>
+#include <QDirIterator>
+#include <QProcessEnvironment>
 
 namespace OpenCMM {
 
@@ -155,18 +157,29 @@ namespace OpenCMM {
             return false;
         }
 
+        // Explicitly use Windows System32\tar.exe (bsdtar) so Git/MSYS2 GNU tar does not intercept and fail on .cmm ZIPs
+        const QString sysRoot = QProcessEnvironment::systemEnvironment().value("SystemRoot", "C:/Windows");
+        QString tarExe = QDir::cleanPath(sysRoot + "/System32/tar.exe");
+        if (!QFileInfo::exists(tarExe)) {
+            tarExe = "tar.exe";
+        }
+
         QProcess tarProc;
-        tarProc.start("tar", { "-xf", QDir::toNativeSeparators(packagePath), "-C", QDir::toNativeSeparators(tempDir.path()) });
-        if (!tarProc.waitForFinished(10000) || tarProc.exitCode() != 0) {
+        tarProc.start(tarExe, { "-xf", QDir::toNativeSeparators(packagePath), "-C", QDir::toNativeSeparators(tempDir.path()) });
+        if (!tarProc.waitForFinished(15000) || tarProc.exitCode() != 0) {
             return false;
         }
 
         QDir dir(tempDir.path());
         QString jsonPath = dir.filePath("machine.cmm.json");
         if (!QFileInfo::exists(jsonPath)) {
-            QStringList jsonFiles = dir.entryList({ "*.json" }, QDir::Files);
-            if (jsonFiles.isEmpty()) return false;
-            jsonPath = dir.filePath(jsonFiles.first());
+            QDirIterator it(tempDir.path(), { "machine.cmm.json", "*.json" }, QDir::Files, QDirIterator::Subdirectories);
+            if (it.hasNext()) {
+                jsonPath = it.next();
+            }
+            else {
+                return false;
+            }
         }
 
         QFile f(jsonPath);
@@ -174,7 +187,8 @@ namespace OpenCMM {
             return false;
         }
 
-        return parseManifestJson(f.readAll(), tempDir.path());
+        const QString manifestBaseDir = QFileInfo(jsonPath).absolutePath();
+        return parseManifestJson(f.readAll(), manifestBaseDir);
     }
 
     bool CmmDigitalTwin::parseManifestJson(const QByteArray& jsonBytes, const QString& baseDir) {

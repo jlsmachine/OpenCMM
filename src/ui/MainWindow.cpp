@@ -232,15 +232,6 @@ namespace OpenCMM {
         setupFeatureTreeDock();
         setupCollisionLogDock();
 
-        m_viewport = new OcctViewport(this);
-        m_viewport->setMinimumSize(200, 150);
-        m_viewport->installEventFilter(this);
-        m_viewport->setFaceSelectedCallback([this](const CadFaceInfo& faceInfo) {
-            onCadFaceSelected(faceInfo);
-            });
-        m_viewport->setSurfaceHitCallback([this](const CadSurfaceHit& hit) {
-            onCadSurfaceProbed(hit);
-            });
         auto* centralContainer = new QWidget(this);
         auto* centralLayout = new QVBoxLayout(centralContainer);
         centralLayout->setContentsMargins(0, 0, 0, 0);
@@ -829,7 +820,6 @@ namespace OpenCMM {
     void MainWindow::setupDroDock() {
         m_droDock = new QDockWidget("LIVE CMM DRO & PROBE STATUS", this);
         m_droDock->setObjectName("LiveDroDock");
-        // Removed setMinimumHeight(280) so it can size compactly without forcing an 845px minimum window height
 
         auto* scrollArea = new QScrollArea(m_droDock);
         scrollArea->setWidgetResizable(true);
@@ -867,11 +857,9 @@ namespace OpenCMM {
         }
 
         layout->addLayout(grid);
-        m_hitCountLabel = new QLabel("Active Feature Hits: 0", m_droContainer);
-        layout->addWidget(m_hitCountLabel);
 
-        layout->addLayout(grid);
         m_hitCountLabel = new QLabel("Active Feature Hits: 0", m_droContainer);
+        m_hitCountLabel->setStyleSheet("color: #cbd5e1; font-size: 12px; font-weight: bold; padding: 2px 4px;");
         layout->addWidget(m_hitCountLabel);
 
         auto* startGuidedBtn = new QPushButton("🧭 Start Guided Part Probe (F6)", m_droContainer);
@@ -916,6 +904,34 @@ namespace OpenCMM {
         m_treeContainer->setStyleSheet(m_isDarkMode ? "background-color: #181a1f;" : "background-color: #f8fafc;");
         auto* dockLayout = new QVBoxLayout(m_treeContainer);
         dockLayout->setContentsMargins(4, 4, 4, 4);
+
+        auto* treeActionRow = new QHBoxLayout();
+        treeActionRow->setContentsMargins(0, 0, 0, 2);
+        treeActionRow->setSpacing(6);
+
+        auto* gdtBtn = new QPushButton("⊕ GD&T Callout (Ctrl+G)", m_treeContainer);
+        gdtBtn->setCursor(Qt::PointingHandCursor);
+        gdtBtn->setToolTip("Evaluate True Position (⊕), Perpendicularity (⊥), Parallelism (∥), or Concentricity (◎)");
+        gdtBtn->setStyleSheet(
+            "QPushButton { background-color: #1e3a8a; color: #93c5fd; border: 1px solid #3b82f6; "
+            "border-radius: 4px; padding: 4px 8px; font-size: 11px; font-weight: bold; }"
+            "QPushButton:hover { background-color: #1d4ed8; color: #ffffff; }"
+        );
+        connect(gdtBtn, &QPushButton::clicked, this, &MainWindow::onEvaluateGdtCalloutClicked);
+        treeActionRow->addWidget(gdtBtn);
+
+        auto* editTolQuickBtn = new QPushButton("± Edit Tol...", m_treeContainer);
+        editTolQuickBtn->setCursor(Qt::PointingHandCursor);
+        editTolQuickBtn->setStyleSheet(
+            "QPushButton { background-color: #2d3748; color: #e5c07b; border: 1px solid #e5c07b; "
+            "border-radius: 4px; padding: 4px 8px; font-size: 11px; font-weight: bold; }"
+            "QPushButton:hover { background-color: #4a5568; color: #ffffff; }"
+        );
+        connect(editTolQuickBtn, &QPushButton::clicked, this, &MainWindow::onEditToleranceClicked);
+        treeActionRow->addWidget(editTolQuickBtn);
+        treeActionRow->addStretch(1);
+
+        dockLayout->addLayout(treeActionRow);
 
         m_featureTree = new QTreeWidget(m_treeContainer);
         m_featureTree->setMinimumHeight(180); // <--- Guarantee tree view space
@@ -1080,12 +1096,10 @@ namespace OpenCMM {
         dlg.setAudioChimesEnabled(m_audioEnabled);
         dlg.setDarkModeEnabled(m_isDarkMode);
         dlg.setSelectedMachinePath(m_machinePackagePath);
-        connect(&dlg, &SettingsDialog::resetWindowLayoutRequested, this, &MainWindow::resetWindowLayout);
-
-        if (dlg.exec() != QDialog::Accepted) return;
 
         if (m_controller) {
-            dlg.setAxisCalibration(Eigen::Vector3d(0.001, 0.001, 0.001), Eigen::Vector3i(1, 1, 1));
+            const auto& cfg = m_viewport ? m_viewport->machineConfig() : MachinePostConfig{};
+            dlg.setAxisCalibration(cfg.scaleMm, cfg.sign);
         }
 
         QStringList ports;
@@ -1097,6 +1111,8 @@ namespace OpenCMM {
             m_currentPortName = ports.first();
         }
         dlg.setAvailableSerialPorts(ports, m_currentPortName);
+
+        connect(&dlg, &SettingsDialog::resetWindowLayoutRequested, this, &MainWindow::resetWindowLayout);
 
         connect(&dlg, &SettingsDialog::machinePackageLoaded, this, [this, &dlg](const QString& path) {
             if (m_viewport && m_viewport->loadMachinePackage(path)) {
@@ -1149,6 +1165,10 @@ namespace OpenCMM {
                 onUnitToggled();
             }
 
+            if (m_viewport) {
+                m_viewport->resetDefaultMachine();
+            }
+
             if (m_controller) {
                 m_controller->setAxisCalibration(Eigen::Vector3d(0.001, 0.001, 0.001), Eigen::Vector3i(1, 1, 1));
             }
@@ -1174,6 +1194,7 @@ namespace OpenCMM {
             connect(&dlg, &SettingsDialog::sendSerialCommandRequested, m_controller, &ICmmController::sendRawCommand);
         }
 
+        // Run the modal dialog AFTER all signals are connected
         if (dlg.exec() != QDialog::Accepted) return;
 
         onThemeToggled(dlg.isDarkModeEnabled());
@@ -1203,7 +1224,6 @@ namespace OpenCMM {
             m_audioEnabled,
             m_isDarkMode
         );
-        connect(&dlg, &SettingsDialog::resetWindowLayoutRequested, this, &MainWindow::resetWindowLayout);
         statusBar()->showMessage("Settings updated and saved successfully.");
     }
 
@@ -3985,9 +4005,22 @@ namespace OpenCMM {
             datCAction = contextMenu.addAction("🅲 Set as Tertiary Datum C (Origin 0,0,0)");
             contextMenu.addSeparator();
         }
+        QAction* gdtAction = contextMenu.addAction("⊕ Evaluate GD&T Callout (Position / ⊥ / ∥)...");
+        contextMenu.addSeparator();
         QAction* deleteAction = contextMenu.addAction("🗑 Delete Feature");
 
         QAction* selectedAction = contextMenu.exec(m_featureTree->mapToGlobal(pos));
+        if (!selectedAction) return;
+
+        if (selectedAction == gdtAction) {
+            onEvaluateGdtCalloutClicked();
+            return;
+        }
+
+
+        //QAction* deleteAction = contextMenu.addAction("🗑 Delete Feature");
+
+        //QAction* selectedAction = contextMenu.exec(m_featureTree->mapToGlobal(pos));
         if (!selectedAction) return;
 
         if (selectedAction == deleteAction) {
@@ -4515,6 +4548,7 @@ namespace OpenCMM {
         bindAction("sc_open_settings", "Ctrl+,", &MainWindow::onOpenSettingsClicked);
         bindAction("sc_guided_probe", "F6", &MainWindow::onStartManualGuidedInspectionClicked);
         bindAction("sc_undo_hit", "Ctrl+Z", &MainWindow::onUndoLastProbeHitClicked);
+        bindAction("sc_gdt_callout", "Ctrl+G", &MainWindow::onEvaluateGdtCalloutClicked);
 
         // Toggle Collision & Clearance Log dock
         const QString colSeq = settings.value("sc_toggle_collision", "Ctrl+Shift+L").toString().trimmed();
@@ -6070,7 +6104,519 @@ namespace OpenCMM {
 
         m_viewport->focusCameraOnTarget(targetX, targetY, targetZ, normI, normJ, normK, baseSpan);
     }
+    QJsonObject MainWindow::evaluateGdtCalloutJson(const QJsonObject& params) {
+        if (m_solvedFeatures.empty()) {
+            return QJsonObject{
+                { "success", false },
+                { "error", "No solved features are available to evaluate." }
+            };
+        }
 
+        const QString calloutType = params.value("calloutType").toString("POSITION").trimmed().toUpper();
+        const int targetId = params.value("targetFeatureId").toInt(-1);
+        const int datumId = params.value("datumFeatureId").toInt(m_datumAFeatureId);
+        const double geoTolMm = std::max(0.0001, params.value("toleranceMm").toDouble(m_defaultTolMm * 2.0));
+
+        const MeasuredFeature* targetFeat = nullptr;
+        const MeasuredFeature* datumFeat = nullptr;
+        for (const auto& mf : m_solvedFeatures) {
+            if (mf.id == targetId) targetFeat = &mf;
+            if (mf.id == datumId)  datumFeat = &mf;
+        }
+        if (!targetFeat) {
+            targetFeat = &m_solvedFeatures.back();
+        }
+
+        const int decimals = (m_unitSystem == UnitSystem::Millimeters) ? 4 : 5;
+        const QString unitStr = (m_unitSystem == UnitSystem::Millimeters) ? " mm" : " in";
+
+        // Transform target and datum geometry into the active 3-2-1 PCS frame if aligned
+        Eigen::Matrix3d rotPcs = Eigen::Matrix3d::Identity();
+        if (m_isPartAligned) {
+            rotPcs = m_pcsMatrix.block<3, 3>(0, 0);
+        }
+        const Eigen::Vector3d tgtLocPcs = m_isPartAligned
+            ? MetrologyMath::transformPoint(targetFeat->location, m_pcsMatrix)
+            : targetFeat->location;
+        Eigen::Vector3d tgtVecPcs = rotPcs * targetFeat->primaryVector;
+        if (tgtVecPcs.norm() > 1e-9) tgtVecPcs.normalize();
+
+        double actualErrorMm = 0.0;
+        double bonusTolMm = 0.0;
+        double totalAllowedTolMm = geoTolMm;
+        QString symbolStr = "⊕";
+        QString fcfText;
+        QString titlePrefix;
+        QJsonObject detailsJson;
+
+        if (calloutType == "POSITION" || calloutType == "TRUE_POSITION") {
+            symbolStr = "⊕";
+            const QString matCond = params.value("materialCondition").toString("RFS").trimmed().toUpper();
+            const QString axesMode = params.value("axesMode").toString("XY").trimmed().toUpper();
+            const bool isInternal = params.value("isInternalBore").toBool(true);
+
+            // Look up nominal size & tolerances from the feature's tree item if not explicitly supplied
+            double nomSizeMm = params.value("nominalSizeMm").toDouble(targetFeat->diameter);
+            double sizePlusTolMm = params.value("sizePlusTolMm").toDouble(m_defaultTolMm);
+            double sizeMinusTolMm = params.value("sizeMinusTolMm").toDouble(m_defaultTolMm);
+
+            for (int i = 0; i < m_featureTree->topLevelItemCount(); ++i) {
+                QTreeWidgetItem* top = m_featureTree->topLevelItem(i);
+                if (top && top->data(0, ROLE_FEATURE_ID).isValid() && top->data(0, ROLE_FEATURE_ID).toInt() == targetFeat->id) {
+                    if (!params.contains("nominalSizeMm") && top->data(0, ROLE_NOMINAL_MM).isValid()) {
+                        nomSizeMm = top->data(0, ROLE_NOMINAL_MM).toDouble();
+                    }
+                    if (!params.contains("sizePlusTolMm") && top->data(0, ROLE_PLUS_TOL_MM).isValid()) {
+                        sizePlusTolMm = top->data(0, ROLE_PLUS_TOL_MM).toDouble();
+                    }
+                    if (!params.contains("sizeMinusTolMm") && top->data(0, ROLE_MINUS_TOL_MM).isValid()) {
+                        sizeMinusTolMm = top->data(0, ROLE_MINUS_TOL_MM).toDouble();
+                    }
+                    break;
+                }
+            }
+
+            if (targetFeat->diameter > 0.0) {
+                if (matCond == "MMC") {
+                    if (isInternal) {
+                        const double mmcLimit = nomSizeMm - sizeMinusTolMm;
+                        bonusTolMm = std::max(0.0, targetFeat->diameter - mmcLimit);
+                    }
+                    else {
+                        const double mmcLimit = nomSizeMm + sizePlusTolMm;
+                        bonusTolMm = std::max(0.0, mmcLimit - targetFeat->diameter);
+                    }
+                }
+                else if (matCond == "LMC") {
+                    if (isInternal) {
+                        const double lmcLimit = nomSizeMm + sizePlusTolMm;
+                        bonusTolMm = std::max(0.0, lmcLimit - targetFeat->diameter);
+                    }
+                    else {
+                        const double lmcLimit = nomSizeMm - sizeMinusTolMm;
+                        bonusTolMm = std::max(0.0, targetFeat->diameter - lmcLimit);
+                    }
+                }
+            }
+
+            totalAllowedTolMm = geoTolMm + bonusTolMm;
+
+            const double basicX = params.value("basicX").toDouble(tgtLocPcs.x());
+            const double basicY = params.value("basicY").toDouble(tgtLocPcs.y());
+            const double basicZ = params.value("basicZ").toDouble(tgtLocPcs.z());
+
+            const double dX = (axesMode.contains("X")) ? (tgtLocPcs.x() - basicX) : 0.0;
+            const double dY = (axesMode.contains("Y")) ? (tgtLocPcs.y() - basicY) : 0.0;
+            const double dZ = (axesMode.contains("Z")) ? (tgtLocPcs.z() - basicZ) : 0.0;
+            const double radialErrMm = std::sqrt(dX * dX + dY * dY + dZ * dZ);
+            actualErrorMm = 2.0 * radialErrMm;
+
+            const QString mcTag = (matCond == "MMC") ? " (M)" : (matCond == "LMC" ? " (L)" : "");
+            const QString datRefs = m_isPartAligned ? " | A | B | C" : " | MCS";
+            fcfText = QString("⊕ Ø%1%2%3")
+                .arg(toDisplayUnit(geoTolMm, m_unitSystem), 0, 'f', decimals)
+                .arg(mcTag, datRefs);
+            titlePrefix = QString("⊕ True Pos [%1]").arg(QString::fromStdString(targetFeat->name));
+
+            detailsJson["basicMm"] = QJsonArray{ basicX, basicY, basicZ };
+            detailsJson["actualPcsMm"] = QJsonArray{ tgtLocPcs.x(), tgtLocPcs.y(), tgtLocPcs.z() };
+            detailsJson["deltaMm"] = QJsonArray{ dX, dY, dZ };
+            detailsJson["radialOffsetMm"] = radialErrMm;
+            detailsJson["bonusToleranceMm"] = bonusTolMm;
+            detailsJson["axesMode"] = axesMode;
+        }
+        else if (calloutType == "PERPENDICULARITY" || calloutType == "PERP") {
+            symbolStr = "⊥";
+            if (!datumFeat) {
+                return QJsonObject{
+                    { "success", false },
+                    { "error", "Perpendicularity requires a valid datumFeatureId." }
+                };
+            }
+
+            Eigen::Vector3d datVec = datumFeat->primaryVector.normalized();
+            const double dotVal = std::clamp(std::abs(targetFeat->primaryVector.normalized().dot(datVec)), 0.0, 1.0);
+
+            // Note: Cylinder/Circle primaryVector is its axis, while Plane primaryVector is its surface normal.
+            // A cylinder perpendicular to a plane has its axis PARALLEL to the plane's normal (dot -> 1.0).
+            // Two planes (or two axes) perpendicular to each other have vectors ORTHOGONAL (dot -> 0.0).
+            const bool targetIsPlane = (targetFeat->kind == FeatureKind::Plane3D);
+            const bool datumIsPlane = (datumFeat->kind == FeatureKind::Plane3D);
+            const double angleErrRad = (targetIsPlane == datumIsPlane)
+                ? std::asin(dotVal)          // vectors should be 90 deg apart
+                : std::acos(dotVal);         // axis and normal should be 0 deg apart
+
+            double spanMm = 25.0;
+            if (m_featureDmisHits.count(targetFeat->id) && m_featureDmisHits[targetFeat->id].size() >= 2) {
+                const auto& hits = m_featureDmisHits[targetFeat->id];
+                double maxPairDist = 0.0;
+                for (size_t i = 0; i < hits.size(); ++i) {
+                    for (size_t j = i + 1; j < hits.size(); ++j) {
+                        maxPairDist = std::max(maxPairDist, (hits[i].surfacePt - hits[j].surfacePt).norm());
+                    }
+                }
+                if (maxPairDist > 1.0) spanMm = maxPairDist;
+            }
+
+            // If Target Plane vs Datum Plane and we have surface hits, compute exact enveloping zone along the orthogonal datum vector
+            if (targetIsPlane && datumIsPlane && m_featureDmisHits.count(targetFeat->id) && m_featureDmisHits[targetFeat->id].size() >= 3) {
+                Eigen::Vector3d idealNorm = targetFeat->primaryVector - (targetFeat->primaryVector.dot(datVec)) * datVec;
+                if (idealNorm.norm() > 1e-6) {
+                    idealNorm.normalize();
+                    double minProj = 1e18, maxProj = -1e18;
+                    for (const auto& h : m_featureDmisHits[targetFeat->id]) {
+                        const double p = (h.surfacePt - targetFeat->location).dot(idealNorm);
+                        minProj = std::min(minProj, p);
+                        maxProj = std::max(maxProj, p);
+                    }
+                    actualErrorMm = maxProj - minProj;
+                }
+                else {
+                    actualErrorMm = spanMm * std::tan(angleErrRad);
+                }
+            }
+            else {
+                actualErrorMm = spanMm * std::tan(angleErrRad);
+            }
+
+            const QString datLabel = m_featureDatumLetters.count(datumFeat->id)
+                ? m_featureDatumLetters[datumFeat->id]
+                : QString::fromStdString(datumFeat->name);
+            fcfText = QString("⊥ %1 | %2")
+                .arg(toDisplayUnit(geoTolMm, m_unitSystem), 0, 'f', decimals)
+                .arg(datLabel);
+            titlePrefix = QString("⊥ Perp [%1 → %2]")
+                .arg(QString::fromStdString(targetFeat->name), datLabel);
+
+            detailsJson["angularErrorDeg"] = angleErrRad * (180.0 / 3.14159265358979323846);
+            detailsJson["evaluatedSpanMm"] = spanMm;
+        }
+        else if (calloutType == "PARALLELISM" || calloutType == "PARALLEL") {
+            symbolStr = "∥";
+            if (!datumFeat) {
+                return QJsonObject{
+                    { "success", false },
+                    { "error", "Parallelism requires a valid datumFeatureId." }
+                };
+            }
+
+            const Eigen::Vector3d datVec = datumFeat->primaryVector.normalized();
+            const double dotVal = std::clamp(std::abs(targetFeat->primaryVector.normalized().dot(datVec)), 0.0, 1.0);
+            const bool targetIsPlane = (targetFeat->kind == FeatureKind::Plane3D);
+            const bool datumIsPlane = (datumFeat->kind == FeatureKind::Plane3D);
+            const double angleErrRad = (targetIsPlane == datumIsPlane)
+                ? std::acos(dotVal)
+                : std::asin(dotVal);
+
+            double spanMm = 25.0;
+            if (targetIsPlane && datumIsPlane && m_featureDmisHits.count(targetFeat->id) && m_featureDmisHits[targetFeat->id].size() >= 3) {
+                double minProj = 1e18, maxProj = -1e18;
+                const auto& hits = m_featureDmisHits[targetFeat->id];
+                for (const auto& h : hits) {
+                    const double p = (h.surfacePt - targetFeat->location).dot(datVec);
+                    minProj = std::min(minProj, p);
+                    maxProj = std::max(maxProj, p);
+                }
+                actualErrorMm = maxProj - minProj;
+            }
+            else {
+                if (m_featureDmisHits.count(targetFeat->id) && m_featureDmisHits[targetFeat->id].size() >= 2) {
+                    const auto& hits = m_featureDmisHits[targetFeat->id];
+                    double maxPairDist = 0.0;
+                    for (size_t i = 0; i < hits.size(); ++i) {
+                        for (size_t j = i + 1; j < hits.size(); ++j) {
+                            maxPairDist = std::max(maxPairDist, (hits[i].surfacePt - hits[j].surfacePt).norm());
+                        }
+                    }
+                    if (maxPairDist > 1.0) spanMm = maxPairDist;
+                }
+                actualErrorMm = spanMm * std::sin(angleErrRad);
+            }
+
+            const QString datLabel = m_featureDatumLetters.count(datumFeat->id)
+                ? m_featureDatumLetters[datumFeat->id]
+                : QString::fromStdString(datumFeat->name);
+            fcfText = QString("∥ %1 | %2")
+                .arg(toDisplayUnit(geoTolMm, m_unitSystem), 0, 'f', decimals)
+                .arg(datLabel);
+            titlePrefix = QString("∥ Parallel [%1 → %2]")
+                .arg(QString::fromStdString(targetFeat->name), datLabel);
+
+            detailsJson["angularErrorDeg"] = angleErrRad * (180.0 / 3.14159265358979323846);
+            detailsJson["evaluatedSpanMm"] = spanMm;
+        }
+        else if (calloutType == "CONCENTRICITY" || calloutType == "COAXIALITY") {
+            symbolStr = "◎";
+            if (!datumFeat) {
+                return QJsonObject{
+                    { "success", false },
+                    { "error", "Concentricity requires a valid datumFeatureId." }
+                };
+            }
+
+            const Eigen::Vector3d datAxis = datumFeat->primaryVector.normalized();
+            const Eigen::Vector3d diff = targetFeat->location - datumFeat->location;
+            const Eigen::Vector3d radialVec = diff - (diff.dot(datAxis)) * datAxis;
+            actualErrorMm = 2.0 * radialVec.norm();
+
+            const QString datLabel = m_featureDatumLetters.count(datumFeat->id)
+                ? m_featureDatumLetters[datumFeat->id]
+                : QString::fromStdString(datumFeat->name);
+            fcfText = QString("◎ Ø%1 | %2")
+                .arg(toDisplayUnit(geoTolMm, m_unitSystem), 0, 'f', decimals)
+                .arg(datLabel);
+            titlePrefix = QString("◎ Concentricity [%1 → %2]")
+                .arg(QString::fromStdString(targetFeat->name), datLabel);
+
+            detailsJson["radialEccentricityMm"] = radialVec.norm();
+        }
+        else {
+            return QJsonObject{
+                { "success", false },
+                { "error", "Unsupported calloutType: " + calloutType }
+            };
+        }
+
+        const bool passed = (actualErrorMm <= totalAllowedTolMm + 1e-7);
+        playSolveChime(passed);
+
+        auto* gdtItem = new QTreeWidgetItem(m_featureTree, { titlePrefix, "", "", "", "" });
+        applyEvaluationToTreeItem(gdtItem, actualErrorMm, true, 0.0, totalAllowedTolMm, totalAllowedTolMm);
+        gdtItem->setText(1, fcfText);
+
+        if (bonusTolMm > 1e-6) {
+            gdtItem->setText(3, QString("Ø%1 (+%2 Bonus)")
+                .arg(toDisplayUnit(totalAllowedTolMm, m_unitSystem), 0, 'f', decimals)
+                .arg(toDisplayUnit(bonusTolMm, m_unitSystem), 0, 'f', decimals));
+        }
+        else {
+            gdtItem->setText(3, QString("%1%2")
+                .arg((calloutType.startsWith("POS") || calloutType.startsWith("CON")) ? "Ø" : "")
+                .arg(toDisplayUnit(totalAllowedTolMm, m_unitSystem), 0, 'f', decimals));
+        }
+
+        if (calloutType.startsWith("POS")) {
+            const auto bArr = detailsJson["basicMm"].toArray();
+            const auto dArr = detailsJson["deltaMm"].toArray();
+            new QTreeWidgetItem(gdtItem, {
+                "Basic Target (X, Y, Z)",
+                QString("(%1, %2, %3)%4")
+                    .arg(toDisplayUnit(bArr[0].toDouble(), m_unitSystem), 0, 'f', decimals)
+                    .arg(toDisplayUnit(bArr[1].toDouble(), m_unitSystem), 0, 'f', decimals)
+                    .arg(toDisplayUnit(bArr[2].toDouble(), m_unitSystem), 0, 'f', decimals)
+                    .arg(unitStr),
+                QString("(%1, %2, %3)%4")
+                    .arg(toDisplayUnit(tgtLocPcs.x(), m_unitSystem), 0, 'f', decimals)
+                    .arg(toDisplayUnit(tgtLocPcs.y(), m_unitSystem), 0, 'f', decimals)
+                    .arg(toDisplayUnit(tgtLocPcs.z(), m_unitSystem), 0, 'f', decimals)
+                    .arg(unitStr),
+                "--",
+                m_isPartAligned ? "PCS" : "MCS"
+                });
+            new QTreeWidgetItem(gdtItem, {
+                "Delta (dX, dY, Radial)",
+                "--",
+                QString("dX=%1, dY=%2, R=%3%4")
+                    .arg(toDisplayUnit(dArr[0].toDouble(), m_unitSystem), 0, 'f', decimals)
+                    .arg(toDisplayUnit(dArr[1].toDouble(), m_unitSystem), 0, 'f', decimals)
+                    .arg(toDisplayUnit(detailsJson["radialOffsetMm"].toDouble(), m_unitSystem), 0, 'f', decimals)
+                    .arg(unitStr),
+                "--",
+                "OFFSET"
+                });
+        }
+        else if (detailsJson.contains("angularErrorDeg")) {
+            new QTreeWidgetItem(gdtItem, {
+                "3D Angular Tilt / Span",
+                "--",
+                QString("%1° over %2%3")
+                    .arg(detailsJson["angularErrorDeg"].toDouble(), 0, 'f', 4)
+                    .arg(toDisplayUnit(detailsJson["evaluatedSpanMm"].toDouble(), m_unitSystem), 0, 'f', decimals)
+                    .arg(unitStr),
+                "--",
+                "ORIENT"
+                });
+        }
+
+        gdtItem->setExpanded(true);
+        statusBar()->showMessage(QString("Evaluated %1 — Actual: %2%3 vs Allowed: %4%3 (%5)")
+            .arg(titlePrefix)
+            .arg(toDisplayUnit(actualErrorMm, m_unitSystem), 0, 'f', decimals)
+            .arg(unitStr)
+            .arg(toDisplayUnit(totalAllowedTolMm, m_unitSystem), 0, 'f', decimals)
+            .arg(passed ? "PASS" : "FAIL"));
+
+        return QJsonObject{
+            { "success", true },
+            { "calloutType", calloutType },
+            { "featureControlFrame", fcfText },
+            { "actualErrorMm", actualErrorMm },
+            { "geometricToleranceMm", geoTolMm },
+            { "bonusToleranceMm", bonusTolMm },
+            { "totalAllowedToleranceMm", totalAllowedTolMm },
+            { "passed", passed },
+            { "details", detailsJson }
+        };
+    }
+
+    void MainWindow::onEvaluateGdtCalloutClicked() {
+        if (m_solvedFeatures.empty()) {
+            QMessageBox::information(
+                this,
+                "No Solved Features",
+                "Please measure and solve at least one feature before evaluating a GD&T callout."
+            );
+            return;
+        }
+
+        const int decimals = (m_unitSystem == UnitSystem::Millimeters) ? 4 : 5;
+        const QString unitStr = (m_unitSystem == UnitSystem::Millimeters) ? " mm" : " in";
+        const double toDisp = (m_unitSystem == UnitSystem::Millimeters) ? 1.0 : (1.0 / 25.4);
+        const double toMm = (m_unitSystem == UnitSystem::Millimeters) ? 1.0 : 25.4;
+
+        QDialog dlg(this);
+        dlg.setWindowTitle("ASME Y14.5 GD&T Callout Evaluator");
+        dlg.setMinimumWidth(460);
+
+        auto* mainLay = new QVBoxLayout(&dlg);
+        auto* form = new QFormLayout();
+        form->setSpacing(8);
+
+        auto* calloutCombo = new QComboBox(&dlg);
+        calloutCombo->addItem("⊕ True Position (Diametral Zone)", "POSITION");
+        calloutCombo->addItem("⊥ Perpendicularity (Orientation to Datum)", "PERPENDICULARITY");
+        calloutCombo->addItem("∥ Parallelism (Orientation to Datum)", "PARALLELISM");
+        calloutCombo->addItem("◎ Concentricity / Coaxiality", "CONCENTRICITY");
+
+        auto* targetCombo = new QComboBox(&dlg);
+        auto* datumCombo = new QComboBox(&dlg);
+
+        int defaultTargetIdx = static_cast<int>(m_solvedFeatures.size()) - 1;
+        int defaultDatumIdx = 0;
+
+        QTreeWidgetItem* curTree = m_featureTree->currentItem();
+        while (curTree && curTree->parent() != nullptr) curTree = curTree->parent();
+        const int selectedFeatId = (curTree && curTree->data(0, ROLE_FEATURE_ID).isValid())
+            ? curTree->data(0, ROLE_FEATURE_ID).toInt()
+            : -1;
+
+        for (size_t i = 0; i < m_solvedFeatures.size(); ++i) {
+            const auto& mf = m_solvedFeatures[i];
+            const QString label = QString("#%1: %2").arg(mf.id).arg(QString::fromStdString(mf.name));
+            targetCombo->addItem(label, mf.id);
+            datumCombo->addItem(label, mf.id);
+
+            if (mf.id == selectedFeatId) {
+                defaultTargetIdx = static_cast<int>(i);
+            }
+            if (mf.id == m_datumAFeatureId) {
+                defaultDatumIdx = static_cast<int>(i);
+            }
+        }
+        targetCombo->setCurrentIndex(defaultTargetIdx);
+        datumCombo->setCurrentIndex(defaultDatumIdx);
+
+        auto* tolSpin = new QDoubleSpinBox(&dlg);
+        tolSpin->setRange(0.0001, 500.0);
+        tolSpin->setDecimals(decimals);
+        tolSpin->setSuffix(unitStr);
+        tolSpin->setValue(m_defaultTolMm * 2.0 * toDisp);
+
+        auto* matCondCombo = new QComboBox(&dlg);
+        matCondCombo->addItem("RFS — Regardless of Feature Size (No Bonus)", "RFS");
+        matCondCombo->addItem("MMC (M) — Maximum Material Condition Bonus", "MMC");
+        matCondCombo->addItem("LMC (L) — Least Material Condition Bonus", "LMC");
+
+        auto* boreTypeCombo = new QComboBox(&dlg);
+        boreTypeCombo->addItem("Internal Feature (Bore / Hole)", true);
+        boreTypeCombo->addItem("External Feature (Boss / Pin)", false);
+
+        auto* axesCombo = new QComboBox(&dlg);
+        axesCombo->addItem("2D XY Plane (dX, dY)", "XY");
+        axesCombo->addItem("2D YZ Plane (dY, dZ)", "YZ");
+        axesCombo->addItem("2D ZX Plane (dZ, dX)", "ZX");
+        axesCombo->addItem("3D Spherical (dX, dY, dZ)", "XYZ");
+
+        auto makeBasicSpin = [&]() {
+            auto* s = new QDoubleSpinBox(&dlg);
+            s->setRange(-10000.0, 10000.0);
+            s->setDecimals(decimals);
+            s->setSuffix(unitStr);
+            return s;
+            };
+
+        auto* basicXSpin = makeBasicSpin();
+        auto* basicYSpin = makeBasicSpin();
+        auto* basicZSpin = makeBasicSpin();
+
+        auto syncDefaultsFromTarget = [&]() {
+            const int tId = targetCombo->currentData().toInt();
+            for (const auto& mf : m_solvedFeatures) {
+                if (mf.id == tId) {
+                    const Eigen::Vector3d loc = m_isPartAligned
+                        ? MetrologyMath::transformPoint(mf.location, m_pcsMatrix)
+                        : mf.location;
+                    basicXSpin->setValue(loc.x() * toDisp);
+                    basicYSpin->setValue(loc.y() * toDisp);
+                    basicZSpin->setValue(loc.z() * toDisp);
+                    break;
+                }
+            }
+            };
+        syncDefaultsFromTarget();
+
+        auto updateFieldStates = [&]() {
+            const QString cType = calloutCombo->currentData().toString();
+            const bool isPos = (cType == "POSITION");
+            datumCombo->setEnabled(!isPos);
+            matCondCombo->setEnabled(isPos);
+            boreTypeCombo->setEnabled(isPos && matCondCombo->currentData().toString() != "RFS");
+            axesCombo->setEnabled(isPos);
+            basicXSpin->setEnabled(isPos);
+            basicYSpin->setEnabled(isPos);
+            basicZSpin->setEnabled(isPos);
+            };
+
+        connect(calloutCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), &dlg, [&](int) { updateFieldStates(); });
+        connect(matCondCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), &dlg, [&](int) { updateFieldStates(); });
+        connect(targetCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), &dlg, [&](int) { syncDefaultsFromTarget(); });
+        updateFieldStates();
+
+        form->addRow("GD&T Characteristic:", calloutCombo);
+        form->addRow("Target Feature:", targetCombo);
+        form->addRow("Reference Datum Feature:", datumCombo);
+        form->addRow("Geometric Tolerance Zone:", tolSpin);
+        form->addRow("Material Condition:", matCondCombo);
+        form->addRow("Feature Boundary:", boreTypeCombo);
+        form->addRow("Position Axes:", axesCombo);
+        form->addRow("Basic X Dimension:", basicXSpin);
+        form->addRow("Basic Y Dimension:", basicYSpin);
+        form->addRow("Basic Z Dimension:", basicZSpin);
+
+        mainLay->addLayout(form);
+
+        auto* btnBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+        connect(btnBox, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+        connect(btnBox, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+        mainLay->addWidget(btnBox);
+
+        if (dlg.exec() != QDialog::Accepted) return;
+
+        QJsonObject params{
+            { "calloutType", calloutCombo->currentData().toString() },
+            { "targetFeatureId", targetCombo->currentData().toInt() },
+            { "datumFeatureId", datumCombo->currentData().toInt() },
+            { "toleranceMm", tolSpin->value() * toMm },
+            { "materialCondition", matCondCombo->currentData().toString() },
+            { "isInternalBore", boreTypeCombo->currentData().toBool() },
+            { "axesMode", axesCombo->currentData().toString() },
+            { "basicX", basicXSpin->value() * toMm },
+            { "basicY", basicYSpin->value() * toMm },
+            { "basicZ", basicZSpin->value() * toMm }
+        };
+
+        evaluateGdtCalloutJson(params);
+    }
 
 
 } // namespace OpenCMM

@@ -349,13 +349,12 @@ namespace OpenCMM {
         if (m_view.IsNull()) {
             initOcct();
         }
-        bool ok = m_digitalTwin.loadMachinePackage(packagePath);
+        const bool ok = m_digitalTwin.loadMachinePackage(packagePath);
         if (ok) {
             rebuildComponentHudButtons();
-            const bool hasModeledStylus = (m_digitalTwin.config().probeMountOffsetMm.norm() > 1e-3);
-            setProbeStylusVisible(!hasModeledStylus);
             if (!m_view.IsNull()) {
                 m_view->FitAll();
+                m_view->Redraw();
             }
         }
         return ok;

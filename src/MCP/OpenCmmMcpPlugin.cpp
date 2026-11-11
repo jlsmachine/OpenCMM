@@ -420,7 +420,59 @@ namespace OpenCMM {
                 { "required", QJsonArray{ "format" } }
             } }
             });
-
+        tools.append(QJsonObject{
+            { "name", "evaluate_gdt_callout" },
+            { "description", "Evaluate an ASME Y14.5 GD&T callout (POSITION, PERPENDICULARITY, PARALLELISM, or CONCENTRICITY) on a solved feature and log it to the Inspection Feature Tree." },
+            { "inputSchema", QJsonObject{
+                { "type", "object" },
+                { "properties", QJsonObject{
+                    { "calloutType", QJsonObject{
+                        { "type", "string" },
+                        { "description", "POSITION, PERPENDICULARITY, PARALLELISM, or CONCENTRICITY" }
+                    } },
+                    { "targetFeatureId", QJsonObject{
+                        { "type", "integer" },
+                        { "description", "ID of the solved feature to evaluate (from list_inspection_features)" }
+                    } },
+                    { "datumFeatureId", QJsonObject{
+                        { "type", "integer" },
+                        { "description", "ID of the reference datum feature (required for PERPENDICULARITY, PARALLELISM, CONCENTRICITY)" }
+                    } },
+                    { "toleranceMm", QJsonObject{
+                        { "type", "number" },
+                        { "description", "Geometric tolerance zone in mm (e.g. 0.050)" }
+                    } },
+                    { "materialCondition", QJsonObject{
+                        { "type", "string" },
+                        { "description", "For POSITION: RFS, MMC, or LMC (default RFS)" }
+                    } },
+                    { "isInternalBore", QJsonObject{
+                        { "type", "boolean" },
+                        { "description", "For MMC/LMC bonus calculation: true for internal bore, false for external boss (default true)" }
+                    } },
+                    { "nominalSizeMm", QJsonObject{
+                        { "type", "number" },
+                        { "description", "Nominal diameter in mm for MMC/LMC bonus calculation" }
+                    } },
+                    { "sizePlusTolMm", QJsonObject{
+                        { "type", "number" },
+                        { "description", "Upper diameter tolerance (+Tol) in mm for MMC/LMC bonus calculation" }
+                    } },
+                    { "sizeMinusTolMm", QJsonObject{
+                        { "type", "number" },
+                        { "description", "Lower diameter tolerance (-Tol) in mm for MMC/LMC bonus calculation" }
+                    } },
+                    { "basicX", QJsonObject{ { "type", "number" },{ "description", "Basic X coordinate in mm (for POSITION)" } } },
+                    { "basicY", QJsonObject{ { "type", "number" },{ "description", "Basic Y coordinate in mm (for POSITION)" } } },
+                    { "basicZ", QJsonObject{ { "type", "number" },{ "description", "Basic Z coordinate in mm (for 3D POSITION)" } } },
+                    { "axesMode", QJsonObject{
+                        { "type", "string" },
+                        { "description", "For POSITION: XY, YZ, ZX, or XYZ (default XY)" }
+                    } }
+                } },
+                { "required", QJsonArray{ "calloutType", "targetFeatureId", "toleranceMm" } }
+            } }
+            });
         return QJsonObject{ { "tools", tools } };
     }
 
@@ -457,6 +509,12 @@ namespace OpenCMM {
         }
         else if (toolName == "solve_321_alignment") {
             payload = d->m_bridge->solve321AlignmentJson(args);
+        }
+        else if (toolName == "solve_321_alignment") {
+            payload = d->m_bridge->solve321AlignmentJson(args);
+        }
+        else if (toolName == "evaluate_gdt_callout") {
+            payload = d->m_bridge->evaluateGdtCalloutJson(args);
         }
         else {
             payload["error"] = "Unknown tool: " + toolName;

@@ -1,8 +1,7 @@
-// Copyright (C) 2026 JLS Machine LLC
-// SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
 #include <QtPlugin>
+#include <QString>
 #include <QJsonObject>
 #include <QJsonArray>
 
@@ -21,6 +20,7 @@ namespace OpenCMM {
         virtual QJsonObject runDmisPlaybackJson(const QJsonObject& params = QJsonObject()) = 0;
         virtual QJsonObject exportInspectionFileJson(const QJsonObject& params) = 0;
         virtual QJsonObject solve321AlignmentJson(const QJsonObject& params) = 0;
+        virtual QJsonObject evaluateGdtCalloutJson(const QJsonObject& params) = 0;
     };
 
     class IMcpServerPlugin {
