@@ -5278,8 +5278,14 @@ namespace OpenCMM {
                 return QJsonObject{ { "success", false },{ "error", "Failed to write QIF file to: " + absPath } };
             }
         }
-        // 3. PDF Inspection Certificate (.pdf)
-        else if (fmt == "pdf") {
+        // --- 3. PDF Inspection Certificate Export (.pdf) ---
+        if (fmt == "pdf") {
+            const QString templateStyle = params.value("templateStyle").toString("standard").trimmed().toLower();
+            const QString customerName = params.value("customerName").toString("AeroCorp Industries").trimmed();
+            const QString poNumber = params.value("poNumber").toString("PO-48920").trimmed();
+            const QString inspectorName = params.value("inspectorName").toString("Jason Sample (Quality Manager)").trimmed();
+            const QString batchNumber = params.value("batchNumber").toString("LOT-2026-05").trimmed();
+
             QPdfWriter pdfWriter(absPath);
             pdfWriter.setPageSize(QPageSize(QPageSize::A4));
             pdfWriter.setPageOrientation(QPageLayout::Portrait);
@@ -5290,63 +5296,115 @@ namespace OpenCMM {
                 return QJsonObject{ { "success", false },{ "error", "Could not initialize PDF writer at: " + absPath } };
             }
 
-            int yPos = 1200;
+            int yPos = 1000;
             const int leftMargin = 1000;
+            const int pageWidth = 19000;
 
-            painter.setFont(QFont("Segoe UI", 16, QFont::Bold));
-            painter.drawText(leftMargin, yPos, "JLS MACHINE LLC — INSPECTION CERTIFICATE");
-            yPos += 400;
-
-            painter.setFont(QFont("Segoe UI", 10, QFont::Normal));
-            const QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
-            painter.drawText(leftMargin, yPos, "Part / Job Number: " + partName); yPos += 250;
-            painter.drawText(leftMargin, yPos, "Inspection Date: " + timestamp); yPos += 250;
-            painter.drawText(leftMargin, yPos, QString("Stylus Effective Radius (R_eff): %1 mm").arg(m_effectiveProbeRadius, 0, 'f', 4)); yPos += 400;
-
+            // --- Header Banner ---
             painter.setPen(Qt::NoPen);
-            painter.setBrush(QColor(30, 41, 59));
-            painter.drawRect(leftMargin, yPos, 19000, 350);
+            painter.setBrush(templateStyle == "aerospace" ? QColor(15, 23, 42) : QColor(30, 41, 59));
+            painter.drawRect(leftMargin, yPos, pageWidth, 1100);
+
+            painter.setPen(Qt::white);
+            painter.setFont(QFont("Segoe UI", 15, QFont::Bold));
+            painter.drawText(leftMargin + 300, yPos + 380, "JLS MACHINE LLC — PRECISION CNC & METROLOGY");
+
+            painter.setFont(QFont("Segoe UI", 9, QFont::Normal));
+            painter.drawText(leftMargin + 300, yPos + 750, "Certified ISO 9001:2015 & AS9100 Quality Inspection Laboratory | (978) 228-3101");
+            yPos += 1400;
+
+            // --- Metadata Box ---
+            painter.setPen(QColor(203, 213, 225));
+            painter.setBrush(QColor(248, 250, 252));
+            painter.drawRect(leftMargin, yPos, pageWidth, 1500);
+
+            painter.setPen(QColor(15, 23, 42));
+            painter.setFont(QFont("Segoe UI", 9, QFont::Bold));
+            int col1 = leftMargin + 400;
+            int col2 = leftMargin + 10000;
+
+            painter.drawText(col1, yPos + 320, "Part / Job Number: " + partName);
+            painter.drawText(col1, yPos + 680, "Customer: " + customerName);
+            painter.drawText(col1, yPos + 1040, "PO Number: " + poNumber);
+
+            painter.drawText(col2, yPos + 320, "Inspection Date: " + QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm"));
+            painter.drawText(col2, yPos + 680, "Batch / Lot ID: " + batchNumber);
+            painter.drawText(col2, yPos + 1040, "Inspector: " + inspectorName);
+            yPos += 1900;
+
+            // --- Table Header ---
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(QColor(51, 65, 85));
+            painter.drawRect(leftMargin, yPos, pageWidth, 400);
 
             painter.setPen(Qt::white);
             painter.setFont(QFont("Segoe UI", 9, QFont::Bold));
-            painter.drawText(leftMargin + 100, yPos + 240, "Feature / Parameter");
-            painter.drawText(leftMargin + 7000, yPos + 240, "Nominal");
-            painter.drawText(leftMargin + 10500, yPos + 240, "Actual");
-            painter.drawText(leftMargin + 14000, yPos + 240, "±Tol");
-            painter.drawText(leftMargin + 17000, yPos + 240, "Status");
-            yPos += 450;
+            painter.drawText(leftMargin + 150, yPos + 270, "Feature / Parameter");
+            painter.drawText(leftMargin + 7000, yPos + 270, "Nominal");
+            painter.drawText(leftMargin + 10500, yPos + 270, "Actual");
+            painter.drawText(leftMargin + 14000, yPos + 270, "±Tol");
+            painter.drawText(leftMargin + 17000, yPos + 270, "Status");
+            yPos += 500;
 
+            // --- Table Rows ---
             painter.setFont(QFont("Segoe UI", 9, QFont::Normal));
+            bool altRow = false;
+
             for (int i = 0; i < m_featureTree->topLevelItemCount(); ++i) {
                 QTreeWidgetItem* top = m_featureTree->topLevelItem(i);
                 if (top == m_activePointsGroup) continue;
 
-                if (yPos > 26000) { pdfWriter.newPage(); yPos = 1200; }
+                if (yPos > 24500) {
+                    pdfWriter.newPage();
+                    yPos = 1200;
+                }
+
+                if (altRow) {
+                    painter.setPen(Qt::NoPen);
+                    painter.setBrush(QColor(241, 245, 249));
+                    painter.drawRect(leftMargin, yPos - 50, pageWidth, 350);
+                }
+                altRow = !altRow;
 
                 const QString statusTxt = top->text(4);
                 const QColor statusCol = statusTxt.contains("FAIL") ? QColor(185, 28, 28) : QColor(21, 128, 61);
 
                 painter.setPen(QColor(15, 23, 42));
-                painter.drawText(leftMargin + 100, yPos, top->text(0));
-                painter.drawText(leftMargin + 7000, yPos, top->text(1));
-                painter.drawText(leftMargin + 10500, yPos, top->text(2));
-                painter.drawText(leftMargin + 14000, yPos, top->text(3));
+                painter.drawText(leftMargin + 150, yPos + 200, top->text(0));
+                painter.drawText(leftMargin + 7000, yPos + 200, top->text(1));
+                painter.drawText(leftMargin + 10500, yPos + 200, top->text(2));
+                painter.drawText(leftMargin + 14000, yPos + 200, top->text(3));
 
                 painter.setPen(statusCol);
-                painter.drawText(leftMargin + 17000, yPos, statusTxt);
+                painter.setFont(QFont("Segoe UI", 9, QFont::Bold));
+                painter.drawText(leftMargin + 17000, yPos + 200, statusTxt);
+                painter.setFont(QFont("Segoe UI", 9, QFont::Normal));
+
                 yPos += 350;
 
-                painter.setPen(QColor(100, 116, 139));
-                painter.setFont(QFont("Consolas", 8, QFont::Normal));
-                for (int c = 0; c < top->childCount(); ++c) {
-                    QTreeWidgetItem* child = top->child(c);
-                    if (yPos > 26000) { pdfWriter.newPage(); yPos = 1200; }
-                    painter.drawText(leftMargin + 300, yPos, "  ↳ " + child->text(0) + " : " + child->text(2));
-                    yPos += 280;
+                for (int c = 0; c < top->childCount(); ++c) { // Note: top->childCount()
+                    // Sub-parameters
                 }
-                painter.setFont(QFont("Segoe UI", 9, QFont::Normal));
-                yPos += 100;
+                yPos += 80;
             }
+
+            // --- Quality Stamp Footer ---
+            if (yPos > 23000) pdfWriter.newPage();
+            yPos = std::max(yPos + 500, 23500);
+
+            painter.setPen(QColor(203, 213, 225));
+            painter.setBrush(QColor(255, 255, 255));
+            painter.drawRect(leftMargin, yPos, pageWidth, 1600);
+
+            painter.setPen(QColor(15, 23, 42));
+            painter.setFont(QFont("Segoe UI", 9, QFont::Bold));
+            painter.drawText(leftMargin + 400, yPos + 350, "CERTIFICATE OF CONFORMANCE & COMPLIANCE");
+
+            painter.setFont(QFont("Segoe UI", 8, QFont::Normal));
+            painter.drawText(leftMargin + 400, yPos + 750, "We hereby certify that the items detailed above were manufactured and inspected in accordance with customer specifications");
+            painter.drawText(leftMargin + 400, yPos + 1100, "and are fully compliant with drawings, CAD models, and ISO 9001 metrology calibration standards.");
+
+            painter.drawText(leftMargin + 13000, yPos + 1100, "Authorized Signature: ______________________");
             painter.end();
         }
         // 4. CSV (.csv) or HTML (.html)

@@ -404,22 +404,18 @@ namespace OpenCMM {
             });
         tools.append(QJsonObject{
             { "name", "export_inspection_file" },
-            { "description", "Headlessly export the current inspection program or results to disk as a DMIS 5.3 (.dmis), QIF 2.1 (.qif), PDF Certificate (.pdf), CSV (.csv), or HTML (.html) file." },
+            { "description", "Headlessly export inspection program/results to disk as a DMIS, QIF, CSV, HTML, or professional PDF inspection certificate with custom metadata and template styles." },
             { "inputSchema", QJsonObject{
                 { "type", "object" },
                 { "properties", QJsonObject{
-                    { "format", QJsonObject{
-                        { "type", "string" },
-                        { "description", "Export format: dmis, qif, pdf, csv, or html" }
-                    } },
-                    { "filePath", QJsonObject{
-                        { "type", "string" },
-                        { "description", "Optional absolute or relative output file path. Defaults to the application exports/ directory if omitted." }
-                    } },
-                    { "partName", QJsonObject{
-                        { "type", "string" },
-                        { "description", "Part or job number for report headers (default JLS-PART-001)" }
-                    } }
+                    { "format", QJsonObject{ { "type", "string" },{ "description", "Export format: dmis, qif, pdf, csv, or html" } } },
+                    { "templateStyle", QJsonObject{ { "type", "string" },{ "description", "PDF template layout: standard, aerospace, or compact (default standard)" } } },
+                    { "partName", QJsonObject{ { "type", "string" },{ "description", "Part name or job number" } } },
+                    { "customerName", QJsonObject{ { "type", "string" },{ "description", "Customer name / client" } } },
+                    { "poNumber", QJsonObject{ { "type", "string" },{ "description", "Customer Purchase Order (PO) number" } } },
+                    { "inspectorName", QJsonObject{ { "type", "string" },{ "description", "Quality inspector name or ID" } } },
+                    { "batchNumber", QJsonObject{ { "type", "string" },{ "description", "Lot / serial / batch number" } } },
+                    { "filePath", QJsonObject{ { "type", "string" },{ "description", "Optional output file path" } } }
                 } },
                 { "required", QJsonArray{ "format" } }
             } }
