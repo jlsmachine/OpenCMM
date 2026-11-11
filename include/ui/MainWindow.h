@@ -268,6 +268,27 @@ namespace OpenCMM {
         QPushButton* m_mcpStatusBtn = nullptr;
         
         std::vector<QShortcut*> m_appShortcuts;
+
+        // Guided Manual Probing Prompt HUD
+        void setupManualPromptBanner(QWidget* parentContainer);
+        void updateManualPromptBanner();
+        void onStartManualGuidedInspectionClicked();
+        void onUndoLastProbeHitClicked();
+        void onForceSolveActiveDmisFeatureClicked();
+        void onSkipDmisFeatureClicked(int delta);
+
+        QFrame* m_manualPromptBanner = nullptr;
+        QLabel* m_promptStepBadge = nullptr;
+        QLabel* m_promptInstructionLbl = nullptr;
+        QLabel* m_promptSubDetailLbl = nullptr;
+        QLabel* m_promptDeltaLbl = nullptr;
+        QPushButton* m_promptUndoBtn = nullptr;
+        QPushButton* m_promptSolveNowBtn = nullptr;
+
+        void focusViewportOnActiveTarget();
+
+        QPushButton* m_promptAutoCameraBtn = nullptr;
+        bool m_autoCameraFocusEnabled = true;
     };
 
 } // namespace OpenCMM

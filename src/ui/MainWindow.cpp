@@ -241,7 +241,26 @@ namespace OpenCMM {
         m_viewport->setSurfaceHitCallback([this](const CadSurfaceHit& hit) {
             onCadSurfaceProbed(hit);
             });
-        setCentralWidget(m_viewport);
+        auto* centralContainer = new QWidget(this);
+        auto* centralLayout = new QVBoxLayout(centralContainer);
+        centralLayout->setContentsMargins(0, 0, 0, 0);
+        centralLayout->setSpacing(0);
+
+        setupManualPromptBanner(centralContainer);
+        centralLayout->addWidget(m_manualPromptBanner, 0);
+
+        m_viewport = new OcctViewport(centralContainer);
+        m_viewport->setMinimumSize(200, 150);
+        m_viewport->installEventFilter(this);
+        m_viewport->setFaceSelectedCallback([this](const CadFaceInfo& faceInfo) {
+            onCadFaceSelected(faceInfo);
+            });
+        m_viewport->setSurfaceHitCallback([this](const CadSurfaceHit& hit) {
+            onCadSurfaceProbed(hit);
+            });
+
+        centralLayout->addWidget(m_viewport, 1);
+        setCentralWidget(centralContainer);
 
         m_viewport->setTheme(m_isDarkMode);
         tryLoadMcpPlugin();
@@ -850,6 +869,21 @@ namespace OpenCMM {
         layout->addLayout(grid);
         m_hitCountLabel = new QLabel("Active Feature Hits: 0", m_droContainer);
         layout->addWidget(m_hitCountLabel);
+
+        layout->addLayout(grid);
+        m_hitCountLabel = new QLabel("Active Feature Hits: 0", m_droContainer);
+        layout->addWidget(m_hitCountLabel);
+
+        auto* startGuidedBtn = new QPushButton("🧭 Start Guided Part Probe (F6)", m_droContainer);
+        startGuidedBtn->setCursor(Qt::PointingHandCursor);
+        startGuidedBtn->setToolTip("Walk through all programmed features step-by-step with your manual probe");
+        startGuidedBtn->setStyleSheet(
+            "QPushButton { background-color: #1e4620; color: #98c379; border: 1px solid #98c379; "
+            "border-radius: 4px; padding: 6px 10px; font-size: 12px; font-weight: bold; }"
+            "QPushButton:hover { background-color: #276749; color: #ffffff; }"
+        );
+        connect(startGuidedBtn, &QPushButton::clicked, this, &MainWindow::onStartManualGuidedInspectionClicked);
+        layout->addWidget(startGuidedBtn);
 
         auto* probeGroup = new QGroupBox("ACTIVE PROBE CALIBRATION", m_droContainer);
         auto* probeLayout = new QVBoxLayout(probeGroup);
@@ -2133,7 +2167,9 @@ namespace OpenCMM {
             if (m_viewport) {
                 m_viewport->clearProgramTargetMarkers();
             }
-            statusBar()->showMessage(QString("DMIS 5.3 Program Execution Complete — All %1 features measured and evaluated!")
+            updateManualPromptBanner();
+            playSolveChime(true);
+            statusBar()->showMessage(QString("Guided Inspection Complete — All %1 features measured and evaluated!")
                 .arg(m_dmisProgram.features.size()));
             return;
         }
@@ -2183,6 +2219,7 @@ namespace OpenCMM {
         }
 
         updateDmisTargetVisuals();
+        updateManualPromptBanner();
     }
 
     void MainWindow::updateDmisTargetVisuals() {
@@ -2227,6 +2264,8 @@ namespace OpenCMM {
                 .arg(toDisplayUnit(tgt.z, m_unitSystem), 0, 'f', decimals)
                 .arg(unitStr));
         }
+        updateManualPromptBanner();
+        focusViewportOnActiveTarget();
     }
 
     void MainWindow::stopDmisAutoRun() {
@@ -2400,6 +2439,34 @@ namespace OpenCMM {
                     .arg(toDisplayUnit(delta.z(), m_unitSystem), 0, 'f', decimals)
                     .arg(unitStr)
                     .arg(toDisplayUnit(distMm, m_unitSystem), 0, 'f', decimals));
+
+                if (m_promptDeltaLbl && m_manualPromptBanner && m_manualPromptBanner->isVisible()) {
+                    QString proxColor = "#61afef"; // Blue (> 10 mm)
+                    QString proxTag = "APPROACH TARGET";
+                    if (distMm <= 1.5) {
+                        proxColor = "#4ade80"; // Bright Green (<= 1.5 mm)
+                        proxTag = "ON TARGET — TOUCH PART NOW";
+                    }
+                    else if (distMm <= 10.0) {
+                        proxColor = "#fbbf24"; // Gold/Amber (<= 10 mm)
+                        proxTag = "NEAR TARGET";
+                    }
+
+                    m_promptDeltaLbl->setStyleSheet(QString(
+                        "background-color: #0d0f12; color: %1; border: 1px solid %1; border-radius: 4px; "
+                        "padding: 4px 10px; font-family: 'Consolas', monospace; font-size: 14px; font-weight: bold;"
+                    ).arg(proxColor));
+
+                    m_promptDeltaLbl->setText(QString(
+                        "[%1]   dX: %2   dY: %3   dZ: %4 %5   |   3D Dist: %6 %5"
+                    )
+                        .arg(proxTag)
+                        .arg(toDisplayUnit(delta.x(), m_unitSystem), 7, 'f', decimals)
+                        .arg(toDisplayUnit(delta.y(), m_unitSystem), 7, 'f', decimals)
+                        .arg(toDisplayUnit(delta.z(), m_unitSystem), 7, 'f', decimals)
+                        .arg(unitStr)
+                        .arg(toDisplayUnit(distMm, m_unitSystem), 6, 'f', decimals));
+                }
             }
         }
     }
@@ -3148,6 +3215,21 @@ namespace OpenCMM {
                 if (avgNorm.norm() > 1e-6) {
                     refPt = avgPos + avgNorm.normalized() * 25.0;
                 }
+            }
+
+            PlaneFitResult res = MetrologyMath::fitPlaneLeastSquares(
+                m_recordedHits,
+                m_effectiveProbeRadius,
+                currentCompMode(),
+                &refPt
+            );
+
+            // Fallback to armed CAD plane only if the sampled points were singular/collinear
+            if (!res.success && m_hasArmedCadNominal && m_armedCadDiameterMm <= 0.0) {
+                res.success = true;
+                res.centroid = m_armedCadLocationMm;
+                res.normal = m_armedCadNormalMm;
+                res.flatness = 0.0001;
             }
 
             res = MetrologyMath::fitPlaneLeastSquares(
@@ -4431,6 +4513,8 @@ namespace OpenCMM {
         bindAction("sc_fit_cylinder", "Ctrl+Y", &MainWindow::onFitCylinderClicked);
         bindAction("sc_clear_points", "Escape", &MainWindow::onClearPointsClicked);
         bindAction("sc_open_settings", "Ctrl+,", &MainWindow::onOpenSettingsClicked);
+        bindAction("sc_guided_probe", "F6", &MainWindow::onStartManualGuidedInspectionClicked);
+        bindAction("sc_undo_hit", "Ctrl+Z", &MainWindow::onUndoLastProbeHitClicked);
 
         // Toggle Collision & Clearance Log dock
         const QString colSeq = settings.value("sc_toggle_collision", "Ctrl+Shift+L").toString().trimmed();
@@ -5492,6 +5576,501 @@ namespace OpenCMM {
             { "datumCFeatureId", m_datumCFeatureId }
         };
     }
+    void MainWindow::setupManualPromptBanner(QWidget* parentContainer) {
+        m_manualPromptBanner = new QFrame(parentContainer);
+        m_manualPromptBanner->setObjectName("ManualPromptBanner");
+        m_manualPromptBanner->setStyleSheet(
+            "QFrame#ManualPromptBanner { background-color: #161b22; border-bottom: 2px solid #eab308; padding: 6px 10px; }"
+            "QPushButton { background-color: #21262d; color: #e6edf3; border: 1px solid #30363d; "
+            "border-radius: 4px; padding: 5px 10px; font-size: 11px; font-weight: bold; }"
+            "QPushButton:hover { background-color: #30363d; border: 1px solid #58a6ff; }"
+            "QPushButton:disabled { color: #484f58; border-color: #21262d; }"
+        );
+
+        auto* mainLay = new QVBoxLayout(m_manualPromptBanner);
+        mainLay->setContentsMargins(6, 4, 6, 4);
+        mainLay->setSpacing(4);
+
+        // Top Row: Step Badge + Primary Operator Instruction + Control Buttons
+        auto* topRow = new QHBoxLayout();
+        topRow->setSpacing(10);
+
+        m_promptStepBadge = new QLabel("STEP 1 / 1", m_manualPromptBanner);
+        m_promptStepBadge->setStyleSheet(
+            "background-color: #eab308; color: #0f172a; border-radius: 4px; "
+            "padding: 4px 8px; font-size: 12px; font-weight: bold;"
+        );
+        topRow->addWidget(m_promptStepBadge, 0);
+
+        m_promptInstructionLbl = new QLabel("Ready for Guided Manual Probing", m_manualPromptBanner);
+        m_promptInstructionLbl->setStyleSheet("color: #ffffff; font-size: 16px; font-weight: bold;");
+        topRow->addWidget(m_promptInstructionLbl, 1);
+
+        QSettings settings("JLS Machine", "OpenCMM");
+        m_autoCameraFocusEnabled = settings.value("guided_auto_camera", true).toBool();
+
+        m_promptAutoCameraBtn = new QPushButton(
+            m_autoCameraFocusEnabled ? "🎥 Auto-Zoom: ON" : "🎥 Auto-Zoom: OFF",
+            m_manualPromptBanner
+        );
+        m_promptAutoCameraBtn->setCheckable(true);
+        m_promptAutoCameraBtn->setChecked(m_autoCameraFocusEnabled);
+        m_promptAutoCameraBtn->setToolTip("Automatically orbit and zoom the 3D camera to face the active probe target");
+        auto updateAutoCamBtnStyle = [this]() {
+            if (!m_promptAutoCameraBtn) return;
+            m_promptAutoCameraBtn->setText(m_autoCameraFocusEnabled ? "🎥 Auto-Zoom: ON" : "🎥 Auto-Zoom: OFF");
+            m_promptAutoCameraBtn->setStyleSheet(m_autoCameraFocusEnabled
+                ? "QPushButton { background-color: #1e3a8a; color: #93c5fd; border: 1px solid #3b82f6; }"
+                "QPushButton:hover { background-color: #1d4ed8; color: #ffffff; }"
+                : "QPushButton { background-color: #21262d; color: #8b949e; border: 1px solid #30363d; }"
+                "QPushButton:hover { background-color: #30363d; color: #ffffff; }");
+            };
+        updateAutoCamBtnStyle();
+
+        connect(m_promptAutoCameraBtn, &QPushButton::clicked, this, [this, updateAutoCamBtnStyle](bool checked) {
+            m_autoCameraFocusEnabled = checked;
+            QSettings s("JLS Machine", "OpenCMM");
+            s.setValue("guided_auto_camera", m_autoCameraFocusEnabled);
+            updateAutoCamBtnStyle();
+            if (m_autoCameraFocusEnabled) {
+                focusViewportOnActiveTarget();
+            }
+            });
+        topRow->addWidget(m_promptAutoCameraBtn);
+
+        auto* simHitBtn = new QPushButton("⚡ Sim Hit (Space)", m_manualPromptBanner);
+        simHitBtn->setStyleSheet(
+            "QPushButton { background-color: #78350f; color: #fde68a; border: 1px solid #f59e0b; }"
+            "QPushButton:hover { background-color: #92400e; color: #ffffff; }"
+        );
+        connect(simHitBtn, &QPushButton::clicked, this, &MainWindow::onSimulateHitClicked);
+        topRow->addWidget(simHitBtn);
+
+        m_promptUndoBtn = new QPushButton("↩ Undo Hit (Ctrl+Z)", m_manualPromptBanner);
+        m_promptUndoBtn->setToolTip("Remove the last recorded probe hit if the stylus bumped or false-triggered");
+        connect(m_promptUndoBtn, &QPushButton::clicked, this, &MainWindow::onUndoLastProbeHitClicked);
+        topRow->addWidget(m_promptUndoBtn);
+
+        m_promptSolveNowBtn = new QPushButton("✓ Solve Early", m_manualPromptBanner);
+        m_promptSolveNowBtn->setToolTip("Fit and solve the current feature immediately using the hits collected so far");
+        m_promptSolveNowBtn->setStyleSheet(
+            "QPushButton { background-color: #14532d; color: #86efac; border: 1px solid #22c55e; }"
+            "QPushButton:hover { background-color: #166534; color: #ffffff; }"
+            "QPushButton:disabled { background-color: #161b22; color: #484f58; border-color: #21262d; }"
+        );
+        connect(m_promptSolveNowBtn, &QPushButton::clicked, this, &MainWindow::onForceSolveActiveDmisFeatureClicked);
+        topRow->addWidget(m_promptSolveNowBtn);
+
+        auto* prevFeatBtn = new QPushButton("◀ Prev", m_manualPromptBanner);
+        connect(prevFeatBtn, &QPushButton::clicked, this, [this]() { onSkipDmisFeatureClicked(-1); });
+        topRow->addWidget(prevFeatBtn);
+
+        auto* nextFeatBtn = new QPushButton("Skip ▶", m_manualPromptBanner);
+        connect(nextFeatBtn, &QPushButton::clicked, this, [this]() { onSkipDmisFeatureClicked(1); });
+        topRow->addWidget(nextFeatBtn);
+
+        auto* closeGuideBtn = new QPushButton("✕ Exit Guide", m_manualPromptBanner);
+        closeGuideBtn->setStyleSheet(
+            "QPushButton { background-color: #450a0a; color: #fca5a5; border: 1px solid #ef4444; }"
+            "QPushButton:hover { background-color: #7f1d1d; color: #ffffff; }"
+        );
+        connect(closeGuideBtn, &QPushButton::clicked, this, [this]() {
+            stopDmisAutoRun();
+            m_isDmisProgramActive = false;
+            m_activeDmisFeatureIdx = -1;
+            if (m_viewport) m_viewport->clearProgramTargetMarkers();
+            if (m_manualPromptBanner) m_manualPromptBanner->hide();
+            statusBar()->showMessage("Exited Guided Manual Probing mode.");
+            });
+        topRow->addWidget(closeGuideBtn);
+
+        mainLay->addLayout(topRow);
+
+        // Bottom Row: Nominal / Surface Instruction + Live Delta XYZ Bullseye Readout
+        auto* botRow = new QHBoxLayout();
+        botRow->setSpacing(12);
+
+        m_promptSubDetailLbl = new QLabel("", m_manualPromptBanner);
+        m_promptSubDetailLbl->setStyleSheet("color: #94a3b8; font-size: 12px; font-weight: bold;");
+        botRow->addWidget(m_promptSubDetailLbl, 1);
+
+        m_promptDeltaLbl = new QLabel("Move CMM probe toward Gold Bullseye Target...", m_manualPromptBanner);
+        m_promptDeltaLbl->setStyleSheet(
+            "background-color: #0d0f12; color: #61afef; border: 1px solid #30363d; border-radius: 4px; "
+            "padding: 4px 10px; font-family: 'Consolas', monospace; font-size: 13px; font-weight: bold;"
+        );
+        botRow->addWidget(m_promptDeltaLbl, 0);
+
+        mainLay->addLayout(botRow);
+        m_manualPromptBanner->hide();
+    }
+
+    void MainWindow::updateManualPromptBanner() {
+        if (!m_manualPromptBanner) return;
+
+        if (!m_isDmisProgramActive || m_activeDmisFeatureIdx < 0 ||
+            m_activeDmisFeatureIdx >= static_cast<int>(m_dmisProgram.features.size())) {
+            m_manualPromptBanner->hide();
+            return;
+        }
+
+        m_manualPromptBanner->show();
+
+        const auto& df = m_dmisProgram.features[m_activeDmisFeatureIdx];
+        const int totalFeats = static_cast<int>(m_dmisProgram.features.size());
+        const int curHitIdx = static_cast<int>(m_recordedHits.size());
+        const int totalHits = static_cast<int>(df.points.size());
+
+        const QString datTag = df.datumLetter.empty()
+            ? QString()
+            : QString("  [DATUM %1]").arg(QString::fromStdString(df.datumLetter));
+
+        m_promptStepBadge->setText(QString("FEATURE %1 OF %2%3")
+            .arg(m_activeDmisFeatureIdx + 1)
+            .arg(totalFeats)
+            .arg(datTag));
+
+        const int decimals = (m_unitSystem == UnitSystem::Millimeters) ? 3 : 4;
+        const QString unitStr = (m_unitSystem == UnitSystem::Millimeters) ? "mm" : "in";
+
+        QString actionVerb = "Probe Surface";
+        int minRequiredHits = 3;
+        if (df.featureType == "PLANE") {
+            actionVerb = "Probe Flat Plane";
+            minRequiredHits = 3;
+        }
+        else if (df.featureType == "CYLNDR" || df.featureType == "CYL") {
+            actionVerb = (df.boundarySub == "OUTER") ? "Probe External Cylinder Boss" : "Probe Internal Bore Cylinder";
+            minRequiredHits = 5;
+        }
+        else if (df.featureType == "CIRCLE") {
+            actionVerb = (df.boundarySub == "OUTER") ? "Probe External Boss Circle" : "Probe Internal Bore Circle";
+            minRequiredHits = 3;
+        }
+        else if (df.featureType == "SPHERE") {
+            actionVerb = (df.boundarySub == "INNER") ? "Probe Spherical Cavity" : "Probe External Sphere";
+            minRequiredHits = 4;
+        }
+        else if (df.featureType == "LINE") {
+            actionVerb = "Probe Straight Edge Line";
+            minRequiredHits = 2;
+        }
+
+        const QString diamInfo = (df.nominalDiameter > 0.0 &&
+            (df.featureType == "CYLNDR" || df.featureType == "CYL" || df.featureType == "CIRCLE" || df.featureType == "SPHERE"))
+            ? QString(" (Nom Ø%1 %2)").arg(toDisplayUnit(df.nominalDiameter, m_unitSystem), 0, 'f', decimals).arg(unitStr)
+            : QString();
+
+        m_promptInstructionLbl->setText(QString("%1: %2%3  —  Touch Point #%4 of %5")
+            .arg(actionVerb)
+            .arg(QString::fromStdString(df.label))
+            .arg(diamInfo)
+            .arg(std::min(curHitIdx + 1, std::max(1, totalHits)))
+            .arg(totalHits));
+
+        if (curHitIdx < totalHits) {
+            const auto& tgt = df.points[curHitIdx];
+            const QString compStr = (currentCompMode() == ProbeCompMode::Internal)
+                ? "Internal (+R)"
+                : (currentCompMode() == ProbeCompMode::External ? "External (-R)" : "Uncompensated");
+
+            m_promptSubDetailLbl->setText(QString(
+                "Target #%1 Nominals: (X: %2, Y: %3, Z: %4 %5)   •   Surface Normal: (%6, %7, %8)   •   Tip Comp: %9"
+            )
+                .arg(curHitIdx + 1)
+                .arg(toDisplayUnit(tgt.x, m_unitSystem), 0, 'f', decimals)
+                .arg(toDisplayUnit(tgt.y, m_unitSystem), 0, 'f', decimals)
+                .arg(toDisplayUnit(tgt.z, m_unitSystem), 0, 'f', decimals)
+                .arg(unitStr)
+                .arg(tgt.i, 0, 'f', 3)
+                .arg(tgt.j, 0, 'f', 3)
+                .arg(tgt.k, 0, 'f', 3)
+                .arg(compStr));
+        }
+
+        if (m_promptUndoBtn) {
+            m_promptUndoBtn->setEnabled(curHitIdx > 0);
+        }
+        if (m_promptSolveNowBtn) {
+            m_promptSolveNowBtn->setEnabled(curHitIdx >= minRequiredHits);
+        }
+    }
+
+    void MainWindow::onStartManualGuidedInspectionClicked() {
+        stopDmisAutoRun();
+
+        using DmisFeatureT = typename decltype(m_dmisProgram.features)::value_type;
+        using DmisPointT = typename decltype(DmisFeatureT::points)::value_type;
+
+        // 1. If the user created features on the CAD model (Auto-Probe CAD / solved features)
+        //    and hasn't built a separate DMIS queue yet, convert solved features into the guided program!
+        if (m_dmisProgram.features.empty() && !m_solvedFeatures.empty()) {
+            m_dmisProgram.valid = true;
+            m_dmisProgram.stylusDiameterMm = m_effectiveProbeRadius * 2.0;
+
+            for (const auto& mf : m_solvedFeatures) {
+                DmisFeatureT df;
+                QString cleanName = QString::fromStdString(mf.name);
+                cleanName.remove(" [DAT A]");
+                cleanName.remove(" [DAT B]");
+                cleanName.remove(" [DAT C]");
+                df.label = cleanName.trimmed().toStdString();
+                df.refId = m_featureRefIds.count(mf.id)
+                    ? m_featureRefIds[mf.id].toStdString()
+                    : QString("10000000-0000-4000-8000-%1").arg(mf.id, 12, 10, QChar('0')).toStdString();
+
+                if (m_featureDatumLetters.count(mf.id)) {
+                    df.datumLetter = m_featureDatumLetters[mf.id].toStdString();
+                    m_dmisProgram.datumAlignment.has321Alignment = true;
+                }
+
+                if (mf.kind == FeatureKind::Plane3D) {
+                    df.featureType = "PLANE";
+                    df.boundarySub = "UNBND";
+                }
+                else if (mf.kind == FeatureKind::Sphere3D) {
+                    df.featureType = "SPHERE";
+                    df.boundarySub = "OUTER";
+                }
+                else if (mf.kind == FeatureKind::Line2D) {
+                    df.featureType = "LINE";
+                    df.boundarySub = "UNBND";
+                }
+                else {
+                    const auto& recordedPts = m_featureDmisHits[mf.id];
+                    df.featureType = (recordedPts.size() >= 5) ? "CYLNDR" : "CIRCLE";
+                    df.boundarySub = "INNER";
+                }
+
+                df.nomX = mf.location.x();
+                df.nomY = mf.location.y();
+                df.nomZ = mf.location.z();
+                df.nomI = mf.primaryVector.x();
+                df.nomJ = mf.primaryVector.y();
+                df.nomK = mf.primaryVector.z();
+                df.nominalDiameter = mf.diameter;
+
+                const auto& hits = m_featureDmisHits[mf.id];
+                for (const auto& h : hits) {
+                    DmisPointT pt{};
+                    pt.x = h.surfacePt.x();
+                    pt.y = h.surfacePt.y();
+                    pt.z = h.surfacePt.z();
+                    pt.i = h.normalVec.x();
+                    pt.j = h.normalVec.y();
+                    pt.k = h.normalVec.z();
+                    df.points.push_back(pt);
+                }
+
+                if (!df.points.empty()) {
+                    m_dmisProgram.features.push_back(df);
+                }
+            }
+        }
+
+        if (m_dmisProgram.features.empty()) {
+            QMessageBox::information(
+                this,
+                "No Programmed Features Found",
+                "To start Guided Manual Probing:\n\n"
+                "1. Click faces on your 3D STEP model and click 'Auto-Probe CAD' (or '➕ Create Feature') to define the features you want to measure, OR\n"
+                "2. Click '📂 Load DMIS' to open an existing inspection program.\n\n"
+                "Then click '🧭 Start Guided Part Probe (F6)' to measure the physical part step-by-step."
+            );
+            return;
+        }
+
+        // 2. Reset previous actuals & tree items so the operator measures a clean part from Feature #1
+        finishFeatureBuffer();
+        m_solvedFeatures.clear();
+        m_featureDmisHits.clear();
+        m_featureRefIds.clear();
+        m_featureDatumLetters.clear();
+        m_datumAFeatureId = -1;
+        m_datumBFeatureId = -1;
+        m_datumCFeatureId = -1;
+        m_isPartAligned = false;
+        m_pcsMatrix = Eigen::Matrix4d::Identity();
+        m_featureCounter = 1;
+        m_plannedDmisTreeItems.clear();
+        m_activeDmisTreeItem = nullptr;
+
+        for (int i = m_featureTree->topLevelItemCount() - 1; i >= 0; --i) {
+            QTreeWidgetItem* top = m_featureTree->topLevelItem(i);
+            if (top != m_activePointsGroup) {
+                delete m_featureTree->takeTopLevelItem(i);
+            }
+        }
+
+        if (m_viewport) {
+            m_viewport->clearFittedFeatures();
+            m_viewport->clearHitMarkers();
+            m_viewport->clearProgramTargetMarkers();
+            m_viewport->clearPcsTriadVisual();
+        }
+
+        const int decimals = (m_unitSystem == UnitSystem::Millimeters) ? 4 : 5;
+        const QString unitStr = (m_unitSystem == UnitSystem::Millimeters) ? " mm" : " in";
+
+        for (size_t i = 0; i < m_dmisProgram.features.size(); ++i) {
+            const auto& df = m_dmisProgram.features[i];
+            const QString datSuffix = df.datumLetter.empty()
+                ? QString()
+                : QString(" [DAT %1]").arg(QString::fromStdString(df.datumLetter));
+            const QString featTitle = QString("%1 (%2)%3")
+                .arg(QString::fromStdString(df.label), QString::fromStdString(df.featureType), datSuffix);
+            const double nomVal = (df.featureType == "CIRCLE" || df.featureType == "CYLNDR" || df.featureType == "CYL" || df.featureType == "SPHERE")
+                ? df.nominalDiameter : 0.0;
+
+            auto* item = new QTreeWidgetItem(m_featureTree, {
+                featTitle,
+                QString("%1%2").arg(toDisplayUnit(nomVal, m_unitSystem), 0, 'f', decimals).arg(unitStr),
+                "--",
+                QString("±%1").arg(toDisplayUnit(m_defaultTolMm, m_unitSystem), 0, 'f', decimals),
+                QString("PLANNED (0/%1 pts)").arg(df.points.size())
+                });
+            item->setForeground(4, QBrush(QColor("#e5c07b")));
+            m_plannedDmisTreeItems.push_back(item);
+        }
+
+        m_isDmisProgramActive = true;
+        startDmisGuidedFeature(0);
+        onPositionUpdated(m_lastPosition);
+    }
+
+    void MainWindow::onUndoLastProbeHitClicked() {
+        if (m_recordedHits.empty()) {
+            statusBar()->showMessage("No recorded probe hits in the active buffer to undo.");
+            return;
+        }
+
+        m_recordedHits.pop_back();
+        if (!m_recordedDmisHits.empty()) {
+            m_recordedDmisHits.pop_back();
+        }
+
+        if (m_activePointsGroup && m_activePointsGroup->childCount() > 0) {
+            delete m_activePointsGroup->takeChild(m_activePointsGroup->childCount() - 1);
+        }
+
+        const int count = static_cast<int>(m_recordedHits.size());
+        m_hitCountLabel->setText(QString("Active Feature Hits: %1").arg(count));
+        if (m_activePointsGroup) {
+            m_activePointsGroup->setText(2, QString("%1 pts").arg(count));
+        }
+
+        if (m_viewport) {
+            m_viewport->clearHitMarkers();
+            for (const auto& pt : m_recordedHits) {
+                m_viewport->addHitPointMarker(pt.x(), pt.y(), pt.z());
+            }
+        }
+
+        if (m_isDmisProgramActive && m_activeDmisFeatureIdx >= 0 &&
+            m_activeDmisFeatureIdx < static_cast<int>(m_dmisProgram.features.size())) {
+            const auto& df = m_dmisProgram.features[m_activeDmisFeatureIdx];
+            if (m_activeDmisTreeItem) {
+                m_activeDmisTreeItem->setText(4, QString("MEASURING (%1/%2 pts)").arg(count).arg(df.points.size()));
+            }
+            updateDmisTargetVisuals();
+            updateManualPromptBanner();
+            onPositionUpdated(m_lastPosition);
+        }
+
+        statusBar()->showMessage(QString("Undid last probe hit — %1 hit(s) remaining in buffer.").arg(count));
+    }
+
+    void MainWindow::onForceSolveActiveDmisFeatureClicked() {
+        if (!m_isDmisProgramActive || m_activeDmisFeatureIdx < 0 ||
+            m_activeDmisFeatureIdx >= static_cast<int>(m_dmisProgram.features.size())) {
+            return;
+        }
+
+        const auto& df = m_dmisProgram.features[m_activeDmisFeatureIdx];
+        const int count = static_cast<int>(m_recordedHits.size());
+        const std::string fType = df.featureType;
+
+        if (fType == "PLANE" && count >= 3) onFitPlaneClicked();
+        else if ((fType == "CYLNDR" || fType == "CYL") && count >= 5) onFitCylinderClicked();
+        else if ((fType == "CIRCLE" || fType == "CYLNDR" || fType == "CYL") && count >= 3) onFitCircleClicked();
+        else if (fType == "SPHERE" && count >= 4) onFitSphereClicked();
+        else if (fType == "LINE" && count >= 2) onFitLineClicked();
+        else {
+            QMessageBox::information(this, "More Hits Needed",
+                "Please record the minimum required points for this geometry type before solving.");
+            return;
+        }
+
+        if (!df.datumLetter.empty() && !m_solvedFeatures.empty()) {
+            assignFeatureAsDatum(
+                m_solvedFeatures.back().id,
+                QString::fromStdString(df.datumLetter),
+                m_dmisProgram.datumAlignment.has321Alignment
+            );
+        }
+
+        startDmisGuidedFeature(m_activeDmisFeatureIdx + 1);
+    }
+
+    void MainWindow::onSkipDmisFeatureClicked(int delta) {
+        if (!m_isDmisProgramActive || m_dmisProgram.features.empty()) return;
+
+        finishFeatureBuffer();
+        if (m_activeDmisTreeItem && !m_activeDmisTreeItem->data(0, ROLE_FEATURE_ID).isValid()) {
+            const auto& curDf = m_dmisProgram.features[m_activeDmisFeatureIdx];
+            m_activeDmisTreeItem->setText(4, QString("SKIPPED (0/%1 pts)").arg(curDf.points.size()));
+            m_activeDmisTreeItem->setForeground(4, QBrush(QColor("#7f848e")));
+        }
+
+        const int nextIdx = std::clamp(
+            m_activeDmisFeatureIdx + delta,
+            0,
+            static_cast<int>(m_dmisProgram.features.size()) - 1
+        );
+        startDmisGuidedFeature(nextIdx);
+        onPositionUpdated(m_lastPosition);
+    }
+    void MainWindow::focusViewportOnActiveTarget() {
+        if (!m_autoCameraFocusEnabled || !m_viewport) return;
+        if (!m_isDmisProgramActive || m_activeDmisFeatureIdx < 0 ||
+            m_activeDmisFeatureIdx >= static_cast<int>(m_dmisProgram.features.size())) {
+            return;
+        }
+
+        // Do not fight the camera during high-speed automated 30 FPS playback
+        if (m_dmisPlaybackTimer && m_dmisPlaybackTimer->isActive()) {
+            return;
+        }
+
+        const auto& df = m_dmisProgram.features[m_activeDmisFeatureIdx];
+        const int activePtIdx = static_cast<int>(m_recordedHits.size());
+
+        double targetX = df.nomX;
+        double targetY = df.nomY;
+        double targetZ = df.nomZ;
+        double normI = df.nomI;
+        double normJ = df.nomJ;
+        double normK = df.nomK;
+
+        if (activePtIdx >= 0 && activePtIdx < static_cast<int>(df.points.size())) {
+            const auto& pt = df.points[activePtIdx];
+            // Center framing slightly between the feature center and the active gold bullseye point
+            targetX = 0.35 * df.nomX + 0.65 * pt.x;
+            targetY = 0.35 * df.nomY + 0.65 * pt.y;
+            targetZ = 0.35 * df.nomZ + 0.65 * pt.z;
+            normI = pt.i;
+            normJ = pt.j;
+            normK = pt.k;
+        }
+
+        // Scale the zoom window proportionally to the feature diameter (with sensible bounds)
+        const double baseSpan = (df.nominalDiameter > 1.0)
+            ? std::clamp(df.nominalDiameter * 3.2, 75.0, 280.0)
+            : 120.0;
+
+        m_viewport->focusCameraOnTarget(targetX, targetY, targetZ, normI, normJ, normK, baseSpan);
+    }
+
 
 
 } // namespace OpenCMM

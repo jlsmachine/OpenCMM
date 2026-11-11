@@ -120,6 +120,10 @@ namespace OpenCMM {
         void setBackgroundColor(bool dark);
         void setTheme(bool dark);
         void setProbeCollisionState(bool collision, bool warning);
+        // Automatically orbit and zoom the 3D camera to frame the active probing target
+        void focusCameraOnTarget(double targetX, double targetY, double targetZ,
+            double normI, double normJ, double normK,
+            double viewSpanMm = 110.0);
 
     protected:
         void paintEvent(QPaintEvent* event) override;

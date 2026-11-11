@@ -63,6 +63,7 @@
 #include <Geom_CylindricalSurface.hxx>
 #include <BRep_Tool.hxx>
 #include <GeomLProp_SLProps.hxx>
+#include <Graphic3d_Camera.hxx>
 
 
 
@@ -1325,4 +1326,52 @@ namespace OpenCMM {
         m_context->Redisplay(m_probeRuby, Standard_False);
         m_context->UpdateCurrentViewer();
     }
+    void OcctViewport::focusCameraOnTarget(double targetX, double targetY, double targetZ,
+        double normI, double normJ, double normK,
+        double viewSpanMm) {
+        if (m_view.IsNull()) return;
+        Handle(Graphic3d_Camera) cam = m_view->Camera();
+        if (cam.IsNull()) return;
+
+        Eigen::Vector3d n(normI, normJ, normK);
+        if (n.norm() < 1e-6) {
+            n = Eigen::Vector3d(0.0, 0.0, 1.0);
+        }
+        else {
+            n.normalize();
+        }
+
+        // Position the camera on the open-air approach side of the surface normal,
+        // elevated in +Z so the probe stem, approach rod, and surface are clearly visible.
+        Eigen::Vector3d xyDir(n.x(), n.y(), 0.0);
+        Eigen::Vector3d eyeOffsetDir;
+        if (xyDir.norm() > 0.20) {
+            xyDir.normalize();
+            eyeOffsetDir = (xyDir * 0.78 + Eigen::Vector3d(0.0, 0.0, 0.62)).normalized();
+        }
+        else {
+            // Top/bottom horizontal plane: 3D isometric angle from front-right
+            eyeOffsetDir = Eigen::Vector3d(0.55, -0.65, 0.52).normalized();
+        }
+
+        const double span = std::clamp(viewSpanMm, 65.0, 500.0);
+        const double eyeDist = span * 2.4;
+
+        const gp_Pnt centerPt(targetX, targetY, targetZ);
+        const gp_Pnt eyePt(
+            targetX + eyeOffsetDir.x() * eyeDist,
+            targetY + eyeOffsetDir.y() * eyeDist,
+            targetZ + eyeOffsetDir.z() * eyeDist
+        );
+
+        cam->SetCenter(centerPt);
+        cam->SetEye(eyePt);
+        cam->SetUp(gp_Dir(0.0, 0.0, 1.0));
+        cam->SetScale(span);
+
+        m_view->Invalidate();
+        update();
+    }
+
+
 } // namespace OpenCMM
