@@ -20,6 +20,7 @@ namespace OpenCMM {
         virtual QJsonObject getCadFacesJson(const QJsonObject& filter = QJsonObject()) = 0;
         virtual QJsonObject runDmisPlaybackJson(const QJsonObject& params = QJsonObject()) = 0;
         virtual QJsonObject exportInspectionFileJson(const QJsonObject& params) = 0;
+        virtual QJsonObject solve321AlignmentJson(const QJsonObject& params) = 0;
     };
 
     class IMcpServerPlugin {

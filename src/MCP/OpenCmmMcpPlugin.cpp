@@ -366,14 +366,17 @@ namespace OpenCMM {
 
         tools.append(QJsonObject{
             { "name", "create_dmis_feature" },
-            { "description", "Queue a planned offline DMIS 5.3 feature (with optional Datum A/B/C assignment for 3-2-1 PCS alignment) and validate its approach path against the CAD model." },
+            { "description", "Queue a planned offline DMIS 5.3 feature with optional per-feature tolerances and Datum A/B/C assignment." },
             { "inputSchema", QJsonObject{
                 { "type", "object" },
                 { "properties", QJsonObject{
                     { "label", QJsonObject{ { "type", "string" } } },
+                    { "faceIndex", QJsonObject{ { "type", "integer" },{ "description", "Optional faceIndex from list_cad_faces" } } },
                     { "featureType", QJsonObject{ { "type", "string" },{ "description", "PLANE, CYLNDR, CIRCLE, SPHERE, or LINE" } } },
                     { "boundarySub", QJsonObject{ { "type", "string" },{ "description", "INNER, OUTER, or UNBND" } } },
-                    { "datumLetter", QJsonObject{ { "type", "string" },{ "description", "Optional 3-2-1 datum letter: A (Primary Level +Z), B (Secondary Rotate +X), or C (Tertiary Origin)" } } },
+                    { "datumLetter", QJsonObject{ { "type", "string" },{ "description", "Optional 3-2-1 datum letter: A, B, or C" } } },
+                    { "plusToleranceMm", QJsonObject{ { "type", "number" },{ "description", "Upper tolerance limit in mm (default app default)" } } },
+                    { "minusToleranceMm", QJsonObject{ { "type", "number" },{ "description", "Lower tolerance limit in mm (default app default)" } } },
                     { "nomX", QJsonObject{ { "type", "number" } } },
                     { "nomY", QJsonObject{ { "type", "number" } } },
                     { "nomZ", QJsonObject{ { "type", "number" } } },
@@ -381,9 +384,22 @@ namespace OpenCMM {
                     { "nomJ", QJsonObject{ { "type", "number" } } },
                     { "nomK", QJsonObject{ { "type", "number" } } },
                     { "nominalDiameter", QJsonObject{ { "type", "number" } } },
-                    { "hitCount", QJsonObject{ { "type", "integer" },{ "description", "Number of PTMEAS hits to generate (default 4 for planes/circles, 6 for cylinders)" } } }
+                    { "hitCount", QJsonObject{ { "type", "integer" },{ "description", "Number of PTMEAS hits (default 4 for planes/circles, 6 for cylinders)" } } }
                 } },
-                { "required", QJsonArray{ "label", "featureType", "nomX", "nomY", "nomZ" } }
+                { "required", QJsonArray{ "label" } }
+            } }
+            });
+
+        tools.append(QJsonObject{
+            { "name", "solve_321_alignment" },
+            { "description", "Compute and activate an orthogonal 3-2-1 Part Coordinate System (PCS) alignment from Datums A (Level +Z), B (Rotate +X), and C (Origin 0,0,0)." },
+            { "inputSchema", QJsonObject{
+                { "type", "object" },
+                { "properties", QJsonObject{
+                    { "datumAFeatureId", QJsonObject{ { "type", "integer" },{ "description", "Feature ID or index for primary Datum A plane" } } },
+                    { "datumBFeatureId", QJsonObject{ { "type", "integer" },{ "description", "Feature ID or index for secondary Datum B line/axis" } } },
+                    { "datumCFeatureId", QJsonObject{ { "type", "integer" },{ "description", "Feature ID or index for tertiary Datum C point/circle" } } }
+                } }
             } }
             });
         tools.append(QJsonObject{
@@ -442,6 +458,9 @@ namespace OpenCMM {
         }
         else if (toolName == "export_inspection_file") {
             payload = d->m_bridge->exportInspectionFileJson(args);
+        }
+        else if (toolName == "solve_321_alignment") {
+            payload = d->m_bridge->solve321AlignmentJson(args);
         }
         else {
             payload["error"] = "Unknown tool: " + toolName;

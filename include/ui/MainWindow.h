@@ -55,6 +55,7 @@ namespace OpenCMM {
         QJsonObject getCadFacesJson(const QJsonObject& filter = QJsonObject()) override;
         QJsonObject runDmisPlaybackJson(const QJsonObject& params = QJsonObject()) override;
         QJsonObject exportInspectionFileJson(const QJsonObject& params) override;
+        QJsonObject solve321AlignmentJson(const QJsonObject& params) override;
 
     protected:
         void closeEvent(QCloseEvent* event) override;

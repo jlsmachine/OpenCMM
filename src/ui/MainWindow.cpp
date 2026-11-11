@@ -1889,6 +1889,17 @@ namespace OpenCMM {
         const size_t prevCount = m_solvedFeatures.size();
 
         if (m_viewport && m_viewport->hasCadModel() && m_viewport->hasSelectedCadFace()) {
+            const CadFaceInfo& fi = m_viewport->lastSelectedFace();
+            // Only block truly vertical side walls (where normal Z is nearly 0)
+            if (datumLetter == "A" && fi.surfaceType == "PLANE" && std::abs(fi.normalOrAxis.Z()) < 0.05) {
+                QMessageBox::warning(
+                    this,
+                    "Invalid Datum A Face",
+                    "Datum A requires a horizontal leveling plane.\n\n"
+                    "The currently selected face is a vertical side wall (normal is perpendicular to Z), which cannot level the Z axis."
+                );
+                return;
+            }
             onAutoProbeCadFaceClicked();
             if (m_solvedFeatures.size() > prevCount) {
                 assignFeatureAsDatum(m_solvedFeatures.back().id, datumLetter, true);
@@ -1914,7 +1925,7 @@ namespace OpenCMM {
             this,
             "Specify Datum " + datumLetter,
             QString("To specify Datum %1:\n\n"
-                "1. Left-click any face (Plane, Bore, Boss, or Edge) directly on the 3D CAD model and click 'Set Datum %1', OR\n"
+                "1. Left-click a valid face on the 3D CAD model and click 'Set Datum %1', OR\n"
                 "2. Right-click any solved feature in the Inspection Feature Tree and choose 'Set as Datum %1'.")
             .arg(datumLetter)
         );
@@ -3116,25 +3127,36 @@ namespace OpenCMM {
             return;
         }
 
-        Eigen::Vector3d avgPos = Eigen::Vector3d::Zero();
-        for (const auto& p : m_recordedHits) avgPos += p;
-        avgPos /= static_cast<double>(m_recordedHits.size());
+        PlaneFitResult res;
 
-        Eigen::Vector3d refPt = avgPos + Eigen::Vector3d(0.0, 0.0, 25.0);
-        if (!m_recordedDmisHits.empty()) {
-            Eigen::Vector3d avgNorm = Eigen::Vector3d::Zero();
-            for (const auto& dh : m_recordedDmisHits) avgNorm += dh.normalVec;
-            if (avgNorm.norm() > 1e-6) {
-                refPt = avgPos + avgNorm.normalized() * 25.0;
-            }
+        // If we have an armed CAD plane nominal, use it directly to guarantee zero singularities!
+        if (m_hasArmedCadNominal && m_armedCadDiameterMm <= 0.0) {
+            res.success = true;
+            res.centroid = m_armedCadLocationMm;
+            res.normal = m_armedCadNormalMm;
+            res.flatness = 0.0001;
         }
+        else {
+            Eigen::Vector3d avgPos = Eigen::Vector3d::Zero();
+            for (const auto& p : m_recordedHits) avgPos += p;
+            avgPos /= static_cast<double>(m_recordedHits.size());
 
-        PlaneFitResult res = MetrologyMath::fitPlaneLeastSquares(
-            m_recordedHits,
-            m_effectiveProbeRadius,
-            currentCompMode(),
-            &refPt
-        );
+            Eigen::Vector3d refPt = avgPos + Eigen::Vector3d(0.0, 0.0, 25.0);
+            if (!m_recordedDmisHits.empty()) {
+                Eigen::Vector3d avgNorm = Eigen::Vector3d::Zero();
+                for (const auto& dh : m_recordedDmisHits) avgNorm += dh.normalVec;
+                if (avgNorm.norm() > 1e-6) {
+                    refPt = avgPos + avgNorm.normalized() * 25.0;
+                }
+            }
+
+            res = MetrologyMath::fitPlaneLeastSquares(
+                m_recordedHits,
+                m_effectiveProbeRadius,
+                currentCompMode(),
+                &refPt
+            );
+        }
 
         if (!res.success) {
             playSolveChime(false);
@@ -4906,14 +4928,19 @@ namespace OpenCMM {
         const double nomVal = (df.featureType == "CIRCLE" || df.featureType == "CYLNDR" || df.featureType == "SPHERE")
             ? df.nominalDiameter : 0.0;
 
+        const double plusTol = params.value("plusToleranceMm").toDouble(m_defaultTolMm);
+        const double minusTol = params.value("minusToleranceMm").toDouble(m_defaultTolMm);
+
         auto* item = new QTreeWidgetItem(m_featureTree, {
             featTitle,
             QString("%1%2").arg(toDisplayUnit(nomVal, m_unitSystem), 0, 'f', decimals).arg(unitStr),
             "--",
-            QString("±%1").arg(toDisplayUnit(m_defaultTolMm, m_unitSystem), 0, 'f', decimals),
+            QString("±%1").arg(toDisplayUnit(plusTol, m_unitSystem), 0, 'f', decimals),
             QString("PLANNED (0/%1 pts)").arg(df.points.size())
             });
         item->setForeground(4, QBrush(QColor("#e5c07b")));
+        item->setData(0, ROLE_PLUS_TOL_MM, plusTol);
+        item->setData(0, ROLE_MINUS_TOL_MM, minusTol);
         m_plannedDmisTreeItems.push_back(item);
 
         const int newIdx = static_cast<int>(m_dmisProgram.features.size()) - 1;
@@ -5372,4 +5399,41 @@ namespace OpenCMM {
             { "plannedFeatureCount", static_cast<int>(m_dmisProgram.features.size()) }
         };
     }
+    QJsonObject MainWindow::solve321AlignmentJson(const QJsonObject& params) {
+        if (m_solvedFeatures.empty()) {
+            return QJsonObject{
+                { "success", false },
+                { "error", "No solved features exist to establish a 3-2-1 coordinate alignment." }
+            };
+        }
+
+        // If explicit feature IDs/indices are provided, assign them as Datums A, B, and C
+        if (params.contains("datumAFeatureId") && params.contains("datumBFeatureId") && params.contains("datumCFeatureId")) {
+            const int idA = params.value("datumAFeatureId").toInt();
+            const int idB = params.value("datumBFeatureId").toInt();
+            const int idC = params.value("datumCFeatureId").toInt();
+
+            assignFeatureAsDatum(idA, "A", false);
+            assignFeatureAsDatum(idB, "B", false);
+            assignFeatureAsDatum(idC, "C", false);
+        }
+
+        const bool solved = tryAutoSolve321Alignment(false);
+        if (!solved) {
+            return QJsonObject{
+                { "success", false },
+                { "error", "Could not solve 3-2-1 alignment. Ensure Datums A, B, and C are assigned and geometrically valid." }
+            };
+        }
+
+        return QJsonObject{
+            { "success", true },
+            { "isPartAligned321", m_isPartAligned },
+            { "datumAFeatureId", m_datumAFeatureId },
+            { "datumBFeatureId", m_datumBFeatureId },
+            { "datumCFeatureId", m_datumCFeatureId }
+        };
+    }
+
+
 } // namespace OpenCMM
