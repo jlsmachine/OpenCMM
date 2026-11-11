@@ -310,13 +310,15 @@ namespace OpenCMM {
 
         tools.append(QJsonObject{
             { "name", "create_dmis_feature" },
-            { "description", "Queue a planned offline DMIS 5.3 feature and automatically validate its approach path against the CAD model." },
+            { "description", "Queue a planned offline DMIS 5.3 feature. If faceIndex (from list_cad_faces) is provided, nominals and valid interior UV touch points (TopAbs_IN) are automatically extracted from the STEP B-Rep face." },
             { "inputSchema", QJsonObject{
                 { "type", "object" },
                 { "properties", QJsonObject{
                     { "label", QJsonObject{ { "type", "string" } } },
-                    { "featureType", QJsonObject{ { "type", "string" },{ "description", "PLANE, CYLNDR, CIRCLE, SPHERE, or LINE" } } },
-                    { "boundarySub", QJsonObject{ { "type", "string" },{ "description", "INNER, OUTER, or UNBND" } } },
+                    { "faceIndex", QJsonObject{ { "type", "integer" },{ "description", "Optional 0-based faceIndex from list_cad_faces to sample valid interior UV points and auto-fill nominals" } } },
+                    { "featureType", QJsonObject{ { "type", "string" },{ "description", "PLANE, CYLNDR, CIRCLE, SPHERE, or LINE (auto-detected if faceIndex is set)" } } },
+                    { "boundarySub", QJsonObject{ { "type", "string" },{ "description", "INNER, OUTER, or UNBND (auto-detected if faceIndex is set)" } } },
+                    { "datumLetter", QJsonObject{ { "type", "string" },{ "description", "Optional 3-2-1 datum letter: A, B, or C" } } },
                     { "nomX", QJsonObject{ { "type", "number" } } },
                     { "nomY", QJsonObject{ { "type", "number" } } },
                     { "nomZ", QJsonObject{ { "type", "number" } } },
@@ -324,9 +326,9 @@ namespace OpenCMM {
                     { "nomJ", QJsonObject{ { "type", "number" } } },
                     { "nomK", QJsonObject{ { "type", "number" } } },
                     { "nominalDiameter", QJsonObject{ { "type", "number" } } },
-                    { "hitCount", QJsonObject{ { "type", "integer" },{ "description", "Number of PTMEAS hits to generate (default 4)" } } }
+                    { "hitCount", QJsonObject{ { "type", "integer" },{ "description", "Number of PTMEAS hits to generate (default 4 for planes/circles, 6 for cylinders)" } } }
                 } },
-                { "required", QJsonArray{ "label", "featureType", "nomX", "nomY", "nomZ" } }
+                { "required", QJsonArray{ "label" } }
             } }
             });
 
@@ -384,6 +386,28 @@ namespace OpenCMM {
                 { "required", QJsonArray{ "label", "featureType", "nomX", "nomY", "nomZ" } }
             } }
             });
+        tools.append(QJsonObject{
+            { "name", "export_inspection_file" },
+            { "description", "Headlessly export the current inspection program or results to disk as a DMIS 5.3 (.dmis), QIF 2.1 (.qif), PDF Certificate (.pdf), CSV (.csv), or HTML (.html) file." },
+            { "inputSchema", QJsonObject{
+                { "type", "object" },
+                { "properties", QJsonObject{
+                    { "format", QJsonObject{
+                        { "type", "string" },
+                        { "description", "Export format: dmis, qif, pdf, csv, or html" }
+                    } },
+                    { "filePath", QJsonObject{
+                        { "type", "string" },
+                        { "description", "Optional absolute or relative output file path. Defaults to the application exports/ directory if omitted." }
+                    } },
+                    { "partName", QJsonObject{
+                        { "type", "string" },
+                        { "description", "Part or job number for report headers (default JLS-PART-001)" }
+                    } }
+                } },
+                { "required", QJsonArray{ "format" } }
+            } }
+            });
 
         return QJsonObject{ { "tools", tools } };
     }
@@ -415,6 +439,9 @@ namespace OpenCMM {
         }
         else if (toolName == "run_dmis_program") {
             payload = d->m_bridge->runDmisPlaybackJson(args);
+        }
+        else if (toolName == "export_inspection_file") {
+            payload = d->m_bridge->exportInspectionFileJson(args);
         }
         else {
             payload["error"] = "Unknown tool: " + toolName;

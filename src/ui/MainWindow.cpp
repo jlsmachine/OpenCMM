@@ -48,6 +48,8 @@
 #include <cmath>
 #include <thread>
 #include <QMenu>
+#include <QKeySequenceEdit>
+#include <QSettings>
 #include <QShortcut>
 #include <QSettings>
 #include <QPdfWriter>
@@ -72,6 +74,11 @@
 #include <gp_Cylinder.hxx>
 #include <gp_Sphere.hxx>
 #include <gp_Cone.hxx>
+#include <BRepTools.hxx>
+#include <BRepTopAdaptor_FClass2d.hxx>
+#include <BRepLProp_SLProps.hxx>
+#include <Precision.hxx>
+#include <gp_Pnt2d.hxx>
 
 namespace OpenCMM {
 
@@ -239,6 +246,7 @@ namespace OpenCMM {
         m_viewport->setTheme(m_isDarkMode);
         tryLoadMcpPlugin();
         loadRibbonCustomization();
+        applyKeyboardShortcuts();
         statusBar()->setStyleSheet("background-color: #007acc; color: white; font-weight: bold;");
         statusBar()->showMessage("Ready - Click 'Settings...' to configure hardware/units, or probe features to begin inspection.");
     }
@@ -4344,52 +4352,149 @@ namespace OpenCMM {
 
         statusBar()->showMessage("Window layout and docks successfully restored to factory defaults.");
     }
+    namespace {
+        struct ShortcutDef {
+            const char* id;
+            const char* label;
+            const char* defaultSeq;
+        };
+
+        constexpr ShortcutDef kShortcutCatalog[] = {
+            { "sc_zero_axes",        "Zero Axes (DRO)",                "Ctrl+0" },
+            { "sc_toggle_units",     "Toggle Units (mm / in)",         "Ctrl+U" },
+            { "sc_sim_hit",          "Simulate Probe Hit",             "Space" },
+            { "sc_auto_probe_cad",   "Auto-Probe Selected CAD Face",   "Ctrl+Shift+P" },
+            { "sc_create_feature",   "Create Offline Feature",         "Ctrl+N" },
+            { "sc_run_dmis",         "Run / Stop DMIS Playback",       "F5" },
+            { "sc_fit_plane",        "Fit 3D Plane",                   "Ctrl+P" },
+            { "sc_fit_sphere",       "Fit 3D Sphere",                  "Ctrl+S" },
+            { "sc_fit_circle",       "Fit 2D Circle",                  "Ctrl+C" },
+            { "sc_fit_line",         "Fit 2D Line",                    "Ctrl+L" },
+            { "sc_fit_cylinder",     "Fit 3D Cylinder",                "Ctrl+Y" },
+            { "sc_clear_points",     "Clear Active Point Buffer",      "Escape" },
+            { "sc_toggle_collision", "Toggle Collision & Clearance Log","Ctrl+Shift+L" },
+            { "sc_open_settings",    "Open Settings",                  "Ctrl+," }
+        };
+    }
+
+    void MainWindow::applyKeyboardShortcuts() {
+        for (QShortcut* sc : m_appShortcuts) {
+            delete sc;
+        }
+        m_appShortcuts.clear();
+
+        QSettings settings("JLS Machine", "OpenCMM");
+        settings.beginGroup("Shortcuts");
+
+        auto bindAction = [&](const char* id, const char* defaultSeq, auto slotFunc) {
+            const QString seqStr = settings.value(id, QString::fromLatin1(defaultSeq)).toString().trimmed();
+            if (seqStr.isEmpty()) return;
+
+            auto* sc = new QShortcut(QKeySequence(seqStr), this);
+            sc->setContext(Qt::WindowShortcut);
+            connect(sc, &QShortcut::activated, this, slotFunc);
+            m_appShortcuts.push_back(sc);
+            };
+
+        bindAction("sc_zero_axes", "Ctrl+0", &MainWindow::onZeroAxesClicked);
+        bindAction("sc_toggle_units", "Ctrl+U", &MainWindow::onUnitToggled);
+        bindAction("sc_sim_hit", "Space", &MainWindow::onSimulateHitClicked);
+        bindAction("sc_auto_probe_cad", "Ctrl+Shift+P", &MainWindow::onAutoProbeCadFaceClicked);
+        bindAction("sc_create_feature", "Ctrl+N", &MainWindow::onCreateOfflineFeatureClicked);
+        bindAction("sc_run_dmis", "F5", &MainWindow::onToggleAutoRunDmisClicked);
+        bindAction("sc_fit_plane", "Ctrl+P", &MainWindow::onFitPlaneClicked);
+        bindAction("sc_fit_sphere", "Ctrl+S", &MainWindow::onFitSphereClicked);
+        bindAction("sc_fit_circle", "Ctrl+C", &MainWindow::onFitCircleClicked);
+        bindAction("sc_fit_line", "Ctrl+L", &MainWindow::onFitLineClicked);
+        bindAction("sc_fit_cylinder", "Ctrl+Y", &MainWindow::onFitCylinderClicked);
+        bindAction("sc_clear_points", "Escape", &MainWindow::onClearPointsClicked);
+        bindAction("sc_open_settings", "Ctrl+,", &MainWindow::onOpenSettingsClicked);
+
+        // Toggle Collision & Clearance Log dock
+        const QString colSeq = settings.value("sc_toggle_collision", "Ctrl+Shift+L").toString().trimmed();
+        if (!colSeq.isEmpty()) {
+            auto* sc = new QShortcut(QKeySequence(colSeq), this);
+            sc->setContext(Qt::WindowShortcut);
+            connect(sc, &QShortcut::activated, this, [this]() {
+                if (!m_collisionDock) return;
+                const bool show = !m_collisionDock->isVisible();
+                m_collisionDock->setVisible(show);
+                if (show) m_collisionDock->raise();
+                syncAutoHideTabForDock(m_collisionDock);
+                });
+            m_appShortcuts.push_back(sc);
+        }
+
+        settings.endGroup();
+    }
+
     void MainWindow::onConfigureShortcutsClicked() {
         QDialog dlg(this);
         dlg.setWindowTitle("Configure Keyboard Shortcuts");
-        dlg.resize(500, 400);
+        dlg.resize(540, 460);
 
         auto* layout = new QVBoxLayout(&dlg);
         auto* tree = new QTreeWidget(&dlg);
         tree->setHeaderLabels({ "Command / Action", "Assigned Shortcut" });
         tree->setColumnCount(2);
+        tree->setRootIsDecorated(false);
+        tree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
+        tree->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
 
-        // Populate standard inspect & metrology shortcuts
-        struct ShortcutRow { QString name; QString shortcut; };
-        QList<ShortcutRow> rows = {
-            { "Zero Axes (DRO)", "Ctrl+0" },
-            { "Toggle Units (mm / in)", "Ctrl+U" },
-            { "Simulate Probe Hit", "Space" },
-            { "Auto-Probe Selected CAD Face", "Ctrl+Shift+P" },
-            { "Create Offline Feature", "Ctrl+N" },
-            { "Fit 3D Plane", "Ctrl+P" },
-            { "Fit 3D Sphere", "Ctrl+S" },
-            { "Fit 2D Circle", "Ctrl+C" },
-            { "Fit 2D Line", "Ctrl+L" },
-            { "Fit 3D Cylinder", "Ctrl+Y" },
-            { "Clear Active Point Buffer", "Del / Backspace" },
-            { "Toggle Collision Log", "Ctrl+Shift+L" },
-            { "Open Settings", "Ctrl+," }
+        QSettings settings("JLS Machine", "OpenCMM");
+        settings.beginGroup("Shortcuts");
+
+        struct EditorEntry {
+            QString id;
+            QString defaultSeq;
+            QKeySequenceEdit* editor;
         };
+        std::vector<EditorEntry> editors;
 
-        for (const auto& r : rows) {
-            auto* item = new QTreeWidgetItem(tree, { r.name, r.shortcut });
-            item->setFlags(item->flags() | Qt::ItemIsEditable);
+        for (const auto& def : kShortcutCatalog) {
+            const QString savedSeq = settings.value(def.id, QString::fromLatin1(def.defaultSeq)).toString();
+            auto* item = new QTreeWidgetItem(tree, { QString::fromLatin1(def.label), "" });
+
+            auto* seqEdit = new QKeySequenceEdit(QKeySequence(savedSeq), tree);
+            seqEdit->setMaximumSequenceLength(1);
+            tree->setItemWidget(item, 1, seqEdit);
+
+            editors.push_back({ QString::fromLatin1(def.id), QString::fromLatin1(def.defaultSeq), seqEdit });
         }
+        settings.endGroup();
 
         layout->addWidget(tree);
 
-        auto* infoLbl = new QLabel("Double-click a shortcut cell to rebind key combinations.", &dlg);
+        auto* infoLbl = new QLabel("Click any shortcut box and press a key combination to rebind.", &dlg);
         infoLbl->setStyleSheet("color: #7f848e; font-size: 11px; font-style: italic;");
         layout->addWidget(infoLbl);
 
-        auto* btnBox = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, &dlg);
+        auto* btnBox = new QDialogButtonBox(
+            QDialogButtonBox::Save | QDialogButtonBox::RestoreDefaults | QDialogButtonBox::Cancel,
+            &dlg
+        );
+
+        connect(btnBox->button(QDialogButtonBox::RestoreDefaults), &QPushButton::clicked, &dlg, [&]() {
+            for (auto& e : editors) {
+                e.editor->setKeySequence(QKeySequence(e.defaultSeq));
+            }
+            });
+
         connect(btnBox, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
         connect(btnBox, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
         layout->addWidget(btnBox);
 
         if (dlg.exec() != QDialog::Accepted) return;
-        statusBar()->showMessage("Keyboard shortcut bindings updated.");
+
+        settings.beginGroup("Shortcuts");
+        for (const auto& e : editors) {
+            settings.setValue(e.id, e.editor->keySequence().toString(QKeySequence::PortableText));
+        }
+        settings.endGroup();
+        settings.sync();
+
+        applyKeyboardShortcuts();
+        statusBar()->showMessage("Keyboard shortcut bindings saved and activated.");
     }
     bool MainWindow::validateDmisFeaturePath(int featureIndex) {
         if (!m_isDmisProgramActive || featureIndex < 0 || featureIndex >= static_cast<int>(m_dmisProgram.features.size())) {
@@ -4554,6 +4659,7 @@ namespace OpenCMM {
         using DmisPointT = typename decltype(DmisFeatureT::points)::value_type;
 
         const int nextNum = static_cast<int>(m_dmisProgram.features.size() + m_solvedFeatures.size()) + 1;
+        const int faceIndex = params.contains("faceIndex") ? params.value("faceIndex").toInt(-1) : -1;
 
         DmisFeatureT df;
         df.label = params.value("label").toString(QString("MCP_FEAT_%1").arg(nextNum)).toStdString();
@@ -4564,6 +4670,7 @@ namespace OpenCMM {
         if (!df.datumLetter.empty()) {
             m_dmisProgram.datumAlignment.has321Alignment = true;
         }
+
         df.nomX = params.value("nomX").toDouble(0.0);
         df.nomY = params.value("nomY").toDouble(0.0);
         df.nomZ = params.value("nomZ").toDouble(0.0);
@@ -4572,56 +4679,216 @@ namespace OpenCMM {
         df.nomK = params.value("nomK").toDouble(1.0);
         df.nominalDiameter = params.value("nominalDiameter").toDouble(10.0);
 
+        bool sampledFromCadUv = false;
+        TopoDS_Face targetFace;
+
+        // 1. If faceIndex is supplied, locate the exact TopoDS_Face on the loaded STEP model
+        if (faceIndex >= 0 && m_viewport && m_viewport->hasCadModel()) {
+            const TopoDS_Shape partShape = m_viewport->getCombinedCadShape();
+            int curIdx = 0;
+            for (TopExp_Explorer exp(partShape, TopAbs_FACE); exp.More(); exp.Next(), ++curIdx) {
+                if (curIdx == faceIndex) {
+                    targetFace = TopoDS::Face(exp.Current());
+                    break;
+                }
+            }
+
+            if (targetFace.IsNull()) {
+                return QJsonObject{
+                    { "success", false },
+                    { "error", QString("faceIndex %1 is out of range (model has %2 faces).").arg(faceIndex).arg(curIdx) }
+                };
+            }
+
+            BRepAdaptor_Surface surf(targetFace, true);
+            const GeomAbs_SurfaceType geomType = surf.GetType();
+            const bool isReversed = (targetFace.Orientation() == TopAbs_REVERSED);
+            const double orientSign = isReversed ? -1.0 : 1.0;
+
+            GProp_GProps props;
+            BRepGProp::SurfaceProperties(targetFace, props);
+            const gp_Pnt centroid = props.CentreOfMass();
+
+            // Auto-populate featureType, boundarySub, and nominals from B-Rep geometry unless explicitly overridden
+            if (geomType == GeomAbs_Plane) {
+                if (!params.contains("featureType")) df.featureType = "PLANE";
+                if (!params.contains("boundarySub")) df.boundarySub = "UNBND";
+                const gp_Dir n = surf.Plane().Axis().Direction();
+                if (!params.contains("nomX")) df.nomX = centroid.X();
+                if (!params.contains("nomY")) df.nomY = centroid.Y();
+                if (!params.contains("nomZ")) df.nomZ = centroid.Z();
+                if (!params.contains("nomI")) df.nomI = n.X() * orientSign;
+                if (!params.contains("nomJ")) df.nomJ = n.Y() * orientSign;
+                if (!params.contains("nomK")) df.nomK = n.Z() * orientSign;
+            }
+            else if (geomType == GeomAbs_Cylinder) {
+                if (!params.contains("featureType")) df.featureType = "CYLNDR";
+                if (!params.contains("boundarySub")) df.boundarySub = isReversed ? "INNER" : "OUTER";
+                const gp_Cylinder cyl = surf.Cylinder();
+                const gp_Dir axis = cyl.Axis().Direction();
+                const gp_Pnt loc = cyl.Location();
+                const gp_Vec toCentroid(loc, centroid);
+                const gp_Pnt axisCenter = loc.Translated(gp_Vec(axis).Multiplied(toCentroid.Dot(gp_Vec(axis))));
+
+                if (!params.contains("nomX")) df.nomX = axisCenter.X();
+                if (!params.contains("nomY")) df.nomY = axisCenter.Y();
+                if (!params.contains("nomZ")) df.nomZ = axisCenter.Z();
+                if (!params.contains("nomI")) df.nomI = axis.X();
+                if (!params.contains("nomJ")) df.nomJ = axis.Y();
+                if (!params.contains("nomK")) df.nomK = axis.Z();
+                if (!params.contains("nominalDiameter")) df.nominalDiameter = cyl.Radius() * 2.0;
+            }
+            else if (geomType == GeomAbs_Sphere) {
+                if (!params.contains("featureType")) df.featureType = "SPHERE";
+                if (!params.contains("boundarySub")) df.boundarySub = isReversed ? "INNER" : "OUTER";
+                const gp_Sphere sph = surf.Sphere();
+                const gp_Pnt center = sph.Location();
+                if (!params.contains("nomX")) df.nomX = center.X();
+                if (!params.contains("nomY")) df.nomY = center.Y();
+                if (!params.contains("nomZ")) df.nomZ = center.Z();
+                if (!params.contains("nominalDiameter")) df.nominalDiameter = sph.Radius() * 2.0;
+            }
+        }
+
         const int defaultHits = (df.featureType == "CYLNDR") ? 6 : 4;
         const int hitCount = std::max(3, params.value("hitCount").toInt(defaultHits));
-        const double radius = std::max(0.5, df.nominalDiameter * 0.5);
 
+        // 2. Sample valid interior UV coordinates on targetFace using BRepTopAdaptor_FClass2d
+        if (!targetFace.IsNull()) {
+            double uMin = 0.0, uMax = 0.0, vMin = 0.0, vMax = 0.0;
+            BRepTools::UVBounds(targetFace, uMin, uMax, vMin, vMax);
+
+            const double uSpan = uMax - uMin;
+            const double vSpan = vMax - vMin;
+
+            if (uSpan > 1e-6 && vSpan > 1e-6) {
+                BRepAdaptor_Surface surf(targetFace, true);
+                BRepTopAdaptor_FClass2d classifier(targetFace, Precision::PConfusion());
+                const bool isReversed = (targetFace.Orientation() == TopAbs_REVERSED);
+                const GeomAbs_SurfaceType geomType = surf.GetType();
+
+                auto tryAddUvHit = [&](double u, double v) -> bool {
+                    if (classifier.Perform(gp_Pnt2d(u, v)) != TopAbs_IN) {
+                        return false;
+                    }
+                    BRepLProp_SLProps slProps(surf, u, v, 1, 1e-6);
+                    if (!slProps.IsNormalDefined()) {
+                        return false;
+                    }
+                    const gp_Pnt pt = slProps.Value();
+                    gp_Dir norm = slProps.Normal();
+                    if (isReversed) {
+                        norm.Reverse();
+                    }
+
+                    // Keep at least 1.5 mm separation between sampled points
+                    for (const auto& existing : df.points) {
+                        const double dist = std::hypot(pt.X() - existing.x, std::hypot(pt.Y() - existing.y, pt.Z() - existing.z));
+                        if (dist < 1.5) {
+                            return false;
+                        }
+                    }
+
+                    DmisPointT tp{};
+                    tp.x = pt.X(); tp.y = pt.Y(); tp.z = pt.Z();
+                    tp.i = norm.X(); tp.j = norm.Y(); tp.k = norm.Z();
+                    df.points.push_back(tp);
+                    return true;
+                    };
+
+                // Structured multi-depth rings for cylinders/circles
+                if (geomType == GeomAbs_Cylinder) {
+                    const int rings = (df.featureType == "CYLNDR") ? 2 : 1;
+                    const int ptsPerRing = std::max(3, (hitCount + rings - 1) / rings);
+
+                    for (int r = 0; r < rings && static_cast<int>(df.points.size()) < hitCount; ++r) {
+                        const double vFrac = (rings == 1) ? 0.5 : (0.28 + 0.44 * r);
+                        const double vBase = vMin + vFrac * vSpan;
+                        for (int i = 0; i < ptsPerRing && static_cast<int>(df.points.size()) < hitCount; ++i) {
+                            const double uFrac = (i + 0.5) / static_cast<double>(ptsPerRing);
+                            const double uBase = uMin + uFrac * uSpan;
+                            if (!tryAddUvHit(uBase, vBase)) {
+                                // Nudge along U/V if a cross-hole or pocket sits at (uBase, vBase)
+                                for (int nudge = 1; nudge <= 5; ++nudge) {
+                                    const double du = 0.04 * nudge * uSpan;
+                                    if (tryAddUvHit(uBase + du, vBase) || tryAddUvHit(uBase - du, vBase)) {
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Low-discrepancy Halton-style interior UV sweep for planes, spheres, or remaining hits
+                const double uMargin = 0.12 * uSpan;
+                const double vMargin = 0.12 * vSpan;
+                const double uInner = uSpan - 2.0 * uMargin;
+                const double vInner = vSpan - 2.0 * vMargin;
+
+                for (int attempt = 0; attempt < 160 && static_cast<int>(df.points.size()) < hitCount; ++attempt) {
+                    // Plastic constant R2 quasi-random sequence for even 2D surface coverage
+                    const double fu = std::fmod(0.5 + attempt * 0.7548776662466927, 1.0);
+                    const double fv = std::fmod(0.5 + attempt * 0.5698402909980532, 1.0);
+                    const double u = uMin + uMargin + fu * uInner;
+                    const double v = vMin + vMargin + fv * vInner;
+                    tryAddUvHit(u, v);
+                }
+
+                sampledFromCadUv = !df.points.empty();
+            }
+        }
+
+        // 3. Fallback to parametric ring generation if no faceIndex was given or UV sampling yielded 0 points
         Eigen::Vector3d n(df.nomI, df.nomJ, df.nomK);
         if (n.norm() < 1e-6) n = Eigen::Vector3d(0.0, 0.0, 1.0);
         n.normalize();
         df.nomI = n.x(); df.nomJ = n.y(); df.nomK = n.z();
 
-        Eigen::Vector3d ref = (std::abs(n.z()) < 0.9) ? Eigen::Vector3d::UnitZ() : Eigen::Vector3d::UnitX();
-        Eigen::Vector3d u = n.cross(ref).normalized();
-        Eigen::Vector3d v = n.cross(u).normalized();
-        Eigen::Vector3d center(df.nomX, df.nomY, df.nomZ);
+        if (df.points.empty()) {
+            const double radius = std::max(0.5, df.nominalDiameter * 0.5);
+            Eigen::Vector3d ref = (std::abs(n.z()) < 0.9) ? Eigen::Vector3d::UnitZ() : Eigen::Vector3d::UnitX();
+            Eigen::Vector3d u = n.cross(ref).normalized();
+            Eigen::Vector3d v = n.cross(u).normalized();
+            Eigen::Vector3d center(df.nomX, df.nomY, df.nomZ);
 
-        if (df.featureType == "CYLNDR") {
-            const int rings = 2;
-            const int ptsPerRing = std::max(3, (hitCount + 1) / 2);
-            for (int r = 0; r < rings; ++r) {
-                const double zOff = (r == 0) ? -2.0 : 2.0;
-                const Eigen::Vector3d ringCenter = center + zOff * n;
-                for (int i = 0; i < ptsPerRing; ++i) {
-                    const double angle = (2.0 * 3.14159265358979323846 * i) / ptsPerRing;
-                    const Eigen::Vector3d radial = std::cos(angle) * u + std::sin(angle) * v;
-                    const Eigen::Vector3d pos = ringCenter + radius * radial;
-                    const Eigen::Vector3d surfNorm = (df.boundarySub == "OUTER") ? radial : -radial;
-                    DmisPointT pt{};
-                    pt.x = pos.x(); pt.y = pos.y(); pt.z = pos.z();
-                    pt.i = surfNorm.x(); pt.j = surfNorm.y(); pt.k = surfNorm.z();
-                    df.points.push_back(pt);
+            if (df.featureType == "CYLNDR") {
+                const int rings = 2;
+                const int ptsPerRing = std::max(3, (hitCount + 1) / 2);
+                for (int r = 0; r < rings; ++r) {
+                    const double zOff = (r == 0) ? -2.0 : 2.0;
+                    const Eigen::Vector3d ringCenter = center + zOff * n;
+                    for (int i = 0; i < ptsPerRing; ++i) {
+                        const double angle = (2.0 * 3.14159265358979323846 * i) / ptsPerRing;
+                        const Eigen::Vector3d radial = std::cos(angle) * u + std::sin(angle) * v;
+                        const Eigen::Vector3d pos = ringCenter + radius * radial;
+                        const Eigen::Vector3d surfNorm = (df.boundarySub == "OUTER") ? radial : -radial;
+                        DmisPointT pt{};
+                        pt.x = pos.x(); pt.y = pos.y(); pt.z = pos.z();
+                        pt.i = surfNorm.x(); pt.j = surfNorm.y(); pt.k = surfNorm.z();
+                        df.points.push_back(pt);
+                    }
                 }
             }
-        }
-        else {
-            for (int i = 0; i < hitCount; ++i) {
-                const double angle = (2.0 * 3.14159265358979323846 * i) / hitCount;
-                const Eigen::Vector3d radial = std::cos(angle) * u + std::sin(angle) * v;
+            else {
+                for (int i = 0; i < hitCount; ++i) {
+                    const double angle = (2.0 * 3.14159265358979323846 * i) / hitCount;
+                    const Eigen::Vector3d radial = std::cos(angle) * u + std::sin(angle) * v;
 
-                DmisPointT pt{};
-                if (df.featureType == "CIRCLE" || df.featureType == "SPHERE") {
-                    const Eigen::Vector3d pos = center + radius * radial;
-                    const Eigen::Vector3d surfNorm = (df.boundarySub == "OUTER") ? radial : -radial;
-                    pt.x = pos.x(); pt.y = pos.y(); pt.z = pos.z();
-                    pt.i = surfNorm.x(); pt.j = surfNorm.y(); pt.k = surfNorm.z();
+                    DmisPointT pt{};
+                    if (df.featureType == "CIRCLE" || df.featureType == "SPHERE") {
+                        const Eigen::Vector3d pos = center + radius * radial;
+                        const Eigen::Vector3d surfNorm = (df.boundarySub == "OUTER") ? radial : -radial;
+                        pt.x = pos.x(); pt.y = pos.y(); pt.z = pos.z();
+                        pt.i = surfNorm.x(); pt.j = surfNorm.y(); pt.k = surfNorm.z();
+                    }
+                    else {
+                        const Eigen::Vector3d pos = center + (radius * 0.5) * radial;
+                        pt.x = pos.x(); pt.y = pos.y(); pt.z = pos.z();
+                        pt.i = n.x(); pt.j = n.y(); pt.k = n.z();
+                    }
+                    df.points.push_back(pt);
                 }
-                else {
-                    const Eigen::Vector3d pos = center + (radius * 0.5) * radial;
-                    pt.x = pos.x(); pt.y = pos.y(); pt.z = pos.z();
-                    pt.i = n.x(); pt.j = n.y(); pt.k = n.z();
-                }
-                df.points.push_back(pt);
             }
         }
 
@@ -4631,7 +4898,11 @@ namespace OpenCMM {
 
         const int decimals = (m_unitSystem == UnitSystem::Millimeters) ? 4 : 5;
         const QString unitStr = (m_unitSystem == UnitSystem::Millimeters) ? " mm" : " in";
-        const QString featTitle = QString("%1 (%2)").arg(QString::fromStdString(df.label), QString::fromStdString(df.featureType));
+        const QString datSuffix = df.datumLetter.empty()
+            ? QString()
+            : QString(" [DAT %1]").arg(QString::fromStdString(df.datumLetter));
+        const QString featTitle = QString("%1 (%2)%3")
+            .arg(QString::fromStdString(df.label), QString::fromStdString(df.featureType), datSuffix);
         const double nomVal = (df.featureType == "CIRCLE" || df.featureType == "CYLNDR" || df.featureType == "SPHERE")
             ? df.nominalDiameter : 0.0;
 
@@ -4656,15 +4927,22 @@ namespace OpenCMM {
         if (m_autoRunDmisBtnHome) m_autoRunDmisBtnHome->setEnabled(true);
         if (m_autoRunDmisBtnCad)  m_autoRunDmisBtnCad->setEnabled(true);
         statusBar()->showMessage(
-            QString("MCP queued feature '%1' (%2 pts) — Pre-Flight: %3")
+            QString("MCP queued feature '%1' (%2 pts, %3) — Pre-Flight: %4")
             .arg(QString::fromStdString(df.label))
             .arg(df.points.size())
+            .arg(sampledFromCadUv ? QString("CAD Face #%1 UV").arg(faceIndex) : "Parametric")
             .arg(pathSafe ? "SAFE" : "COLLISION WARNING")
         );
 
         return QJsonObject{
             { "success", true },
             { "featureIndex", newIdx },
+            { "faceIndex", faceIndex },
+            { "sampledFromCadUv", sampledFromCadUv },
+            { "featureType", QString::fromStdString(df.featureType) },
+            { "boundarySub", QString::fromStdString(df.boundarySub) },
+            { "datumLetter", QString::fromStdString(df.datumLetter) },
+            { "nominalDiameter", df.nominalDiameter },
             { "pointCount", static_cast<int>(df.points.size()) },
             { "preFlightPathSafe", pathSafe }
         };
@@ -4897,5 +5175,201 @@ namespace OpenCMM {
             { "preFlightSummary", preFlight }
         };
     }
+    QJsonObject MainWindow::exportInspectionFileJson(const QJsonObject& params) {
+        const QString fmt = params.value("format").toString("dmis").trimmed().toLower();
+        QString partName = params.value("partName").toString("JLS-PART-001").trimmed();
+        if (partName.isEmpty()) partName = "JLS-PART-001";
 
+        if (m_solvedFeatures.empty() && m_dmisProgram.features.empty()) {
+            return QJsonObject{
+                { "success", false },
+                { "error", "No solved or planned features exist to export." }
+            };
+        }
+
+        QString ext = ".dmis";
+        if (fmt == "pdf") ext = ".pdf";
+        else if (fmt == "qif") ext = ".qif";
+        else if (fmt == "csv") ext = ".csv";
+        else if (fmt == "html") ext = ".html";
+        else if (fmt != "dmis") {
+            return QJsonObject{
+                { "success", false },
+                { "error", "Unsupported format '" + fmt + "'. Use dmis, qif, pdf, csv, or html." }
+            };
+        }
+
+        QString filePath = params.value("filePath").toString().trimmed();
+        if (filePath.isEmpty()) {
+            QDir exportDir(QCoreApplication::applicationDirPath());
+            if (!exportDir.exists("exports")) {
+                exportDir.mkpath("exports");
+            }
+            exportDir.cd("exports");
+            filePath = exportDir.filePath(partName + ext);
+        }
+        else if (!filePath.endsWith(ext, Qt::CaseInsensitive)) {
+            filePath += ext;
+        }
+
+        const QFileInfo fi(filePath);
+        if (fi.dir().exists() == false) {
+            QDir().mkpath(fi.dir().absolutePath());
+        }
+        const QString absPath = fi.absoluteFilePath();
+
+        // 1. DMIS 5.3 (.dmis)
+        if (fmt == "dmis") {
+            if (!writeDmisProgramToFile(absPath, partName)) {
+                return QJsonObject{ { "success", false },{ "error", "Failed to write DMIS file to: " + absPath } };
+            }
+        }
+        // 2. QIF 2.1 (.qif)
+        else if (fmt == "qif") {
+            std::vector<InspectionResultItem> qifItems;
+            for (int i = 0; i < m_featureTree->topLevelItemCount(); ++i) {
+                QTreeWidgetItem* top = m_featureTree->topLevelItem(i);
+                if (top == m_activePointsGroup) continue;
+
+                const int featId = top->data(0, ROLE_FEATURE_ID).isValid() ? top->data(0, ROLE_FEATURE_ID).toInt() : i;
+                InspectionResultItem item;
+                item.featureName = top->text(0);
+                item.refId = (m_featureRefIds.count(featId) && !m_featureRefIds[featId].isEmpty())
+                    ? m_featureRefIds[featId]
+                    : ("REFID_" + QString::number(featId));
+                item.featureType = (top->text(0).contains("Circle") || top->text(0).contains("Bore") || top->text(0).contains("Cylinder") || top->text(0).contains("CYLNDR")) ? "Bore"
+                    : (top->text(0).contains("Plane") || top->text(0).contains("PLANE") ? "Plane" : "Feature");
+                item.nominalMm = top->data(0, ROLE_NOMINAL_MM).isValid() ? top->data(0, ROLE_NOMINAL_MM).toDouble() : 0.0;
+                item.actualMm = top->data(0, ROLE_ACTUAL_MM).isValid() ? top->data(0, ROLE_ACTUAL_MM).toDouble() : 0.0;
+                item.plusTolMm = top->data(0, ROLE_PLUS_TOL_MM).isValid() ? top->data(0, ROLE_PLUS_TOL_MM).toDouble() : m_defaultTolMm;
+                item.minusTolMm = top->data(0, ROLE_MINUS_TOL_MM).isValid() ? top->data(0, ROLE_MINUS_TOL_MM).toDouble() : m_defaultTolMm;
+                item.passed = !top->text(4).contains("FAIL");
+                qifItems.push_back(item);
+            }
+
+            if (!QifExporter::exportToQif(absPath, partName, qifItems)) {
+                return QJsonObject{ { "success", false },{ "error", "Failed to write QIF file to: " + absPath } };
+            }
+        }
+        // 3. PDF Inspection Certificate (.pdf)
+        else if (fmt == "pdf") {
+            QPdfWriter pdfWriter(absPath);
+            pdfWriter.setPageSize(QPageSize(QPageSize::A4));
+            pdfWriter.setPageOrientation(QPageLayout::Portrait);
+            pdfWriter.setTitle("JLS Machine LLC — Inspection Certificate");
+
+            QPainter painter(&pdfWriter);
+            if (!painter.isActive()) {
+                return QJsonObject{ { "success", false },{ "error", "Could not initialize PDF writer at: " + absPath } };
+            }
+
+            int yPos = 1200;
+            const int leftMargin = 1000;
+
+            painter.setFont(QFont("Segoe UI", 16, QFont::Bold));
+            painter.drawText(leftMargin, yPos, "JLS MACHINE LLC — INSPECTION CERTIFICATE");
+            yPos += 400;
+
+            painter.setFont(QFont("Segoe UI", 10, QFont::Normal));
+            const QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
+            painter.drawText(leftMargin, yPos, "Part / Job Number: " + partName); yPos += 250;
+            painter.drawText(leftMargin, yPos, "Inspection Date: " + timestamp); yPos += 250;
+            painter.drawText(leftMargin, yPos, QString("Stylus Effective Radius (R_eff): %1 mm").arg(m_effectiveProbeRadius, 0, 'f', 4)); yPos += 400;
+
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(QColor(30, 41, 59));
+            painter.drawRect(leftMargin, yPos, 19000, 350);
+
+            painter.setPen(Qt::white);
+            painter.setFont(QFont("Segoe UI", 9, QFont::Bold));
+            painter.drawText(leftMargin + 100, yPos + 240, "Feature / Parameter");
+            painter.drawText(leftMargin + 7000, yPos + 240, "Nominal");
+            painter.drawText(leftMargin + 10500, yPos + 240, "Actual");
+            painter.drawText(leftMargin + 14000, yPos + 240, "±Tol");
+            painter.drawText(leftMargin + 17000, yPos + 240, "Status");
+            yPos += 450;
+
+            painter.setFont(QFont("Segoe UI", 9, QFont::Normal));
+            for (int i = 0; i < m_featureTree->topLevelItemCount(); ++i) {
+                QTreeWidgetItem* top = m_featureTree->topLevelItem(i);
+                if (top == m_activePointsGroup) continue;
+
+                if (yPos > 26000) { pdfWriter.newPage(); yPos = 1200; }
+
+                const QString statusTxt = top->text(4);
+                const QColor statusCol = statusTxt.contains("FAIL") ? QColor(185, 28, 28) : QColor(21, 128, 61);
+
+                painter.setPen(QColor(15, 23, 42));
+                painter.drawText(leftMargin + 100, yPos, top->text(0));
+                painter.drawText(leftMargin + 7000, yPos, top->text(1));
+                painter.drawText(leftMargin + 10500, yPos, top->text(2));
+                painter.drawText(leftMargin + 14000, yPos, top->text(3));
+
+                painter.setPen(statusCol);
+                painter.drawText(leftMargin + 17000, yPos, statusTxt);
+                yPos += 350;
+
+                painter.setPen(QColor(100, 116, 139));
+                painter.setFont(QFont("Consolas", 8, QFont::Normal));
+                for (int c = 0; c < top->childCount(); ++c) {
+                    QTreeWidgetItem* child = top->child(c);
+                    if (yPos > 26000) { pdfWriter.newPage(); yPos = 1200; }
+                    painter.drawText(leftMargin + 300, yPos, "  ↳ " + child->text(0) + " : " + child->text(2));
+                    yPos += 280;
+                }
+                painter.setFont(QFont("Segoe UI", 9, QFont::Normal));
+                yPos += 100;
+            }
+            painter.end();
+        }
+        // 4. CSV (.csv) or HTML (.html)
+        else {
+            QFile file(absPath);
+            if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+                return QJsonObject{ { "success", false },{ "error", "Could not open file for writing: " + absPath } };
+            }
+            QTextStream out(&file);
+
+            if (fmt == "csv") {
+                out << "Feature / Parameter,Nominal,Actual,Tolerance,Deviation / Status\n";
+                for (int i = 0; i < m_featureTree->topLevelItemCount(); ++i) {
+                    QTreeWidgetItem* top = m_featureTree->topLevelItem(i);
+                    if (top == m_activePointsGroup) continue;
+                    out << "\"" << top->text(0) << "\",\"" << top->text(1) << "\",\"" << top->text(2) << "\",\"" << top->text(3) << "\",\"" << top->text(4) << "\"\n";
+                    for (int c = 0; c < top->childCount(); ++c) {
+                        QTreeWidgetItem* child = top->child(c);
+                        out << "  \"" << child->text(0) << "\",\"" << child->text(1) << "\",\"" << child->text(2) << "\",\"" << child->text(3) << "\",\"" << child->text(4) << "\"\n";
+                    }
+                }
+            }
+            else {
+                const QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
+                out << "<!DOCTYPE html><html><head><meta charset='utf-8'><title>Inspection Report - " << partName.toHtmlEscaped() << "</title></head><body>"
+                    << "<h1>JLS Machine LLC — Dimensional Inspection Report (" << partName.toHtmlEscaped() << ")</h1>"
+                    << "<p>Date: " << timestamp << " | Stylus R_eff: " << QString::number(m_effectiveProbeRadius, 'f', 4) << " mm</p>"
+                    << "<table border='1' cellpadding='6' cellspacing='0'><thead><tr>"
+                    << "<th>Feature</th><th>Nominal</th><th>Actual</th><th>±Tol</th><th>Status</th></tr></thead><tbody>";
+                for (int i = 0; i < m_featureTree->topLevelItemCount(); ++i) {
+                    QTreeWidgetItem* top = m_featureTree->topLevelItem(i);
+                    if (top == m_activePointsGroup) continue;
+                    out << "<tr><td><b>" << top->text(0).toHtmlEscaped() << "</b></td><td>" << top->text(1).toHtmlEscaped()
+                        << "</td><td>" << top->text(2).toHtmlEscaped() << "</td><td>" << top->text(3).toHtmlEscaped()
+                        << "</td><td>" << top->text(4).toHtmlEscaped() << "</td></tr>";
+                }
+                out << "</tbody></table></body></html>";
+            }
+            file.close();
+        }
+
+        statusBar()->showMessage("MCP exported " + fmt.toUpper() + " file to: " + absPath);
+
+        return QJsonObject{
+            { "success", true },
+            { "format", fmt },
+            { "partName", partName },
+            { "filePath", absPath },
+            { "solvedFeatureCount", static_cast<int>(m_solvedFeatures.size()) },
+            { "plannedFeatureCount", static_cast<int>(m_dmisProgram.features.size()) }
+        };
+    }
 } // namespace OpenCMM

@@ -54,6 +54,7 @@ namespace OpenCMM {
         QJsonObject createOfflineDmisFeatureJson(const QJsonObject& params) override;
         QJsonObject getCadFacesJson(const QJsonObject& filter = QJsonObject()) override;
         QJsonObject runDmisPlaybackJson(const QJsonObject& params = QJsonObject()) override;
+        QJsonObject exportInspectionFileJson(const QJsonObject& params) override;
 
     protected:
         void closeEvent(QCloseEvent* event) override;
@@ -106,6 +107,7 @@ namespace OpenCMM {
         void onConfigureShortcutsClicked(); // <--- Add this line
         void onRunDmisPreFlightCheckClicked();
         void onToggleMcpServerClicked();
+        void applyKeyboardShortcuts();
     
 
     private:
@@ -263,6 +265,8 @@ namespace OpenCMM {
         IMcpServerPlugin* m_mcpPlugin = nullptr;
         void updateMcpButtonStyle();
         QPushButton* m_mcpStatusBtn = nullptr;
+        
+        std::vector<QShortcut*> m_appShortcuts;
     };
 
 } // namespace OpenCMM
