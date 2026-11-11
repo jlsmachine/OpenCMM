@@ -4,7 +4,7 @@
 
 **License:** GPL-3.0-or-later
 
-This guide explains how to use OpenCMM's **Offline CAD-to-DMIS Authoring**, **3D Virtual Raycast Probing**, **Digital Twin Trajectory Playback**, and **Guided Shop-Floor Execution** workflows.
+This guide explains how to use OpenCMM's **Offline CAD-to-DMIS Authoring**, **3D Virtual Raycast Probing**, **Digital Twin Trajectory Playback**, **AI Model Context Protocol (MCP) Integration**, and **Guided Shop-Floor Execution** workflows.
 
 ## 1. Workflow Overview
 
@@ -12,11 +12,13 @@ OpenCMM supports a complete, standards-compliant metrology lifecycle whether you
 
 1. **Import & Orient CAD:** Load a customer `.step` / `.stp` model and position it inside the virtual machine volume.
 
-2. **Author Inspection Offline:** Click CAD faces to auto-sample features (`Auto-Probe CAD`) or pick individual points (`Ctrl + Left-Click`).
+2. **Author Inspection Offline:** Click CAD faces to auto-sample features (`Auto-Probe CAD`), pick individual points (`Ctrl + Left-Click`), or prompt an AI assistant via Model Context Protocol (MCP) to extract CAD faces and build inspection routines automatically.
 
-3. **Export DMIS 5.3 Program:** Save the inspection routine to a `.dmis` file complete with nominal geometry, surface normal vectors, clearance planes, and persistent QIF `QPId` identifiers.
+3. **Export DMIS 5.3 Program & Reports:** Headlessly export or save inspection routines to `.dmis`, `.qif`, `.pdf`, `.csv`, or `.html` files complete with custom metadata, professional template layouts, and Certificate of Conformance sign-off blocks.
 
 4. **Verify & Execute:** Load the `.dmis` program to run a full 3D Digital Twin trajectory simulation (`Run DMIS`) or guide a shop-floor operator point-by-point using live 3D bullseye markers and Raspberry Pi Pico 2 touch-trigger hardware.
+
+---
 
 ## 2. Loading & Orienting Your 3D STEP Model
 
@@ -50,9 +52,11 @@ In the top-right corner of the 3D viewport, use the floating **CAD DISPLAY & MAC
 
 * **CAD Trans Slider:** Adjust CAD model transparency from $0\%$ to $90\%$ so you can clearly see internal bores, deep pockets, and probe hit markers inside the part.
 
+---
+
 ## 3. Offline CAD Probing (Programming Without a CMM)
 
-You can program complete dimensional inspections directly from the 3D STEP model using two complementary methods.
+You can program complete dimensional inspections directly from the 3D STEP model using three complementary methods.
 
 ### Method A: One-Click Auto-Probe CAD Face (`Auto-Probe CAD`)
 
@@ -99,21 +103,60 @@ Best for custom point distributions, 2D edge lines, or freeform surface deviatio
 
 3. Once you have placed the desired number of hits on the feature, go to the **Measure** tab and click **Fit Plane**, **Fit Sphere**, **Fit 2D Circle**, **Fit 2D Line**, or **Surface Dev**.
 
-## 4. Exporting DMIS 5.3 Programs & Inspection Reports
+### Method C: AI Agent Integration via Model Context Protocol (MCP)
+
+OpenCMM includes a modular local MCP server plugin (`opencmm_mcp.dll`) and zero-dependency `stdio`-to-TCP bridge (`opencmm_mcp_bridge.exe`) that connects AI assistants like Claude Desktop directly to your local session on port `8765`:
+
+* **`get_cmm_status`**: Queries live DRO coordinates, units, stylus radius, and alignment state.
+* **`list_cad_faces`**: Extracts topology (`PLANE`, `CYLNDR`, `SPHERE`, `CONE`), centroids, outward normals, bore orientation (`INNER`/`OUTER`), and nominal diameters from the loaded STEP model.
+* **`create_dmis_feature`**: Queues planned offline DMIS inspection features—accepting an optional `faceIndex` to sample valid interior UV touch points automatically, plus custom per-feature tolerances (`plusTolMm`, `minusTolMm`) and Datum A/B/C tags.
+* **`run_preflight_check`**: Runs CAD collision and standoff clearance verification across all planned features.
+* **`solve_321_alignment`**: Computes and activates an orthogonal 3-2-1 Part Coordinate System (PCS) alignment from measured datums.
+* **`run_dmis_program`**: Starts, stops, or resets 3D trajectory simulation playback.
+* **`export_inspection_file`**: Headlessly exports inspection files (`.dmis`, `.qif`, `.pdf`, `.csv`, `.html`) with custom metadata and template styles.
+
+---
+
+## 4. Automated 3-2-1 Part Coordinate System (PCS) Alignment
+
+To evaluate part geometry in drawing-specified coordinates rather than Machine Coordinate System (MCS) raw axes:
+
+1. Probe or select features to serve as your primary datums:
+   * **Datum A:** Primary leveling datum (typically the top flat clamping plane with a $+Z$ normal).
+   * **Datum B:** Secondary orientation datum (typically a perpendicular side edge line or cylinder axis).
+   * **Datum C:** Tertiary origin datum (typically a bore center or corner point).
+2. Right-click any solved feature in the **Inspection Feature Tree** and choose **Set as Primary Datum A**, **Secondary Datum B**, or **Tertiary Datum C**, or use the **3-2-1 Align...** wizard on the **Home** tab.
+3. Once all three datums are assigned, OpenCMM automatically computes the orthogonal transformation matrix (`m_pcsMatrix`), renders the 3D PCS coordinate triad in the viewport, and switches the DRO to aligned PCS coordinates.
+
+---
+
+## 5. Custom Per-Feature Tolerances & Reports
+
+* **Editing Tolerances:** Right-click or select any solved feature in the **Inspection Feature Tree** and click **Edit Tol...** (or click the `±` button on the **Reporting** tab) to adjust exact nominal dimensions and asymmetric upper/lower tolerance limits (`+Tol`, `-Tol`).
+* **Professional PDF Report Templates:** When exporting inspection certificates (`Export Report` or via MCP `export_inspection_file`), you can specify template layouts (`standard`, `aerospace`, or `compact`) along with professional header metadata:
+  * Customer name and Purchase Order (PO) number.
+  * Batch, lot, or serial numbers.
+  * Quality inspector ID and Certificate of Conformance sign-off compliance blocks.
+
+---
+
+## 6. Exporting DMIS 5.3 Programs & Inspection Reports
 
 Once you have solved your features in the **Inspection Feature Tree**:
 
-1. Navigate to the **Reporting** tab (or edit any feature's nominal/tolerance first using **Edit Tol...**).
+1. Navigate to the **Reporting** tab.
 
 2. Click **Export Report**.
 
 3. Enter your **Part / Job Number** (e.g., `JLS-PART-001`).
 
-4. In the Save dialog's **Save as type** dropdown, choose from four formats:
+4. In the Save dialog's **Save as type** dropdown, choose from five formats:
 
    * **DMIS 5.3 Inspection Program (`*.dmis`)**
 
    * **QIF 2.1 Quality Information Framework (`*.qif`)**
+
+   * **PDF Printable Inspection Certificate (`*.pdf`)**
 
    * **HTML Printable Inspection Report (`*.html`)**
 
@@ -135,7 +178,9 @@ When you export as `*.dmis`, OpenCMM generates a standard DMIS 5.3 program conta
 
 * Measurement blocks (`MEAS/... ENDMES`) containing every planned touch point and surface normal (`PTMEAS/CART, X, Y, Z, I, J, K`).
 
-## 5. Loading & Executing DMIS 5.3 Programs
+---
+
+## 7. Loading & Executing DMIS 5.3 Programs
 
 You can load any `.dmis` program back into OpenCMM for offline trajectory verification or guided shop-floor inspection on the physical CMM.
 
@@ -163,7 +208,7 @@ In the 3D viewport, OpenCMM renders visual probing guides for the active feature
 
 #### Mode 1: Automated Offline Digital Twin Playback (`Run DMIS`)
 
-* Click **Run DMIS** (`▶`) on the **Home** or **CAD & Deviation** tab.
+* Click **Run DMIS** (`▶`) on the **Home** or **CAD & Deviation** tab (or invoke via MCP `run_dmis_program`).
 
 * The Digital Twin CMM animates smoothly at $30\text{ FPS}$ through the entire inspection program:
 
@@ -202,10 +247,11 @@ In the 3D viewport, OpenCMM renders visual probing guides for the active feature
 
   * As soon as the last point of the `MEAS/` block is triggered, OpenCMM automatically solves the feature in-place in the tree, plays the pass/fail chime, and advances the 3D gold target markers to the next feature in the program.
 
-## 6. Studio Appearance, Persistence & Factory Reset
+---
 
+## 8. Keyboard Shortcuts & UI Customization
+
+* **Live Keyboard Shortcuts:** OpenCMM includes fully customizable keybindings managed via **Configure Keyboard Shortcuts** (accessible by right-clicking anywhere on the Ribbon bar). Key bindings such as `Space` for `Simulate Hit`, `Ctrl+0` for `Zero Axes`, `Ctrl+U` for `Toggle Units`, and `F5` for `Run / Stop DMIS` are saved persistently in `QSettings`.
 * **Window Size & Layout Persistence:** OpenCMM automatically saves and restores your window size, monitor position, dock layout, and **Maximized** state whenever you close and reopen the application.
-
 * **Dark & Light Themes:** Open **Settings...** (`⚙`) on the **Home** tab and toggle **Enable Dark Metrology Theme** to switch all toolbars, DRO readouts, feature trees, floating HUD controls, and the 3D OpenCASCADE background between Dark and Light modes.
-
 * **Reset to Factory Settings:** Inside **Settings...**, click **Reset to Factory Settings** in the bottom-left corner to clear all stored `QSettings` preferences, reset axis scales/polarities, restore default tolerances, and return the Digital Twin to the default moving-bridge CMM.
