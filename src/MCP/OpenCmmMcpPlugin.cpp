@@ -473,6 +473,36 @@ namespace OpenCMM {
                 { "required", QJsonArray{ "calloutType", "targetFeatureId", "toleranceMm" } }
             } }
             });
+        tools.append(QJsonObject{
+            { "name", "reverse_engineer_part" },
+            { "description", "Reconstruct a 3D CAD solid (.step) or 2D CAD profile (.dxf) from solved CMM features and probe hits, and optionally load the reconstructed model into the 3D viewport." },
+            { "inputSchema", QJsonObject{
+                { "type", "object" },
+                { "properties", QJsonObject{
+                    { "mode", QJsonObject{
+                        { "type", "string" },
+                        { "description", "PRISMATIC_SOLID (extruded plate with boolean holes), PRIMITIVES_COMPOUND (individual 3D surfaces), or DXF_2D_PROFILE" }
+                    } },
+                    { "filePath", QJsonObject{
+                        { "type", "string" },
+                        { "description", "Output .step or .dxf file path" }
+                    } },
+                    { "thicknessMm", QJsonObject{
+                        { "type", "number" },
+                        { "description", "Part Z thickness in mm for PRISMATIC_SOLID (default 15.0)" }
+                    } },
+                    { "edgeMarginMm", QJsonObject{
+                        { "type", "number" },
+                        { "description", "Outer stock margin around outer features in mm when perimeter planes are not all probed (default 10.0)" }
+                    } },
+                    { "loadIntoViewport", QJsonObject{
+                        { "type", "boolean" },
+                        { "description", "Display the newly reconstructed 3D solid in the OpenCMM viewport (default true)" }
+                    } }
+                } },
+                { "required", QJsonArray{ "filePath" } }
+            } }
+            });
         return QJsonObject{ { "tools", tools } };
     }
 
@@ -515,6 +545,12 @@ namespace OpenCMM {
         }
         else if (toolName == "evaluate_gdt_callout") {
             payload = d->m_bridge->evaluateGdtCalloutJson(args);
+        }
+        else if (toolName == "evaluate_gdt_callout") {
+            payload = d->m_bridge->evaluateGdtCalloutJson(args);
+        }
+        else if (toolName == "reverse_engineer_part") {
+            payload = d->m_bridge->reverseEngineerPartJson(args);
         }
         else {
             payload["error"] = "Unknown tool: " + toolName;

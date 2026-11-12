@@ -57,6 +57,7 @@ namespace OpenCMM {
         QJsonObject exportInspectionFileJson(const QJsonObject& params) override;
         QJsonObject solve321AlignmentJson(const QJsonObject& params) override;
         QJsonObject evaluateGdtCalloutJson(const QJsonObject& params) override;
+        QJsonObject reverseEngineerPartJson(const QJsonObject& params) override;
 
     protected:
         void closeEvent(QCloseEvent* event) override;
@@ -291,6 +292,7 @@ namespace OpenCMM {
         QPushButton* m_promptAutoCameraBtn = nullptr;
         bool m_autoCameraFocusEnabled = true;
         void onEvaluateGdtCalloutClicked();
+        void onReverseEngineerPartClicked();
     };
 
 } // namespace OpenCMM

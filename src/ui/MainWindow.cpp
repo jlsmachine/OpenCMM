@@ -81,6 +81,22 @@
 #include <gp_Pnt2d.hxx>
 #include <QToolButton>
 #include <QAbstractButton>
+#include <STEPControl_Writer.hxx>
+#include <STEPControl_StepModelType.hxx>
+#include <BRepPrimAPI_MakeBox.hxx>
+#include <BRepPrimAPI_MakeCylinder.hxx>
+#include <BRepPrimAPI_MakeSphere.hxx>
+#include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepBuilderAPI_MakeWire.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepAlgoAPI_Cut.hxx>
+#include <BRepAlgoAPI_Section.hxx>
+#include <TopoDS_Compound.hxx>
+#include <BRep_Builder.hxx>
+#include <gp_Pln.hxx>
+#include <gp_Circ.hxx>
+#include <gp_Ax2.hxx>
+#include <QApplication>
 
 namespace OpenCMM {
 
@@ -215,12 +231,28 @@ namespace OpenCMM {
     MainWindow::~MainWindow() = default;
 
     void MainWindow::setupUi() {
+        const QString tooltipStyle =
+            "QToolTip { "
+            "background-color: #1e293b; "
+            "color: #f8fafc; "
+            "border: 1px solid #61afef; "
+            "border-radius: 4px; "
+            "padding: 4px 8px; "
+            "font-size: 11px; "
+            "font-weight: bold; "
+            "}";
+
+        if (qApp) {
+            qApp->setStyleSheet(tooltipStyle);
+        }
+
         setStyleSheet(
             "QMainWindow { background-color: #1e2227; color: #e0e0e0; }"
             "QDockWidget { color: #ffffff; font-weight: bold; }"
             "QDockWidget::title { background: #282c34; padding: 6px; border: 1px solid #3a3f4b; }"
             "QGroupBox { border: 1px solid #3a3f4b; border-radius: 4px; margin-top: 10px; padding-top: 12px; color: #abb2bf; font-weight: bold; }"
             "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }"
+            + tooltipStyle
         );
 
         // Keep the entire left column dedicated to the left docks so the bottom
@@ -939,12 +971,19 @@ namespace OpenCMM {
         auto* probeGroup = new QGroupBox("ACTIVE PROBE CALIBRATION", m_droContainer);
         auto* probeLayout = new QVBoxLayout(probeGroup);
         probeLayout->setContentsMargins(6, 6, 6, 6);
-        probeLayout->setSpacing(2);
+        probeLayout->setSpacing(4);
 
         m_probeStatusBadge = new QLabel("UNINITIALIZED (Nominal Default)", probeGroup);
         m_probeDiamLabel = new QLabel("Effective Tip Ø: 3.0000 mm", probeGroup);
         m_probeRadLabel = new QLabel("Effective Radius (R_eff): 1.5000 mm", probeGroup);
         m_probeLobingLabel = new QLabel("Sphericity / Lobing: --", probeGroup);
+
+        const QString probeMetricStyle = m_isDarkMode
+            ? "color: #e2e8f0; font-size: 12px; font-weight: bold; font-family: 'Consolas', monospace;"
+            : "color: #1e293b; font-size: 12px; font-weight: bold; font-family: 'Consolas', monospace;";
+        m_probeDiamLabel->setStyleSheet(probeMetricStyle);
+        m_probeRadLabel->setStyleSheet(probeMetricStyle);
+        m_probeLobingLabel->setStyleSheet(probeMetricStyle);
 
         probeLayout->addWidget(m_probeStatusBadge);
         probeLayout->addWidget(m_probeDiamLabel);
@@ -993,6 +1032,17 @@ namespace OpenCMM {
         connect(editTolQuickBtn, &QPushButton::clicked, this, &MainWindow::onEditToleranceClicked);
         treeActionRow->addWidget(editTolQuickBtn);
         treeActionRow->addStretch(1);
+
+        auto* revEngBtn = new QPushButton("🧊 Reverse Eng (Ctrl+R)", m_treeContainer);
+        revEngBtn->setCursor(Qt::PointingHandCursor);
+        revEngBtn->setToolTip("Reconstruct a 3D STEP solid or 2D DXF sketch from your probed features and points");
+        revEngBtn->setStyleSheet(
+            "QPushButton { background-color: #14532d; color: #86efac; border: 1px solid #22c55e; "
+            "border-radius: 4px; padding: 4px 8px; font-size: 11px; font-weight: bold; }"
+            "QPushButton:hover { background-color: #166534; color: #ffffff; }"
+        );
+        connect(revEngBtn, &QPushButton::clicked, this, &MainWindow::onReverseEngineerPartClicked);
+        treeActionRow->addWidget(revEngBtn);
 
         dockLayout->addLayout(treeActionRow);
 
@@ -1373,6 +1423,13 @@ namespace OpenCMM {
 
         m_probeDiamLabel->setText(QString("Effective Tip Ø: %1%2").arg(toDisplayUnit(m_effectiveProbeRadius * 2.0, m_unitSystem), 0, 'f', decimals).arg(unitStr));
         m_probeRadLabel->setText(QString("Effective Radius (R_eff): %1%2").arg(toDisplayUnit(m_effectiveProbeRadius, m_unitSystem), 0, 'f', decimals).arg(unitStr));
+        
+        const QString probeMetricStyle = m_isDarkMode
+            ? "color: #e2e8f0; font-size: 12px; font-weight: bold; font-family: 'Consolas', monospace;"
+            : "color: #1e293b; font-size: 12px; font-weight: bold; font-family: 'Consolas', monospace;";
+        if (m_probeDiamLabel) m_probeDiamLabel->setStyleSheet(probeMetricStyle);
+        if (m_probeRadLabel) m_probeRadLabel->setStyleSheet(probeMetricStyle);
+        if (m_probeLobingLabel) m_probeLobingLabel->setStyleSheet(probeMetricStyle);
     }
 
     void MainWindow::onConnectionChanged(bool connected, const QString& message) {
@@ -4202,7 +4259,11 @@ namespace OpenCMM {
                 "QGroupBox { border: 1px solid #3a3f4b; border-radius: 4px; margin-top: 10px; padding-top: 12px; color: #abb2bf; font-weight: bold; }"
                 "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }"
             );
-
+            if (qApp) {
+                qApp->setStyleSheet(dark
+                    ? "QToolTip { background-color: #1e293b; color: #f8fafc; border: 1px solid #61afef; border-radius: 4px; padding: 4px 8px; font-size: 11px; font-weight: bold; }"
+                    : "QToolTip { background-color: #ffffff; color: #0f172a; border: 1px solid #0284c7; border-radius: 4px; padding: 4px 8px; font-size: 11px; font-weight: bold; }");
+            }
             if (m_droContainer) m_droContainer->setStyleSheet("background-color: #181a1f;");
             if (m_treeContainer) m_treeContainer->setStyleSheet("background-color: #181a1f;");
             if (m_collisionContainer) m_collisionContainer->setStyleSheet("background-color: #181a1f;");
@@ -4612,6 +4673,7 @@ namespace OpenCMM {
         bindAction("sc_guided_probe", "F6", &MainWindow::onStartManualGuidedInspectionClicked);
         bindAction("sc_undo_hit", "Ctrl+Z", &MainWindow::onUndoLastProbeHitClicked);
         bindAction("sc_gdt_callout", "Ctrl+G", &MainWindow::onEvaluateGdtCalloutClicked);
+        bindAction("sc_reverse_eng", "Ctrl+R", &MainWindow::onReverseEngineerPartClicked);
 
         // Toggle Collision & Clearance Log dock
         const QString colSeq = settings.value("sc_toggle_collision", "Ctrl+Shift+L").toString().trimmed();
@@ -6691,6 +6753,452 @@ namespace OpenCMM {
 
         evaluateGdtCalloutJson(params);
     }
+    QJsonObject MainWindow::reverseEngineerPartJson(const QJsonObject& params) {
+        if (m_solvedFeatures.empty() && m_recordedHits.empty()) {
+            return QJsonObject{
+                { "success", false },
+                { "error", "No solved features or recorded probe hits available to reconstruct." }
+            };
+        }
 
+        const QString mode = params.value("mode").toString("PRISMATIC_SOLID").trimmed().toUpper();
+        QString filePath = params.value("filePath").toString().trimmed();
+        const double userThicknessMm = std::max(1.0, params.value("thicknessMm").toDouble(15.0));
+        const double edgeMarginMm = std::max(0.0, params.value("edgeMarginMm").toDouble(10.0));
+        const bool loadIntoViewport = params.value("loadIntoViewport").toBool(true);
+        const bool usePcs = params.value("usePcsCoordinates").toBool(m_isPartAligned);
+
+        if (filePath.isEmpty()) {
+            return QJsonObject{
+                { "success", false },
+                { "error", "Output filePath is required." }
+            };
+        }
+
+        Eigen::Matrix3d rotPcs = Eigen::Matrix3d::Identity();
+        if (usePcs && m_isPartAligned) {
+            rotPcs = m_pcsMatrix.block<3, 3>(0, 0);
+        }
+
+        auto xformPt = [&](const Eigen::Vector3d& p) -> Eigen::Vector3d {
+            return (usePcs && m_isPartAligned) ? MetrologyMath::transformPoint(p, m_pcsMatrix) : p;
+            };
+        auto xformVec = [&](const Eigen::Vector3d& v) -> Eigen::Vector3d {
+            Eigen::Vector3d r = rotPcs * v;
+            if (r.norm() > 1e-9) r.normalize();
+            return r;
+            };
+
+        // ---------------------------------------------------------------------
+        // MODE 1: 2D DXF SKETCH EXPORT
+        // ---------------------------------------------------------------------
+        if (mode == "DXF_2D_PROFILE" || filePath.endsWith(".dxf", Qt::CaseInsensitive)) {
+            if (!filePath.endsWith(".dxf", Qt::CaseInsensitive)) {
+                filePath += ".dxf";
+            }
+
+            QFile dxfFile(filePath);
+            if (!dxfFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
+                return QJsonObject{
+                    { "success", false },
+                    { "error", "Failed to open DXF file for writing: " + filePath }
+                };
+            }
+
+            const double scale = (m_unitSystem == UnitSystem::Millimeters) ? 1.0 : (1.0 / 25.4);
+            QTextStream out(&dxfFile);
+            out.setRealNumberNotation(QTextStream::FixedNotation);
+            out.setRealNumberPrecision(6);
+
+            out << "0\nSECTION\n2\nENTITIES\n";
+
+            int circleCount = 0;
+            int lineCount = 0;
+            int pointCount = 0;
+
+            for (const auto& mf : m_solvedFeatures) {
+                const Eigen::Vector3d loc = xformPt(mf.location);
+                const Eigen::Vector3d vec = xformVec(mf.primaryVector);
+
+                if ((mf.kind == FeatureKind::Circle2D || mf.kind == FeatureKind::Sphere3D)
+                    && mf.diameter > 1e-4) {
+                    const double rad = (mf.diameter * 0.5) * scale;
+                    out << "0\nCIRCLE\n8\nSOLVED_HOLES\n"
+                        << "10\n" << (loc.x() * scale) << "\n"
+                        << "20\n" << (loc.y() * scale) << "\n"
+                        << "30\n" << (loc.z() * scale) << "\n"
+                        << "40\n" << rad << "\n";
+                    ++circleCount;
+                }
+                else if (mf.kind == FeatureKind::Line2D || mf.kind == FeatureKind::Plane3D) {
+                    Eigen::Vector3d edgeDir = (mf.kind == FeatureKind::Plane3D)
+                        ? Eigen::Vector3d(-vec.y(), vec.x(), 0.0)
+                        : Eigen::Vector3d(vec.x(), vec.y(), 0.0);
+                    if (edgeDir.norm() > 1e-6) {
+                        edgeDir.normalize();
+                        double halfLen = 25.0;
+                        if (m_featureDmisHits.count(mf.id) && m_featureDmisHits[mf.id].size() >= 2) {
+                            double minP = 1e18, maxP = -1e18;
+                            for (const auto& h : m_featureDmisHits[mf.id]) {
+                                const double proj = (xformPt(h.surfacePt) - loc).dot(edgeDir);
+                                minP = std::min(minP, proj);
+                                maxP = std::max(maxP, proj);
+                            }
+                            if (maxP > minP + 1.0) halfLen = 0.5 * (maxP - minP);
+                        }
+                        const Eigen::Vector3d p1 = loc - edgeDir * halfLen;
+                        const Eigen::Vector3d p2 = loc + edgeDir * halfLen;
+                        out << "0\nLINE\n8\nSOLVED_EDGES\n"
+                            << "10\n" << (p1.x() * scale) << "\n"
+                            << "20\n" << (p1.y() * scale) << "\n"
+                            << "30\n" << (p1.z() * scale) << "\n"
+                            << "11\n" << (p2.x() * scale) << "\n"
+                            << "21\n" << (p2.y() * scale) << "\n"
+                            << "31\n" << (p2.z() * scale) << "\n";
+                        ++lineCount;
+                    }
+                }
+
+                if (m_featureDmisHits.count(mf.id)) {
+                    for (const auto& h : m_featureDmisHits[mf.id]) {
+                        const Eigen::Vector3d sp = xformPt(h.surfacePt);
+                        out << "0\nPOINT\n8\nPROBE_HITS\n"
+                            << "10\n" << (sp.x() * scale) << "\n"
+                            << "20\n" << (sp.y() * scale) << "\n"
+                            << "30\n" << (sp.z() * scale) << "\n";
+                        ++pointCount;
+                    }
+                }
+            }
+
+            for (const auto& rawPt : m_recordedHits) {
+                const Eigen::Vector3d sp = xformPt(rawPt);
+                out << "0\nPOINT\n8\nACTIVE_BUFFER_HITS\n"
+                    << "10\n" << (sp.x() * scale) << "\n"
+                    << "20\n" << (sp.y() * scale) << "\n"
+                    << "30\n" << (sp.z() * scale) << "\n";
+                ++pointCount;
+            }
+
+            out << "0\nENDSEC\n0\nEOF\n";
+            dxfFile.close();
+
+            statusBar()->showMessage(QString("Exported 2D DXF (%1 circles, %2 lines, %3 points) -> %4")
+                .arg(circleCount).arg(lineCount).arg(pointCount).arg(filePath));
+
+            return QJsonObject{
+                { "success", true },
+                { "mode", "DXF_2D_PROFILE" },
+                { "filePath", filePath },
+                { "circlesExported", circleCount },
+                { "linesExported", lineCount },
+                { "pointsExported", pointCount }
+            };
+        }
+
+        // ---------------------------------------------------------------------
+        // MODE 2 & 3: 3D STEP RECONSTRUCTION
+        // ---------------------------------------------------------------------
+        if (!filePath.endsWith(".step", Qt::CaseInsensitive) && !filePath.endsWith(".stp", Qt::CaseInsensitive)) {
+            filePath += ".step";
+        }
+
+        TopoDS_Shape resultShape;
+        int holesCut = 0;
+        int primitivesBuilt = 0;
+
+        if (mode == "PRISMATIC_SOLID") {
+            double minX = 1e18, minY = 1e18, minZ = 1e18;
+            double maxX = -1e18, maxY = -1e18, maxZ = -1e18;
+            bool hasTopPlaneZ = false;
+            double topPlaneZ = 0.0;
+
+            auto expandBbox = [&](const Eigen::Vector3d& pt, double rad) {
+                minX = std::min(minX, pt.x() - rad);
+                maxX = std::max(maxX, pt.x() + rad);
+                minY = std::min(minY, pt.y() - rad);
+                maxY = std::max(maxY, pt.y() + rad);
+                minZ = std::min(minZ, pt.z());
+                maxZ = std::max(maxZ, pt.z());
+                };
+
+            bool hasWestWall = false, hasEastWall = false, hasSouthWall = false, hasNorthWall = false;
+            double westX = 0.0, eastX = 0.0, southY = 0.0, northY = 0.0;
+
+            for (const auto& mf : m_solvedFeatures) {
+                const double r = (mf.diameter > 0.0) ? (mf.diameter * 0.5) : 0.0;
+                expandBbox(mf.location, r);
+
+                if (mf.kind == FeatureKind::Plane3D) {
+                    const Eigen::Vector3d n = mf.primaryVector.normalized();
+                    if (std::abs(n.z()) > 0.85) {
+                        if (!hasTopPlaneZ || mf.location.z() > topPlaneZ) {
+                            topPlaneZ = mf.location.z();
+                            hasTopPlaneZ = true;
+                        }
+                    }
+                    else if (std::abs(n.x()) > 0.85) {
+                        if (!hasWestWall || mf.location.x() < westX) { westX = mf.location.x(); hasWestWall = true; }
+                        if (!hasEastWall || mf.location.x() > eastX) { eastX = mf.location.x(); hasEastWall = true; }
+                    }
+                    else if (std::abs(n.y()) > 0.85) {
+                        if (!hasSouthWall || mf.location.y() < southY) { southY = mf.location.y(); hasSouthWall = true; }
+                        if (!hasNorthWall || mf.location.y() > northY) { northY = mf.location.y(); hasNorthWall = true; }
+                    }
+                }
+
+                if (m_featureDmisHits.count(mf.id)) {
+                    for (const auto& h : m_featureDmisHits[mf.id]) {
+                        expandBbox(h.surfacePt, 0.0);
+                    }
+                }
+            }
+
+            for (const auto& rawPt : m_recordedHits) {
+                expandBbox(rawPt, 0.0);
+            }
+
+            if (minX > maxX) {
+                minX = -50.0; maxX = 50.0;
+                minY = -50.0; maxY = 50.0;
+                minZ = 0.0;   maxZ = userThicknessMm;
+            }
+
+            const double x0 = (hasWestWall && hasEastWall && (eastX - westX > 5.0)) ? westX : (minX - edgeMarginMm);
+            const double x1 = (hasWestWall && hasEastWall && (eastX - westX > 5.0)) ? eastX : (maxX + edgeMarginMm);
+            const double y0 = (hasSouthWall && hasNorthWall && (northY - southY > 5.0)) ? southY : (minY - edgeMarginMm);
+            const double y1 = (hasSouthWall && hasNorthWall && (northY - southY > 5.0)) ? northY : (maxY + edgeMarginMm);
+
+            const double zTop = hasTopPlaneZ ? topPlaneZ : maxZ;
+            const double zBot = zTop - userThicknessMm;
+
+            const double dx = std::max(5.0, x1 - x0);
+            const double dy = std::max(5.0, y1 - y0);
+            const double dz = std::max(1.0, zTop - zBot);
+
+            TopoDS_Shape baseStock = BRepPrimAPI_MakeBox(gp_Pnt(x0, y0, zBot), dx, dy, dz).Shape();
+
+            for (const auto& mf : m_solvedFeatures) {
+                if (mf.kind == FeatureKind::Circle2D && mf.diameter > 0.2) {
+                    const double rad = mf.diameter * 0.5;
+                    Eigen::Vector3d axis = mf.primaryVector;
+                    if (axis.norm() < 1e-6) {
+                        axis = Eigen::Vector3d(0.0, 0.0, 1.0);
+                    }
+                    else {
+                        axis.normalize();
+                    }
+
+                    const double cutLen = (dx + dy + dz) * 2.0;
+                    const Eigen::Vector3d startPt = mf.location - axis * (cutLen * 0.5);
+                    gp_Ax2 cylAx(
+                        gp_Pnt(startPt.x(), startPt.y(), startPt.z()),
+                        gp_Dir(axis.x(), axis.y(), axis.z())
+                    );
+                    TopoDS_Shape toolCyl = BRepPrimAPI_MakeCylinder(cylAx, rad, cutLen).Shape();
+
+                    BRepAlgoAPI_Cut cutter(baseStock, toolCyl);
+                    if (cutter.IsDone() && !cutter.Shape().IsNull()) {
+                        baseStock = cutter.Shape();
+                        ++holesCut;
+                    }
+                }
+            }
+
+            resultShape = baseStock;
+            primitivesBuilt = 1 + holesCut;
+        }
+        else {
+            BRep_Builder builder;
+            TopoDS_Compound comp;
+            builder.MakeCompound(comp);
+
+            for (const auto& mf : m_solvedFeatures) {
+                Eigen::Vector3d vec = mf.primaryVector;
+                if (vec.norm() < 1e-6) vec = Eigen::Vector3d(0.0, 0.0, 1.0);
+                else vec.normalize();
+
+                const gp_Pnt loc(mf.location.x(), mf.location.y(), mf.location.z());
+                const gp_Dir dir(vec.x(), vec.y(), vec.z());
+
+                if (mf.kind == FeatureKind::Plane3D) {
+                    gp_Pln pln(loc, dir);
+                    TopoDS_Face face = BRepBuilderAPI_MakeFace(pln, -35.0, 35.0, -35.0, 35.0);
+                    if (!face.IsNull()) {
+                        builder.Add(comp, face);
+                        ++primitivesBuilt;
+                    }
+                }
+                else if (mf.kind == FeatureKind::Circle2D && mf.diameter > 0.1) {
+                    const double rad = mf.diameter * 0.5;
+                    const double partH = std::max(2.0, userThicknessMm);
+                    const gp_Pnt basePt(
+                        loc.X() - dir.X() * partH * 0.5,
+                        loc.Y() - dir.Y() * partH * 0.5,
+                        loc.Z() - dir.Z() * partH * 0.5
+                    );
+                    gp_Ax2 ax(basePt, dir);
+                    TopoDS_Shape cyl = BRepPrimAPI_MakeCylinder(ax, rad, partH).Shape();
+                    if (!cyl.IsNull()) {
+                        builder.Add(comp, cyl);
+                        ++primitivesBuilt;
+                    }
+                }
+                else if (mf.kind == FeatureKind::Sphere3D && mf.diameter > 0.1) {
+                    TopoDS_Shape sph = BRepPrimAPI_MakeSphere(loc, mf.diameter * 0.5).Shape();
+                    if (!sph.IsNull()) {
+                        builder.Add(comp, sph);
+                        ++primitivesBuilt;
+                    }
+                }
+            }
+            resultShape = comp;
+        }
+
+        if (resultShape.IsNull()) {
+            return QJsonObject{
+                { "success", false },
+                { "error", "Failed to construct valid 3D B-Rep geometry from current features." }
+            };
+        }
+
+        STEPControl_Writer writer;
+        writer.Transfer(resultShape, STEPControl_AsIs);
+        const IFSelect_ReturnStatus status = writer.Write(filePath.toUtf8().constData());
+        if (status != IFSelect_RetDone) {
+            return QJsonObject{
+                { "success", false },
+                { "error", "OpenCASCADE STEPControl_Writer failed to write: " + filePath }
+            };
+        }
+
+        if (loadIntoViewport && m_viewport) {
+            m_viewport->loadStepFile(filePath);
+        }
+
+        statusBar()->showMessage(QString("Reverse Engineered %1 (%2 bored features cut) -> %3")
+            .arg(mode).arg(holesCut).arg(filePath));
+
+        return QJsonObject{
+            { "success", true },
+            { "mode", mode },
+            { "filePath", filePath },
+            { "holesCut", holesCut },
+            { "primitivesBuilt", primitivesBuilt },
+            { "loadedIntoViewport", loadIntoViewport }
+        };
+    }
+
+    void MainWindow::onReverseEngineerPartClicked() {
+        if (m_solvedFeatures.empty() && m_recordedHits.empty()) {
+            QMessageBox::information(
+                this,
+                "No Probed Features",
+                "Probe and solve at least one feature (planes, circles, cylinders, or lines) before running Reverse Engineering."
+            );
+            return;
+        }
+
+        const int decimals = (m_unitSystem == UnitSystem::Millimeters) ? 3 : 4;
+        const QString unitStr = (m_unitSystem == UnitSystem::Millimeters) ? " mm" : " in";
+        const double toDisp = (m_unitSystem == UnitSystem::Millimeters) ? 1.0 : (1.0 / 25.4);
+        const double toMm = (m_unitSystem == UnitSystem::Millimeters) ? 1.0 : 25.4;
+
+        QDialog dlg(this);
+        dlg.setWindowTitle("Reverse Engineering & CAD Reconstruction Studio");
+        dlg.setMinimumWidth(460);
+
+        auto* mainLay = new QVBoxLayout(&dlg);
+        auto* summaryLbl = new QLabel(
+            QString("Solved Features Available: <b>%1</b> &nbsp;|&nbsp; Active Buffer Points: <b>%2</b>")
+            .arg(m_solvedFeatures.size())
+            .arg(m_recordedHits.size()),
+            &dlg
+        );
+        summaryLbl->setStyleSheet("color: #86efac; font-size: 12px; padding: 4px 0;");
+        mainLay->addWidget(summaryLbl);
+
+        auto* form = new QFormLayout();
+        form->setSpacing(8);
+
+        auto* modeCombo = new QComboBox(&dlg);
+        modeCombo->addItem("🧊 2.5D Prismatic Solid (.STEP — Stock Block + Boolean Bores)", "PRISMATIC_SOLID");
+        modeCombo->addItem("📐 2D Profile Sketch (.DXF — Circles, Edges & Point Cloud for Fusion)", "DXF_2D_PROFILE");
+        modeCombo->addItem("🧩 3D Solved Surface Compound (.STEP — Individual Fitted Primitives)", "PRIMITIVES_COMPOUND");
+
+        auto* thicknessSpin = new QDoubleSpinBox(&dlg);
+        thicknessSpin->setRange(0.5, 2000.0);
+        thicknessSpin->setDecimals(decimals);
+        thicknessSpin->setSuffix(unitStr);
+        thicknessSpin->setValue(15.0 * toDisp);
+
+        auto* marginSpin = new QDoubleSpinBox(&dlg);
+        marginSpin->setRange(0.0, 500.0);
+        marginSpin->setDecimals(decimals);
+        marginSpin->setSuffix(unitStr);
+        marginSpin->setValue(10.0 * toDisp);
+        marginSpin->setToolTip("Margin added around the outer hole pattern if you did not probe all 4 outer perimeter walls");
+
+        auto* loadInViewChk = new QCheckBox("Immediately load reconstructed 3D STEP model into viewport", &dlg);
+        loadInViewChk->setChecked(true);
+
+        auto* usePcsChk = new QCheckBox("Export DXF in active 3-2-1 Part Coordinate System (PCS)", &dlg);
+        usePcsChk->setChecked(m_isPartAligned);
+        usePcsChk->setEnabled(m_isPartAligned);
+
+        connect(modeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), &dlg, [&](int) {
+            const QString m = modeCombo->currentData().toString();
+            const bool isDxf = (m == "DXF_2D_PROFILE");
+            thicknessSpin->setEnabled(!isDxf);
+            marginSpin->setEnabled(m == "PRISMATIC_SOLID");
+            loadInViewChk->setEnabled(!isDxf);
+            });
+
+        form->addRow("Reconstruction Mode:", modeCombo);
+        form->addRow("Part Z Thickness:", thicknessSpin);
+        form->addRow("Outer Stock Margin:", marginSpin);
+        form->addRow("", loadInViewChk);
+        form->addRow("", usePcsChk);
+
+        mainLay->addLayout(form);
+
+        auto* btnBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+        btnBox->button(QDialogButtonBox::Ok)->setText("Generate & Save CAD...");
+        connect(btnBox, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+        connect(btnBox, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+        mainLay->addWidget(btnBox);
+
+        if (dlg.exec() != QDialog::Accepted) return;
+
+        const QString selectedMode = modeCombo->currentData().toString();
+        const bool isDxf = (selectedMode == "DXF_2D_PROFILE");
+
+        const QString defaultFile = isDxf ? "reverse_engineered_profile.dxf" : "reverse_engineered_part.step";
+        const QString filter = isDxf
+            ? "AutoCAD 2D DXF Sketch (*.dxf)"
+            : "STEP 3D CAD Model (*.step *.stp)";
+
+        const QString savePath = QFileDialog::getSaveFileName(
+            this,
+            "Save Reverse-Engineered CAD Model",
+            defaultFile,
+            filter
+        );
+        if (savePath.isEmpty()) return;
+
+        QJsonObject params{
+            { "mode", selectedMode },
+            { "filePath", savePath },
+            { "thicknessMm", thicknessSpin->value() * toMm },
+            { "edgeMarginMm", marginSpin->value() * toMm },
+            { "loadIntoViewport", !isDxf && loadInViewChk->isChecked() },
+            { "usePcsCoordinates", usePcsChk->isChecked() }
+        };
+
+        const QJsonObject res = reverseEngineerPartJson(params);
+        if (!res.value("success").toBool()) {
+            QMessageBox::warning(this, "Reverse Engineering Error", res.value("error").toString());
+        }
+    }
 
 } // namespace OpenCMM
