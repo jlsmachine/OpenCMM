@@ -97,6 +97,7 @@
 #include <gp_Circ.hxx>
 #include <gp_Ax2.hxx>
 #include <QApplication>
+#include <BRepPrimAPI_MakePrism.hxx>
 
 namespace OpenCMM {
 
@@ -573,7 +574,7 @@ namespace OpenCMM {
     void MainWindow::setupToolbar() {
         auto* ribbonTabs = new QTabWidget(this);
         ribbonTabs->setObjectName("RibbonBar");
-        ribbonTabs->setFixedHeight(116);
+        ribbonTabs->setFixedHeight(126);
 
         ribbonTabs->setContextMenuPolicy(Qt::CustomContextMenu);
         connect(ribbonTabs, &QTabWidget::customContextMenuRequested,
@@ -869,6 +870,12 @@ namespace OpenCMM {
             connect(btn, &QPushButton::clicked, this, &MainWindow::onFitLineClicked);
             return btn;
         }
+        if (cmdId == "meas_fit_slot") {
+            auto* btn = createRibbonButton("💊", "Fit 2D Slot", "#2b6cb0", "#61afef", "#ffffff");
+            btn->setToolTip("Solve a 2D machined obround slot (width, total length, center, orientation) from 5+ hits");
+            connect(btn, &QPushButton::clicked, this, &MainWindow::onFitSlotClicked);
+            return btn;
+        }
         if (cmdId == "meas_relation") {
             auto* btn = createRibbonButton("↔", "Distance / ∠", "#2f855a", "#98c379", "#ffffff");
             connect(btn, &QPushButton::clicked, this, &MainWindow::onMeasureRelationClicked);
@@ -889,6 +896,12 @@ namespace OpenCMM {
         if (cmdId == "cad_surface_dev") {
             auto* btn = createRibbonButton("🌡", "Surface Dev", "#0d9488", "#4fd1c5", "#ffffff");
             connect(btn, &QPushButton::clicked, this, &MainWindow::onEvaluateCadDeviationClicked);
+            return btn;
+        }
+        if (cmdId == "cad_reverse_eng") {
+            auto* btn = createRibbonButton("🧊", "Reverse Eng", "#14532d", "#4ade80", "#ffffff");
+            btn->setToolTip("Reconstruct a 3D STEP solid or 2D DXF sketch from probed features (Ctrl+R)");
+            connect(btn, &QPushButton::clicked, this, &MainWindow::onReverseEngineerPartClicked);
             return btn;
         }
 
@@ -3627,6 +3640,270 @@ namespace OpenCMM {
             .arg(unitStr));
     }
 
+    namespace {
+
+        void buildSlotOrthoBasis(const Eigen::Vector3d& axis, Eigen::Vector3d& uAx, Eigen::Vector3d& vAx) {
+            const Eigen::Vector3d ref = (std::abs(axis.x()) < 0.85)
+                ? Eigen::Vector3d(1.0, 0.0, 0.0)
+                : Eigen::Vector3d(0.0, 1.0, 0.0);
+            uAx = axis.cross(ref).normalized();
+            vAx = axis.cross(uAx).normalized();
+        }
+
+        struct Slot2DFitResult {
+            bool success = false;
+            Eigen::Vector3d center = Eigen::Vector3d::Zero();
+            Eigen::Vector3d normal = Eigen::Vector3d(0.0, 0.0, 1.0);
+            Eigen::Vector3d majorAxis = Eigen::Vector3d(1.0, 0.0, 0.0);
+            double rubyRadius = 0.0;
+            double spineLength = 0.0;
+            double formError = 0.0;
+        };
+
+        Slot2DFitResult fitObroundSlot2D(const std::vector<Eigen::Vector3d>& pts, const Eigen::Vector3d& planeNormal) {
+            Slot2DFitResult res;
+            if (pts.size() < 5) return res;
+
+            Eigen::Vector3d n = planeNormal.normalized();
+            Eigen::Vector3d uAx, vAx;
+            buildSlotOrthoBasis(n, uAx, vAx);
+
+            Eigen::Vector3d mean3D = Eigen::Vector3d::Zero();
+            for (const auto& p : pts) mean3D += p;
+            mean3D /= static_cast<double>(pts.size());
+            const double meanW = mean3D.dot(n);
+
+            std::vector<Eigen::Vector2d> uv(pts.size());
+            Eigen::Vector2d mean2D = Eigen::Vector2d::Zero();
+            for (size_t i = 0; i < pts.size(); ++i) {
+                uv[i] = Eigen::Vector2d(pts[i].dot(uAx), pts[i].dot(vAx));
+                mean2D += uv[i];
+            }
+            mean2D /= static_cast<double>(pts.size());
+
+            Eigen::Matrix2d cov2 = Eigen::Matrix2d::Zero();
+            for (const auto& q : uv) {
+                const Eigen::Vector2d d = q - mean2D;
+                cov2 += d * d.transpose();
+            }
+            Eigen::SelfAdjointEigenSolver<Eigen::Matrix2d> eig2(cov2);
+            Eigen::Vector2d dir2 = eig2.eigenvectors().col(1).normalized();
+            double theta = std::atan2(dir2.y(), dir2.x());
+
+            auto evalSlotCost = [&](double cx, double cy, double ang, double spineS, double& outMeanR, double& outForm) -> double {
+                const double c = std::cos(ang);
+                const double s = std::sin(ang);
+                const double halfS = 0.5 * std::max(0.0, spineS);
+
+                std::vector<double> dists(uv.size());
+                double sumR = 0.0;
+                for (size_t i = 0; i < uv.size(); ++i) {
+                    const double dx = uv[i].x() - cx;
+                    const double dy = uv[i].y() - cy;
+                    const double para = dx * c + dy * s;
+                    const double perp = -dx * s + dy * c;
+                    const double excessPara = std::max(0.0, std::abs(para) - halfS);
+                    const double d = std::sqrt(excessPara * excessPara + perp * perp);
+                    dists[i] = d;
+                    sumR += d;
+                }
+                outMeanR = sumR / static_cast<double>(uv.size());
+                double sse = 0.0;
+                double minD = 1e18, maxD = -1e18;
+                for (double d : dists) {
+                    const double e = d - outMeanR;
+                    sse += e * e;
+                    minD = std::min(minD, d);
+                    maxD = std::max(maxD, d);
+                }
+                outForm = std::max(0.0, maxD - minD);
+                return sse;
+                };
+
+            double minPara = 1e18, maxPara = -1e18;
+            double minPerp = 1e18, maxPerp = -1e18;
+            for (const auto& q : uv) {
+                const Eigen::Vector2d d = q - mean2D;
+                const double para = d.x() * std::cos(theta) + d.y() * std::sin(theta);
+                const double perp = -d.x() * std::sin(theta) + d.y() * std::cos(theta);
+                minPara = std::min(minPara, para);
+                maxPara = std::max(maxPara, para);
+                minPerp = std::min(minPerp, perp);
+                maxPerp = std::max(maxPerp, perp);
+            }
+
+            double bestCx = mean2D.x() + 0.5 * (minPara + maxPara) * std::cos(theta) - 0.5 * (minPerp + maxPerp) * std::sin(theta);
+            double bestCy = mean2D.y() + 0.5 * (minPara + maxPara) * std::sin(theta) + 0.5 * (minPerp + maxPerp) * std::cos(theta);
+            double bestTheta = theta;
+            double bestSpine = std::max(1.0, (maxPara - minPara) - (maxPerp - minPerp));
+            double bestR = 0.5 * (maxPerp - minPerp);
+            double bestForm = 0.0;
+            double bestCost = evalSlotCost(bestCx, bestCy, bestTheta, bestSpine, bestR, bestForm);
+
+            double stepPos = 1.0;
+            double stepAng = 0.08;
+            double stepSpine = 2.0;
+
+            for (int iter = 0; iter < 60; ++iter) {
+                bool improved = false;
+                const double deltas[8][4] = {
+                    { stepPos, 0, 0, 0 },{ -stepPos, 0, 0, 0 },
+                    { 0, stepPos, 0, 0 },{ 0, -stepPos, 0, 0 },
+                    { 0, 0, stepAng, 0 },{ 0, 0, -stepAng, 0 },
+                    { 0, 0, 0, stepSpine },{ 0, 0, 0, -stepSpine }
+                };
+
+                for (const auto& dl : deltas) {
+                    const double trialSpine = std::max(0.0, bestSpine + dl[3]);
+                    double rVal = 0.0, fVal = 0.0;
+                    const double cVal = evalSlotCost(bestCx + dl[0], bestCy + dl[1], bestTheta + dl[2], trialSpine, rVal, fVal);
+                    if (cVal < bestCost - 1e-12) {
+                        bestCost = cVal;
+                        bestCx += dl[0];
+                        bestCy += dl[1];
+                        bestTheta += dl[2];
+                        bestSpine = trialSpine;
+                        bestR = rVal;
+                        bestForm = fVal;
+                        improved = true;
+                    }
+                }
+
+                if (!improved) {
+                    stepPos *= 0.5;
+                    stepAng *= 0.5;
+                    stepSpine *= 0.5;
+                    if (stepPos < 1e-5 && stepAng < 1e-6) break;
+                }
+            }
+
+            res.success = (bestR > 1e-4);
+            res.normal = n;
+            res.center = bestCx * uAx + bestCy * vAx + meanW * n;
+            res.majorAxis = (std::cos(bestTheta) * uAx + std::sin(bestTheta) * vAx).normalized();
+            if (res.majorAxis.x() < -1e-4 || (std::abs(res.majorAxis.x()) <= 1e-4 && res.majorAxis.y() < 0.0)) {
+                res.majorAxis = -res.majorAxis;
+            }
+            res.rubyRadius = bestR;
+            res.spineLength = bestSpine;
+            res.formError = bestForm;
+            return res;
+        }
+
+    } // anonymous namespace
+
+    void MainWindow::onFitSlotClicked() {
+        if (m_recordedHits.size() < 5) {
+            QMessageBox::warning(this, "Insufficient Points for 2D Slot",
+                "Please record at least 5 probe hits (e.g., 2 on each parallel side wall and 1+ on each end cap) to solve a 2D Slot.");
+            return;
+        }
+
+        WorkplaneFrame wp = currentWorkplane();
+        const Slot2DFitResult fit = fitObroundSlot2D(m_recordedHits, wp.wAxis);
+        if (!fit.success) {
+            playSolveChime(false);
+            QMessageBox::warning(this, "2D Slot Fit Failed",
+                "Could not converge on an obround slot profile from the recorded points.");
+            return;
+        }
+
+        const ProbeCompMode comp = currentCompMode();
+        double compRadius = fit.rubyRadius;
+        if (comp == ProbeCompMode::Internal) {
+            compRadius = fit.rubyRadius + m_effectiveProbeRadius;
+        }
+        else if (comp == ProbeCompMode::External) {
+            compRadius = std::max(0.001, fit.rubyRadius - m_effectiveProbeRadius);
+        }
+
+        const double slotWidth = compRadius * 2.0;
+        const double slotLength = fit.spineLength + slotWidth;
+        const double nominalWidth = std::round(slotWidth * 2.0) / 2.0;
+
+        const int id = m_featureCounter++;
+        const QString featName = (!m_activeDmisFeatureName.isEmpty() && m_activeDmisTreeItem)
+            ? m_activeDmisFeatureName : QString("Slot #%1").arg(id);
+
+        MeasuredFeature mf;
+        mf.id = id;
+        mf.name = featName.toStdString();
+        mf.kind = FeatureKind::Slot2D;
+        mf.location = fit.center;
+        mf.primaryVector = fit.normal;
+        mf.secondaryVector = fit.majorAxis;
+        mf.diameter = slotWidth;
+        mf.length = slotLength;
+        mf.formError = fit.formError;
+        m_featureDmisHits[id] = m_recordedDmisHits;
+        if (!m_activeDmisRefId.isEmpty()) m_featureRefIds[id] = m_activeDmisRefId;
+        m_solvedFeatures.push_back(mf);
+
+        const bool passed = (std::abs(slotWidth - nominalWidth) <= m_defaultTolMm);
+        playSolveChime(passed);
+
+        QTreeWidgetItem* slotItem = m_activeDmisTreeItem;
+        if (slotItem) {
+            slotItem->setText(0, featName);
+            while (slotItem->childCount() > 0) delete slotItem->takeChild(0);
+            m_activeDmisTreeItem = nullptr;
+        }
+        else {
+            slotItem = new QTreeWidgetItem(m_featureTree, { featName, "", "", "", "" });
+        }
+        slotItem->setData(0, ROLE_FEATURE_ID, id);
+        applyEvaluationToTreeItem(slotItem, slotWidth, true, nominalWidth, m_defaultTolMm, m_defaultTolMm);
+
+        if (m_viewport) {
+            m_viewport->addFittedSlotVisual(
+                id,
+                mf.location.x(), mf.location.y(), mf.location.z(),
+                mf.primaryVector.x(), mf.primaryVector.y(), mf.primaryVector.z(),
+                mf.secondaryVector.x(), mf.secondaryVector.y(), mf.secondaryVector.z(),
+                slotWidth, slotLength
+            );
+        }
+
+        const int decimals = (m_unitSystem == UnitSystem::Millimeters) ? 4 : 5;
+        const QString unitStr = (m_unitSystem == UnitSystem::Millimeters) ? " mm" : " in";
+
+        new QTreeWidgetItem(slotItem, {
+            "Slot Total Length", "--",
+            QString("%1%2").arg(toDisplayUnit(slotLength, m_unitSystem), 0, 'f', decimals).arg(unitStr),
+            "--", "LENGTH"
+            });
+        new QTreeWidgetItem(slotItem, {
+            "Center (X, Y, Z)", "--",
+            QString("(%1, %2, %3)%4")
+                .arg(toDisplayUnit(fit.center.x(), m_unitSystem), 0, 'f', decimals)
+                .arg(toDisplayUnit(fit.center.y(), m_unitSystem), 0, 'f', decimals)
+                .arg(toDisplayUnit(fit.center.z(), m_unitSystem), 0, 'f', decimals)
+                .arg(unitStr),
+            "--", "INFO"
+            });
+        new QTreeWidgetItem(slotItem, {
+            "Major Axis (I, J, K)", "--",
+            QString("(%1, %2, %3)")
+                .arg(fit.majorAxis.x(), 0, 'f', 5)
+                .arg(fit.majorAxis.y(), 0, 'f', 5)
+                .arg(fit.majorAxis.z(), 0, 'f', 5),
+            "--", "INFO"
+            });
+        new QTreeWidgetItem(slotItem, {
+            "Profile Form Error", "--",
+            QString("%1%2").arg(toDisplayUnit(fit.formError, m_unitSystem), 0, 'f', decimals).arg(unitStr),
+            "--", "FORM"
+            });
+        slotItem->setExpanded(true);
+
+        finishFeatureBuffer();
+        statusBar()->showMessage(QString("Solved %1 — Width: %2%3 x Length: %4%3")
+            .arg(featName)
+            .arg(toDisplayUnit(slotWidth, m_unitSystem), 0, 'f', decimals)
+            .arg(unitStr)
+            .arg(toDisplayUnit(slotLength, m_unitSystem), 0, 'f', decimals));
+    }
+
     void MainWindow::onFitLineClicked() {
         if (m_recordedHits.size() < 2) {
             QMessageBox::warning(this, "Insufficient Points", "At least 2 points are required to fit a 2D Line.");
@@ -3739,6 +4016,14 @@ namespace OpenCMM {
             return;
         }
 
+        double minT = 1e18, maxT = -1e18;
+        for (const auto& pt : m_recordedHits) {
+            const double t = (pt - res.center).dot(res.axis);
+            minT = std::min(minT, t);
+            maxT = std::max(maxT, t);
+        }
+        const double cylHeight = std::max(4.0, maxT - minT);
+
         const double actualDiam = res.diameter;
         double nominalDiam = 20.0;
         if (m_hasArmedCadNominal && m_armedCadDiameterMm > 0.0) {
@@ -3752,10 +4037,11 @@ namespace OpenCMM {
         MeasuredFeature mf;
         mf.id = id;
         mf.name = featName.toStdString();
-        mf.kind = FeatureKind::Circle2D;
+        mf.kind = FeatureKind::Cylinder3D;
         mf.location = res.center;
         mf.primaryVector = res.axis;
         mf.diameter = actualDiam;
+        mf.length = cylHeight;
         mf.formError = res.cylindricity;
         m_featureDmisHits[id] = m_recordedDmisHits;
         if (!m_activeDmisRefId.isEmpty()) m_featureRefIds[id] = m_activeDmisRefId;
@@ -3777,8 +4063,12 @@ namespace OpenCMM {
         applyEvaluationToTreeItem(cylItem, actualDiam, true, nominalDiam, m_defaultTolMm, m_defaultTolMm);
 
         if (m_viewport) {
-            m_viewport->addFittedCircleVisual(id, res.center.x(), res.center.y(), res.center.z(),
-                res.axis.x(), res.axis.y(), res.axis.z(), res.radius);
+            m_viewport->addFittedCylinderVisual(
+                id,
+                res.center.x(), res.center.y(), res.center.z(),
+                res.axis.x(), res.axis.y(), res.axis.z(),
+                res.radius, cylHeight
+            );
         }
 
         const int decimals = (m_unitSystem == UnitSystem::Millimeters) ? 4 : 5;
@@ -3815,6 +4105,11 @@ namespace OpenCMM {
             .arg(unitStr)
             .arg(toDisplayUnit(res.cylindricity, m_unitSystem), 0, 'f', decimals));
     }
+
+
+    
+
+    
 
     void MainWindow::onMeasureRelationClicked() {
         if (m_solvedFeatures.size() < 2) {
@@ -6753,6 +7048,8 @@ namespace OpenCMM {
 
         evaluateGdtCalloutJson(params);
     }
+
+
     QJsonObject MainWindow::reverseEngineerPartJson(const QJsonObject& params) {
         if (m_solvedFeatures.empty() && m_recordedHits.empty()) {
             return QJsonObject{
@@ -6820,7 +7117,7 @@ namespace OpenCMM {
                 const Eigen::Vector3d loc = xformPt(mf.location);
                 const Eigen::Vector3d vec = xformVec(mf.primaryVector);
 
-                if ((mf.kind == FeatureKind::Circle2D || mf.kind == FeatureKind::Sphere3D)
+                if ((mf.kind == FeatureKind::Circle2D || mf.kind == FeatureKind::Cylinder3D || mf.kind == FeatureKind::Sphere3D)
                     && mf.diameter > 1e-4) {
                     const double rad = (mf.diameter * 0.5) * scale;
                     out << "0\nCIRCLE\n8\nSOLVED_HOLES\n"
@@ -6829,6 +7126,30 @@ namespace OpenCMM {
                         << "30\n" << (loc.z() * scale) << "\n"
                         << "40\n" << rad << "\n";
                     ++circleCount;
+                }
+                else if (mf.kind == FeatureKind::Slot2D && mf.diameter > 1e-4) {
+                    const double r = 0.5 * mf.diameter;
+                    const double spineLen = std::max(0.0, mf.length - mf.diameter);
+                    Eigen::Vector3d maj = xformVec(mf.secondaryVector);
+                    maj.z() = 0.0;
+                    if (maj.norm() < 1e-6) maj = Eigen::Vector3d(1.0, 0.0, 0.0);
+                    else maj.normalize();
+                    const Eigen::Vector3d perp(-maj.y(), maj.x(), 0.0);
+
+                    const Eigen::Vector3d c1 = loc - 0.5 * spineLen * maj;
+                    const Eigen::Vector3d c2 = loc + 0.5 * spineLen * maj;
+                    const Eigen::Vector3d p1Top = c1 + r * perp;
+                    const Eigen::Vector3d p2Top = c2 + r * perp;
+                    const Eigen::Vector3d p1Bot = c1 - r * perp;
+                    const Eigen::Vector3d p2Bot = c2 - r * perp;
+
+                    out << "0\nLINE\n8\nSOLVED_SLOTS\n"
+                        << "10\n" << (p1Top.x() * scale) << "\n20\n" << (p1Top.y() * scale) << "\n30\n" << (loc.z() * scale) << "\n"
+                        << "11\n" << (p2Top.x() * scale) << "\n21\n" << (p2Top.y() * scale) << "\n31\n" << (loc.z() * scale) << "\n";
+                    out << "0\nLINE\n8\nSOLVED_SLOTS\n"
+                        << "10\n" << (p1Bot.x() * scale) << "\n20\n" << (p1Bot.y() * scale) << "\n30\n" << (loc.z() * scale) << "\n"
+                        << "11\n" << (p2Bot.x() * scale) << "\n21\n" << (p2Bot.y() * scale) << "\n31\n" << (loc.z() * scale) << "\n";
+                    lineCount += 2;
                 }
                 else if (mf.kind == FeatureKind::Line2D || mf.kind == FeatureKind::Plane3D) {
                     Eigen::Vector3d edgeDir = (mf.kind == FeatureKind::Plane3D)
@@ -6926,7 +7247,7 @@ namespace OpenCMM {
             double westX = 0.0, eastX = 0.0, southY = 0.0, northY = 0.0;
 
             for (const auto& mf : m_solvedFeatures) {
-                const double r = (mf.diameter > 0.0) ? (mf.diameter * 0.5) : 0.0;
+                const double r = (mf.diameter > 0.0) ? (std::max(mf.diameter, mf.length) * 0.5) : 0.0;
                 expandBbox(mf.location, r);
 
                 if (mf.kind == FeatureKind::Plane3D) {
@@ -6979,7 +7300,7 @@ namespace OpenCMM {
             TopoDS_Shape baseStock = BRepPrimAPI_MakeBox(gp_Pnt(x0, y0, zBot), dx, dy, dz).Shape();
 
             for (const auto& mf : m_solvedFeatures) {
-                if (mf.kind == FeatureKind::Circle2D && mf.diameter > 0.2) {
+                if ((mf.kind == FeatureKind::Circle2D || mf.kind == FeatureKind::Cylinder3D) && mf.diameter > 0.2) {
                     const double rad = mf.diameter * 0.5;
                     Eigen::Vector3d axis = mf.primaryVector;
                     if (axis.norm() < 1e-6) {
@@ -7001,6 +7322,40 @@ namespace OpenCMM {
                     if (cutter.IsDone() && !cutter.Shape().IsNull()) {
                         baseStock = cutter.Shape();
                         ++holesCut;
+                    }
+                }
+                else if (mf.kind == FeatureKind::Slot2D && mf.diameter > 0.2) {
+                    const double r = 0.5 * mf.diameter;
+                    const double spineLen = std::max(0.0, mf.length - mf.diameter);
+                    gp_Dir nDir(0.0, 0.0, 1.0);
+                    Eigen::Vector3d tEigen(mf.secondaryVector.x(), mf.secondaryVector.y(), 0.0);
+                    if (tEigen.norm() < 1e-6) tEigen = Eigen::Vector3d(1.0, 0.0, 0.0);
+                    else tEigen.normalize();
+
+                    gp_Dir tDir(tEigen.x(), tEigen.y(), 0.0);
+                    gp_Dir wDir = nDir.Crossed(tDir);
+                    gp_Pnt cCenter(mf.location.x(), mf.location.y(), zBot - 5.0);
+
+                    const gp_Vec halfSpine = gp_Vec(tDir).Multiplied(0.5 * spineLen);
+                    const gp_Vec radSide = gp_Vec(wDir).Multiplied(r);
+                    const gp_Pnt c1 = cCenter.Translated(-halfSpine);
+                    const gp_Pnt c2 = cCenter.Translated(halfSpine);
+
+                    TopoDS_Edge eTop = BRepBuilderAPI_MakeEdge(c1.Translated(radSide), c2.Translated(radSide));
+                    TopoDS_Edge eArc2 = BRepBuilderAPI_MakeEdge(gp_Circ(gp_Ax2(c2, nDir, tDir), r), c2.Translated(-radSide), c2.Translated(radSide));
+                    TopoDS_Edge eBot = BRepBuilderAPI_MakeEdge(c2.Translated(-radSide), c1.Translated(-radSide));
+                    TopoDS_Edge eArc1 = BRepBuilderAPI_MakeEdge(gp_Circ(gp_Ax2(c1, nDir, tDir), r), c1.Translated(radSide), c1.Translated(-radSide));
+
+                    BRepBuilderAPI_MakeWire wm;
+                    wm.Add(eTop); wm.Add(eArc2); wm.Add(eBot); wm.Add(eArc1);
+                    if (wm.IsDone()) {
+                        TopoDS_Face slotFace = BRepBuilderAPI_MakeFace(wm.Wire(), Standard_True);
+                        TopoDS_Shape slotPrism = BRepPrimAPI_MakePrism(slotFace, gp_Vec(0.0, 0.0, dz + 10.0)).Shape();
+                        BRepAlgoAPI_Cut cutter(baseStock, slotPrism);
+                        if (cutter.IsDone() && !cutter.Shape().IsNull()) {
+                            baseStock = cutter.Shape();
+                            ++holesCut;
+                        }
                     }
                 }
             }
@@ -7029,9 +7384,11 @@ namespace OpenCMM {
                         ++primitivesBuilt;
                     }
                 }
-                else if (mf.kind == FeatureKind::Circle2D && mf.diameter > 0.1) {
+                else if ((mf.kind == FeatureKind::Circle2D || mf.kind == FeatureKind::Cylinder3D) && mf.diameter > 0.1) {
                     const double rad = mf.diameter * 0.5;
-                    const double partH = std::max(2.0, userThicknessMm);
+                    const double partH = (mf.kind == FeatureKind::Cylinder3D && mf.length > 1.0)
+                        ? mf.length
+                        : std::max(2.0, userThicknessMm);
                     const gp_Pnt basePt(
                         loc.X() - dir.X() * partH * 0.5,
                         loc.Y() - dir.Y() * partH * 0.5,

@@ -293,6 +293,7 @@ namespace OpenCMM {
         bool m_autoCameraFocusEnabled = true;
         void onEvaluateGdtCalloutClicked();
         void onReverseEngineerPartClicked();
+        void onFitSlotClicked();
     };
 
 } // namespace OpenCMM

@@ -1188,6 +1188,86 @@ namespace OpenCMM {
         TopoDS_Face diskFace = BRepBuilderAPI_MakeFace(wire, Standard_True);
         displayFittedFeatureShape(featureId, diskFace, Quantity_Color(0.90, 0.75, 0.48, Quantity_TOC_RGB));
     }
+    void OcctViewport::addFittedCylinderVisual(int featureId,
+        double cx, double cy, double cz,
+        double ax, double ay, double az,
+        double radiusMm, double heightMm) {
+        if (radiusMm <= 1e-4) return;
+        const double h = std::max(2.0, heightMm);
+
+        gp_Vec axisVec(ax, ay, az);
+        if (axisVec.Magnitude() <= 1e-6) {
+            axisVec = gp_Vec(0.0, 0.0, 1.0);
+        }
+        gp_Dir axisDir(axisVec);
+
+        // Center the cylinder visual on (cx, cy, cz) along its solved 3D axis
+        gp_Pnt basePt(
+            cx - axisDir.X() * (0.5 * h),
+            cy - axisDir.Y() * (0.5 * h),
+            cz - axisDir.Z() * (0.5 * h)
+        );
+        gp_Ax2 cylAx(basePt, axisDir);
+        TopoDS_Shape cylShape = BRepPrimAPI_MakeCylinder(cylAx, radiusMm, h).Shape();
+        displayFittedFeatureShape(featureId, cylShape, Quantity_Color(0.28, 0.82, 0.78, Quantity_TOC_RGB));
+    }
+
+    void OcctViewport::addFittedSlotVisual(int featureId,
+        double cx, double cy, double cz,
+        double nx, double ny, double nz,
+        double tx, double ty, double tz,
+        double widthMm, double lengthMm) {
+        const double r = 0.5 * widthMm;
+        if (r <= 1e-4) return;
+        const double spineLen = std::max(0.0, lengthMm - widthMm);
+
+        gp_Vec nVec(nx, ny, nz);
+        if (nVec.Magnitude() <= 1e-6) nVec = gp_Vec(0.0, 0.0, 1.0);
+        gp_Dir nDir(nVec);
+
+        gp_Vec tVec(tx, ty, tz);
+        // Project major axis onto plane normal to guarantee orthogonality
+        tVec = tVec - nVec.Normalized().Multiplied(tVec.Dot(nVec.Normalized()));
+        if (tVec.Magnitude() <= 1e-6) tVec = gp_Vec(1.0, 0.0, 0.0);
+        gp_Dir tDir(tVec);
+        gp_Dir wDir = nDir.Crossed(tDir);
+
+        gp_Pnt center(cx, cy, cz);
+        if (spineLen <= 1e-4) {
+            addFittedCircleVisual(featureId, cx, cy, cz, nx, ny, nz, r);
+            return;
+        }
+
+        const gp_Vec halfSpine = gp_Vec(tDir).Multiplied(0.5 * spineLen);
+        const gp_Vec radSide = gp_Vec(wDir).Multiplied(r);
+
+        const gp_Pnt c1 = center.Translated(-halfSpine);
+        const gp_Pnt c2 = center.Translated(halfSpine);
+
+        const gp_Pnt p1Top = c1.Translated(radSide);
+        const gp_Pnt p1Bot = c1.Translated(-radSide);
+        const gp_Pnt p2Top = c2.Translated(radSide);
+        const gp_Pnt p2Bot = c2.Translated(-radSide);
+
+        gp_Circ circ2(gp_Ax2(c2, nDir, tDir), r);
+        gp_Circ circ1(gp_Ax2(c1, nDir, tDir), r);
+
+        TopoDS_Edge eTop = BRepBuilderAPI_MakeEdge(p1Top, p2Top);
+        TopoDS_Edge eArc2 = BRepBuilderAPI_MakeEdge(circ2, p2Bot, p2Top);
+        TopoDS_Edge eBot = BRepBuilderAPI_MakeEdge(p2Bot, p1Bot);
+        TopoDS_Edge eArc1 = BRepBuilderAPI_MakeEdge(circ1, p1Top, p1Bot);
+
+        BRepBuilderAPI_MakeWire wireMaker;
+        wireMaker.Add(eTop);
+        wireMaker.Add(eArc2);
+        wireMaker.Add(eBot);
+        wireMaker.Add(eArc1);
+
+        if (wireMaker.IsDone()) {
+            TopoDS_Face slotFace = BRepBuilderAPI_MakeFace(wireMaker.Wire(), Standard_True);
+            displayFittedFeatureShape(featureId, slotFace, Quantity_Color(0.82, 0.52, 0.95, Quantity_TOC_RGB));
+        }
+    }
 
     void OcctViewport::addFittedLineVisual(int featureId,
         double x1, double y1, double z1,

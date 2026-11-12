@@ -112,6 +112,8 @@ namespace OpenCMM {
         void addFittedPlaneVisual(int featureId, double cx, double cy, double cz, double nx, double ny, double nz, double sizeMm = 50.0);
         void addFittedSphereVisual(int featureId, double cx, double cy, double cz, double radiusMm);
         void addFittedCircleVisual(int featureId, double cx, double cy, double cz, double nx, double ny, double nz, double radiusMm);
+        void addFittedCylinderVisual(int featureId, double cx, double cy, double cz, double ax, double ay, double az, double radiusMm, double heightMm);
+        void addFittedSlotVisual(int featureId, double cx, double cy, double cz, double nx, double ny, double nz, double tx, double ty, double tz, double widthMm, double lengthMm);
         void addFittedLineVisual(int featureId, double x1, double y1, double z1, double x2, double y2, double z2);
         void highlightFittedFeature(int featureId);
         void setFittedFeaturesWireframe(bool wireframe);

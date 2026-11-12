@@ -12,8 +12,10 @@ namespace OpenCMM {
     enum class FeatureKind {
         Plane3D,
         Circle2D,
+        Line2D,
         Sphere3D,
-        Line2D
+        Cylinder3D,
+        Slot2D
     };
 
     struct MeasuredFeature {
@@ -25,6 +27,7 @@ namespace OpenCMM {
         Eigen::Vector3d secondaryVector = Eigen::Vector3d::UnitX();
         double diameter = 0.0;
         double formError = 0.0;
+        double length = 0.0; // Axial height for Cylinder3D, or total length L for Slot2D
     };
 
     struct SphereFitResult {
