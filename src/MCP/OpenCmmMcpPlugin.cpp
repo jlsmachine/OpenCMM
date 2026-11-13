@@ -503,6 +503,29 @@ namespace OpenCMM {
                 { "required", QJsonArray{ "filePath" } }
             } }
             });
+        tools.append(QJsonObject{
+            { "name", "save_project" },
+            { "description", "Save the entire OpenCMM workspace state (CAD path, 3-2-1 PCS matrix, stylus calibration, solved features, GD&T evaluations, and active probe hits) to a .ocmm project file." },
+            { "inputSchema", QJsonObject{
+                { "type", "object" },
+                { "properties", QJsonObject{
+                    { "filePath", QJsonObject{ { "type", "string" },{ "description", "Destination .ocmm file path" } } }
+                } },
+                { "required", QJsonArray{ "filePath" } }
+            } }
+            });
+
+        tools.append(QJsonObject{
+            { "name", "load_project" },
+            { "description", "Load a saved .ocmm workspace project file and restore all solved features, 3D visuals, 3-2-1 PCS alignment, and inspection tree items." },
+            { "inputSchema", QJsonObject{
+                { "type", "object" },
+                { "properties", QJsonObject{
+                    { "filePath", QJsonObject{ { "type", "string" },{ "description", "Source .ocmm file path to load" } } }
+                } },
+                { "required", QJsonArray{ "filePath" } }
+            } }
+            });
         return QJsonObject{ { "tools", tools } };
     }
 
@@ -551,6 +574,15 @@ namespace OpenCMM {
         }
         else if (toolName == "reverse_engineer_part") {
             payload = d->m_bridge->reverseEngineerPartJson(args);
+        }
+        else if (toolName == "reverse_engineer_part") {
+            payload = d->m_bridge->reverseEngineerPartJson(args);
+        }
+        else if (toolName == "save_project") {
+            payload = d->m_bridge->saveProjectJson(args);
+        }
+        else if (toolName == "load_project") {
+            payload = d->m_bridge->loadProjectJson(args);
         }
         else {
             payload["error"] = "Unknown tool: " + toolName;

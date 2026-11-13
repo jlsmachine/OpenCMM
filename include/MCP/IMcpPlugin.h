@@ -22,6 +22,8 @@ namespace OpenCMM {
         virtual QJsonObject solve321AlignmentJson(const QJsonObject& params) = 0;
         virtual QJsonObject evaluateGdtCalloutJson(const QJsonObject& params) = 0;
         virtual QJsonObject reverseEngineerPartJson(const QJsonObject& params) = 0;
+        virtual QJsonObject saveProjectJson(const QJsonObject& params) = 0;
+        virtual QJsonObject loadProjectJson(const QJsonObject& params) = 0;
     };
 
     class IMcpServerPlugin {

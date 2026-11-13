@@ -15,6 +15,8 @@
 #include <QDockWidget>
 #include <QAction>
 #include <QEvent>
+#include <QHBoxLayout>
+#include <QTabWidget>
 
 #include <Eigen/Dense>
 #include <vector>
@@ -58,6 +60,8 @@ namespace OpenCMM {
         QJsonObject solve321AlignmentJson(const QJsonObject& params) override;
         QJsonObject evaluateGdtCalloutJson(const QJsonObject& params) override;
         QJsonObject reverseEngineerPartJson(const QJsonObject& params) override;
+        QJsonObject saveProjectJson(const QJsonObject& params) override;
+        QJsonObject loadProjectJson(const QJsonObject& params) override;
 
     protected:
         void closeEvent(QCloseEvent* event) override;
@@ -294,6 +298,20 @@ namespace OpenCMM {
         void onEvaluateGdtCalloutClicked();
         void onReverseEngineerPartClicked();
         void onFitSlotClicked();
+
+        QString m_loadedStepFilePath;
+        QString m_currentProjectFilePath;
+        QWidget* m_qatCornerWidget = nullptr;
+        QHBoxLayout* m_qatButtonsLayout = nullptr;
+
+        void setupFileMenuAndQuickAccess(QTabWidget* ribbonTabs);
+        void rebuildQuickAccessToolbar();
+        QWidget* createQatButtonForId(const QString& qatId);
+        void onNewProjectClicked();
+        void onSaveProjectClicked();
+        void onSaveProjectAsClicked();
+        void onOpenProjectClicked();
+        void onCustomizeQuickAccessClicked();
     };
 
 } // namespace OpenCMM

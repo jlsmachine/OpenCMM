@@ -97,7 +97,10 @@
 #include <gp_Circ.hxx>
 #include <gp_Ax2.hxx>
 #include <QApplication>
+#include <QJsonDocument>
 #include <BRepPrimAPI_MakePrism.hxx>
+#include <QListWidget>
+#include <QJsonDocument>
 
 namespace OpenCMM {
 
@@ -232,6 +235,7 @@ namespace OpenCMM {
     MainWindow::~MainWindow() = default;
 
     void MainWindow::setupUi() {
+
         const QString tooltipStyle =
             "QToolTip { "
             "background-color: #1e293b; "
@@ -308,8 +312,8 @@ namespace OpenCMM {
             // Wrap long ribbon button labels onto 2 lines (preserving the top icon/emoji line)
             const auto ribbonBtns = ribbonTabs->findChildren<QAbstractButton*>();
             for (QAbstractButton* btn : ribbonBtns) {
+                if (btn->property("isQatWidget").toBool()) continue;
                 const QString fullTxt = btn->text().trimmed();
-                if (fullTxt.isEmpty()) continue;
 
                 QStringList lines = fullTxt.split('\n');
                 QString& labelLine = lines.last();
@@ -590,9 +594,10 @@ namespace OpenCMM {
             "QComboBox { background-color: #181a1f; color: #ffffff; border: 1px solid #4b5263; border-radius: 3px; padding: 4px 8px; font-weight: bold; min-width: 145px; }"
             "QComboBox QAbstractItemView { background-color: #181a1f; color: #ffffff; selection-background-color: #2d5a88; }"
         );
-
+        setupFileMenuAndQuickAccess(ribbonTabs);
         setMenuWidget(ribbonTabs);
         loadRibbonCustomization();
+
     }
 
     QWidget* MainWindow::createCommandWidgetForId(const QString& cmdId) {
@@ -921,6 +926,18 @@ namespace OpenCMM {
             connect(btn, &QPushButton::clicked, this, &MainWindow::onExportReportClicked);
             return btn;
         }
+        if (cmdId == "proj_save") {
+            auto* btn = createRibbonButton("💾", "Save Project", "#1e3a8a", "#38bdf8", "#ffffff");
+            btn->setToolTip("Save complete OpenCMM workspace (.ocmm) (Ctrl+Shift+S)");
+            connect(btn, &QPushButton::clicked, this, &MainWindow::onSaveProjectClicked);
+            return btn;
+        }
+        if (cmdId == "proj_open") {
+            auto* btn = createRibbonButton("📂", "Open Project", "#1f7a8c", "#facc15", "#ffffff");
+            btn->setToolTip("Open a saved OpenCMM workspace (.ocmm) (Ctrl+O)");
+            connect(btn, &QPushButton::clicked, this, &MainWindow::onOpenProjectClicked);
+            return btn;
+        }
 
         return nullptr;
     }
@@ -1056,6 +1073,8 @@ namespace OpenCMM {
         );
         connect(revEngBtn, &QPushButton::clicked, this, &MainWindow::onReverseEngineerPartClicked);
         treeActionRow->addWidget(revEngBtn);
+
+        
 
         dockLayout->addLayout(treeActionRow);
 
@@ -1504,6 +1523,7 @@ namespace OpenCMM {
         QString filePath = QFileDialog::getOpenFileName(this, "Load STEP CAD Model", QString(), "STEP Files (*.stp *.step *.STP *.STEP)");
         if (!filePath.isEmpty() && m_viewport) {
             m_viewport->loadStepFile(filePath);
+            m_loadedStepFilePath = filePath;
             statusBar()->showMessage("Loaded STEP model: " + filePath);
         }
     }
@@ -4699,6 +4719,7 @@ namespace OpenCMM {
             });
 
         contextMenu.addSeparator();
+        QAction* customizeQatAction = contextMenu.addAction("⚡ Customize Quick Access Toolbar...");
         QAction* customizeAction = contextMenu.addAction("🛠 Customize Ribbon Tabs & Commands...");
         QAction* addTabAction = contextMenu.addAction("➕ Add New Custom Tab...");
         QAction* shortcutsAction = contextMenu.addAction("⌨ Configure Keyboard Shortcuts..."); // <--- Add this line
@@ -4708,7 +4729,10 @@ namespace OpenCMM {
         QAction* selectedAction = contextMenu.exec(ribbonTabs->mapToGlobal(pos));
         if (!selectedAction) return;
 
-        if (selectedAction == customizeAction) {
+        if (selectedAction == customizeQatAction) {
+            onCustomizeQuickAccessClicked();
+        }
+        else if (selectedAction == customizeAction) {
             onCustomizeRibbonClicked();
         }
         else if (selectedAction == addTabAction) {
@@ -4969,6 +4993,10 @@ namespace OpenCMM {
         bindAction("sc_undo_hit", "Ctrl+Z", &MainWindow::onUndoLastProbeHitClicked);
         bindAction("sc_gdt_callout", "Ctrl+G", &MainWindow::onEvaluateGdtCalloutClicked);
         bindAction("sc_reverse_eng", "Ctrl+R", &MainWindow::onReverseEngineerPartClicked);
+        bindAction("sc_save_project", "Ctrl+Shift+S", &MainWindow::onSaveProjectClicked);
+        bindAction("sc_open_project", "Ctrl+O", &MainWindow::onOpenProjectClicked);
+        bindAction("sc_new_project", "Ctrl+Shift+N", &MainWindow::onNewProjectClicked);
+  
 
         // Toggle Collision & Clearance Log dock
         const QString colSeq = settings.value("sc_toggle_collision", "Ctrl+Shift+L").toString().trimmed();
@@ -7431,8 +7459,8 @@ namespace OpenCMM {
 
         if (loadIntoViewport && m_viewport) {
             m_viewport->loadStepFile(filePath);
+            m_loadedStepFilePath = filePath;
         }
-
         statusBar()->showMessage(QString("Reverse Engineered %1 (%2 bored features cut) -> %3")
             .arg(mode).arg(holesCut).arg(filePath));
 
@@ -7556,6 +7584,1130 @@ namespace OpenCMM {
         if (!res.value("success").toBool()) {
             QMessageBox::warning(this, "Reverse Engineering Error", res.value("error").toString());
         }
+    }
+
+    QJsonObject MainWindow::saveProjectJson(const QJsonObject& params) {
+        QString filePath = params.value("filePath").toString().trimmed();
+        if (filePath.isEmpty()) {
+            return QJsonObject{
+                { "success", false },
+                { "error", "Destination filePath is required." }
+            };
+        }
+        if (!filePath.endsWith(".ocmm", Qt::CaseInsensitive)) {
+            filePath += ".ocmm";
+        }
+
+        QJsonObject root;
+        root["format"] = "OpenCMM_Project";
+        root["version"] = "1.0";
+        root["savedAt"] = QDateTime::currentDateTime().toString(Qt::ISODate);
+        root["units"] = (m_unitSystem == UnitSystem::Millimeters) ? "mm" : "in";
+        root["defaultTolMm"] = m_defaultTolMm;
+        root["loadedStepFilePath"] = m_loadedStepFilePath;
+        root["machinePackagePath"] = m_machinePackagePath;
+        root["featureCounter"] = m_featureCounter;
+
+        // 1. Stylus Calibration State
+        root["probeCalibration"] = QJsonObject{
+            { "isProbeCalibrated", m_isProbeCalibrated },
+            { "certifiedBallDiameterMm", m_certifiedBallDiameterMm },
+            { "effectiveProbeRadiusMm", m_effectiveProbeRadius },
+            { "lastProbeLobingMm", m_lastProbeLobingMm }
+        };
+
+        // 2. 3-2-1 Alignment & Workplane State
+        QJsonArray pcsArr;
+        for (int r = 0; r < 4; ++r) {
+            for (int c = 0; c < 4; ++c) {
+                pcsArr.append(m_pcsMatrix(r, c));
+            }
+        }
+        root["alignment321"] = QJsonObject{
+            { "isPartAligned", m_isPartAligned },
+            { "alignBtnChecked", (m_alignStatusBtn && m_alignStatusBtn->isChecked()) },
+            { "datumAFeatureId", m_datumAFeatureId },
+            { "datumBFeatureId", m_datumBFeatureId },
+            { "datumCFeatureId", m_datumCFeatureId },
+            { "pcsMatrixRowMajor", pcsArr },
+            { "hasCustomPlane", m_hasCustomPlane },
+            { "customPlaneOrigin", QJsonArray{
+                m_lastFittedPlaneFrame.origin.x(),
+                m_lastFittedPlaneFrame.origin.y(),
+                m_lastFittedPlaneFrame.origin.z()
+            } },
+            { "customPlaneNormal", QJsonArray{
+                m_lastFittedPlaneFrame.wAxis.x(),
+                m_lastFittedPlaneFrame.wAxis.y(),
+                m_lastFittedPlaneFrame.wAxis.z()
+            } }
+        };
+
+        // 3. Solved Metrology Features
+        QJsonArray solvedArr;
+        for (const auto& mf : m_solvedFeatures) {
+            QJsonObject fObj;
+            fObj["id"] = mf.id;
+            fObj["name"] = QString::fromStdString(mf.name);
+            fObj["kind"] = static_cast<int>(mf.kind);
+            fObj["location"] = QJsonArray{ mf.location.x(), mf.location.y(), mf.location.z() };
+            fObj["primaryVector"] = QJsonArray{ mf.primaryVector.x(), mf.primaryVector.y(), mf.primaryVector.z() };
+            fObj["secondaryVector"] = QJsonArray{ mf.secondaryVector.x(), mf.secondaryVector.y(), mf.secondaryVector.z() };
+            fObj["diameter"] = mf.diameter;
+            fObj["formError"] = mf.formError;
+            fObj["length"] = mf.length;
+            fObj["refId"] = m_featureRefIds.count(mf.id) ? m_featureRefIds[mf.id] : QString();
+            fObj["datumLetter"] = m_featureDatumLetters.count(mf.id) ? m_featureDatumLetters[mf.id] : QString();
+
+            QJsonArray hitsArr;
+            if (m_featureDmisHits.count(mf.id)) {
+                for (const auto& h : m_featureDmisHits[mf.id]) {
+                    hitsArr.append(QJsonObject{
+                        { "sx", h.surfacePt.x() },{ "sy", h.surfacePt.y() },{ "sz", h.surfacePt.z() },
+                        { "nx", h.normalVec.x() },{ "ny", h.normalVec.y() },{ "nz", h.normalVec.z() }
+                        });
+                }
+            }
+            fObj["dmisHits"] = hitsArr;
+            solvedArr.append(fObj);
+        }
+        root["solvedFeatures"] = solvedArr;
+
+        // 4. Planned DMIS Program Queue & Guided State
+        QJsonArray dmisFeatArr;
+        for (const auto& df : m_dmisProgram.features) {
+            QJsonObject dfObj;
+            dfObj["label"] = QString::fromStdString(df.label);
+            dfObj["refId"] = QString::fromStdString(df.refId);
+            dfObj["featureType"] = QString::fromStdString(df.featureType);
+            dfObj["boundarySub"] = QString::fromStdString(df.boundarySub);
+            dfObj["datumLetter"] = QString::fromStdString(df.datumLetter);
+            dfObj["nomX"] = df.nomX;
+            dfObj["nomY"] = df.nomY;
+            dfObj["nomZ"] = df.nomZ;
+            dfObj["nomI"] = df.nomI;
+            dfObj["nomJ"] = df.nomJ;
+            dfObj["nomK"] = df.nomK;
+            dfObj["nominalDiameter"] = df.nominalDiameter;
+
+            QJsonArray ptsArr;
+            for (const auto& pt : df.points) {
+                ptsArr.append(QJsonObject{
+                    { "x", pt.x },{ "y", pt.y },{ "z", pt.z },
+                    { "i", pt.i },{ "j", pt.j },{ "k", pt.k }
+                    });
+            }
+            dfObj["points"] = ptsArr;
+            dmisFeatArr.append(dfObj);
+        }
+
+        root["dmisProgram"] = QJsonObject{
+            { "valid", m_dmisProgram.valid },
+            { "stylusDiameterMm", m_dmisProgram.stylusDiameterMm },
+            { "clearanceZMm", m_dmisProgram.clearanceZMm },
+            { "has321Alignment", m_dmisProgram.datumAlignment.has321Alignment },
+            { "isDmisProgramActive", m_isDmisProgramActive },
+            { "activeDmisFeatureIdx", m_activeDmisFeatureIdx },
+            { "activeDmisFeatureName", m_activeDmisFeatureName },
+            { "activeDmisRefId", m_activeDmisRefId },
+            { "features", dmisFeatArr }
+        };
+
+        // 5. Full Inspection Feature Tree Hierarchy (preserves GD&T rows, Relations, Custom Tols, Planned Items)
+        QJsonArray treeItemsArr;
+        for (int i = 0; i < m_featureTree->topLevelItemCount(); ++i) {
+            QTreeWidgetItem* top = m_featureTree->topLevelItem(i);
+            if (!top || top == m_activePointsGroup) continue;
+
+            QJsonObject tObj;
+            tObj["col0"] = top->text(0);
+            tObj["col1"] = top->text(1);
+            tObj["col2"] = top->text(2);
+            tObj["col3"] = top->text(3);
+            tObj["col4"] = top->text(4);
+            tObj["col4Color"] = top->foreground(4).color().name();
+            tObj["expanded"] = top->isExpanded();
+
+            if (top->data(0, ROLE_FEATURE_ID).isValid()) {
+                tObj["roleFeatureId"] = top->data(0, ROLE_FEATURE_ID).toInt();
+            }
+            if (top->data(0, ROLE_ACTUAL_MM).isValid()) {
+                tObj["roleActualMm"] = top->data(0, ROLE_ACTUAL_MM).toDouble();
+                tObj["roleHasNominal"] = top->data(0, ROLE_HAS_NOMINAL).toBool();
+                tObj["roleNominalMm"] = top->data(0, ROLE_NOMINAL_MM).toDouble();
+                tObj["rolePlusTolMm"] = top->data(0, ROLE_PLUS_TOL_MM).toDouble();
+                tObj["roleMinusTolMm"] = top->data(0, ROLE_MINUS_TOL_MM).toDouble();
+            }
+
+            int plannedIdx = -1;
+            for (size_t p = 0; p < m_plannedDmisTreeItems.size(); ++p) {
+                if (m_plannedDmisTreeItems[p] == top) {
+                    plannedIdx = static_cast<int>(p);
+                    break;
+                }
+            }
+            tObj["plannedDmisIdx"] = plannedIdx;
+            tObj["isActiveDmisItem"] = (top == m_activeDmisTreeItem);
+
+            QJsonArray childrenArr;
+            for (int c = 0; c < top->childCount(); ++c) {
+                QTreeWidgetItem* ch = top->child(c);
+                QJsonObject cObj;
+                cObj["col0"] = ch->text(0);
+                cObj["col1"] = ch->text(1);
+                cObj["col2"] = ch->text(2);
+                cObj["col3"] = ch->text(3);
+                cObj["col4"] = ch->text(4);
+                cObj["col4Color"] = ch->foreground(4).color().name();
+                if (ch->data(0, ROLE_ACTUAL_MM).isValid()) {
+                    cObj["roleActualMm"] = ch->data(0, ROLE_ACTUAL_MM).toDouble();
+                    cObj["roleHasNominal"] = ch->data(0, ROLE_HAS_NOMINAL).toBool();
+                    cObj["roleNominalMm"] = ch->data(0, ROLE_NOMINAL_MM).toDouble();
+                    cObj["rolePlusTolMm"] = ch->data(0, ROLE_PLUS_TOL_MM).toDouble();
+                    cObj["roleMinusTolMm"] = ch->data(0, ROLE_MINUS_TOL_MM).toDouble();
+                }
+                childrenArr.append(cObj);
+            }
+            tObj["children"] = childrenArr;
+            treeItemsArr.append(tObj);
+        }
+        root["treeItems"] = treeItemsArr;
+
+        // 6. Active Unsolved Probe Hit Buffer
+        QJsonArray activeBufferArr;
+        for (size_t i = 0; i < m_recordedHits.size(); ++i) {
+            const Eigen::Vector3d& h = m_recordedHits[i];
+            Eigen::Vector3d sp = h;
+            Eigen::Vector3d nv(0.0, 0.0, 1.0);
+            if (i < m_recordedDmisHits.size()) {
+                sp = m_recordedDmisHits[i].surfacePt;
+                nv = m_recordedDmisHits[i].normalVec;
+            }
+            activeBufferArr.append(QJsonObject{
+                { "rx", h.x() },{ "ry", h.y() },{ "rz", h.z() },
+                { "sx", sp.x() },{ "sy", sp.y() },{ "sz", sp.z() },
+                { "nx", nv.x() },{ "ny", nv.y() },{ "nz", nv.z() }
+                });
+        }
+        root["activeProbeBuffer"] = activeBufferArr;
+
+        QFile outFile(filePath);
+        if (!outFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            return QJsonObject{
+                { "success", false },
+                { "error", "Could not open .ocmm project file for writing: " + filePath }
+            };
+        }
+
+        QJsonDocument doc(root);
+        outFile.write(doc.toJson(QJsonDocument::Indented));
+        outFile.close();
+
+        statusBar()->showMessage(QString("Saved OpenCMM Workspace Project (%1 solved features) -> %2")
+            .arg(m_solvedFeatures.size())
+            .arg(filePath));
+
+        return QJsonObject{
+            { "success", true },
+            { "filePath", filePath },
+            { "solvedFeaturesCount", static_cast<int>(m_solvedFeatures.size()) },
+            { "plannedFeaturesCount", static_cast<int>(m_dmisProgram.features.size()) },
+            { "activeBufferHitsCount", static_cast<int>(m_recordedHits.size()) }
+        };
+    }
+
+    QJsonObject MainWindow::loadProjectJson(const QJsonObject& params) {
+        const QString filePath = params.value("filePath").toString().trimmed();
+        if (filePath.isEmpty()) {
+            return QJsonObject{
+                { "success", false },
+                { "error", "Source filePath is required." }
+            };
+        }
+
+        QFile inFile(filePath);
+        if (!inFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            return QJsonObject{
+                { "success", false },
+                { "error", "Could not open .ocmm project file: " + filePath }
+            };
+        }
+
+        QJsonParseError parseErr;
+        const QJsonDocument doc = QJsonDocument::fromJson(inFile.readAll(), &parseErr);
+        inFile.close();
+
+        if (parseErr.error != QJsonParseError::NoError || !doc.isObject()) {
+            return QJsonObject{
+                { "success", false },
+                { "error", "Invalid .ocmm JSON format: " + parseErr.errorString() }
+            };
+        }
+
+        const QJsonObject root = doc.object();
+        if (root.value("format").toString() != "OpenCMM_Project") {
+            return QJsonObject{
+                { "success", false },
+                { "error", "Selected file is not a valid OpenCMM_Project (.ocmm) file." }
+            };
+        }
+
+        stopDmisAutoRun();
+        finishFeatureBuffer();
+
+        // Clear current workspace state
+        m_solvedFeatures.clear();
+        m_featureDmisHits.clear();
+        m_featureRefIds.clear();
+        m_featureDatumLetters.clear();
+        m_plannedDmisTreeItems.clear();
+        m_activeDmisTreeItem = nullptr;
+        m_dmisProgram = DmisProgramData{};
+
+        for (int i = m_featureTree->topLevelItemCount() - 1; i >= 0; --i) {
+            QTreeWidgetItem* top = m_featureTree->topLevelItem(i);
+            if (top != m_activePointsGroup) {
+                delete m_featureTree->takeTopLevelItem(i);
+            }
+        }
+
+        if (m_viewport) {
+            m_viewport->clearFittedFeatures();
+            m_viewport->clearHitMarkers();
+            m_viewport->clearProgramTargetMarkers();
+            m_viewport->clearPcsTriadVisual();
+        }
+
+        // 1. Units & Tolerances
+        const QString savedUnitStr = root.value("units").toString("mm");
+        const UnitSystem targetUnits = (savedUnitStr == "in") ? UnitSystem::Inches : UnitSystem::Millimeters;
+        if (targetUnits != m_unitSystem) {
+            onUnitToggled();
+        }
+        m_defaultTolMm = root.value("defaultTolMm").toDouble(m_defaultTolMm);
+        m_featureCounter = std::max(1, root.value("featureCounter").toInt(1));
+
+        // 2. Restore STEP Model if path exists
+        const QString stepPath = root.value("loadedStepFilePath").toString().trimmed();
+        if (!stepPath.isEmpty() && QFile::exists(stepPath) && m_viewport) {
+            m_viewport->loadStepFile(stepPath);
+            m_loadedStepFilePath = stepPath;
+        }
+
+        // 3. Stylus Calibration State
+        const QJsonObject calObj = root.value("probeCalibration").toObject();
+        if (!calObj.isEmpty()) {
+            m_isProbeCalibrated = calObj.value("isProbeCalibrated").toBool(false);
+            m_certifiedBallDiameterMm = calObj.value("certifiedBallDiameterMm").toDouble(25.4);
+            m_effectiveProbeRadius = calObj.value("effectiveProbeRadiusMm").toDouble(1.5);
+            m_lastProbeLobingMm = calObj.value("lastProbeLobingMm").toDouble(0.0);
+            updateProbeStatusDisplay();
+        }
+
+        // 4. Restore 3-2-1 Alignment & Custom Workplane
+        const QJsonObject alignObj = root.value("alignment321").toObject();
+        m_isPartAligned = alignObj.value("isPartAligned").toBool(false);
+        m_datumAFeatureId = alignObj.value("datumAFeatureId").toInt(-1);
+        m_datumBFeatureId = alignObj.value("datumBFeatureId").toInt(-1);
+        m_datumCFeatureId = alignObj.value("datumCFeatureId").toInt(-1);
+
+        const QJsonArray pcsArr = alignObj.value("pcsMatrixRowMajor").toArray();
+        if (pcsArr.size() == 16) {
+            for (int r = 0; r < 4; ++r) {
+                for (int c = 0; c < 4; ++c) {
+                    m_pcsMatrix(r, c) = pcsArr[r * 4 + c].toDouble();
+                }
+            }
+        }
+        else {
+            m_pcsMatrix = Eigen::Matrix4d::Identity();
+        }
+
+        if (m_alignStatusBtn) {
+            const bool checked = m_isPartAligned && alignObj.value("alignBtnChecked").toBool(true);
+            m_alignStatusBtn->setChecked(checked);
+            if (checked) {
+                m_alignStatusBtn->setText("🌐\nPCS (A-B-C)");
+                m_alignStatusBtn->setStyleSheet(
+                    "QPushButton { background-color: #1e4620; color: #98c379; border: 1px solid #98c379; "
+                    "border-radius: 4px; padding: 4px 8px; font-size: 11px; font-weight: bold; }");
+            }
+            else {
+                m_alignStatusBtn->setText("🌐\nCoord: MCS");
+                m_alignStatusBtn->setStyleSheet(
+                    "QPushButton { background-color: #3a3f4b; color: #e5c07b; border: 1px solid #e5c07b; "
+                    "border-radius: 4px; padding: 4px 8px; font-size: 11px; font-weight: bold; }");
+            }
+        }
+
+        if (m_isPartAligned && m_viewport) {
+            m_viewport->setPcsTriadVisual(m_pcsMatrix, 45.0);
+        }
+
+        m_hasCustomPlane = alignObj.value("hasCustomPlane").toBool(false);
+        if (m_hasCustomPlane) {
+            const QJsonArray orig = alignObj.value("customPlaneOrigin").toArray();
+            const QJsonArray norm = alignObj.value("customPlaneNormal").toArray();
+            if (orig.size() == 3 && norm.size() == 3) {
+                m_lastFittedPlaneFrame = WorkplaneFrame::fromPlane(
+                    Eigen::Vector3d(orig[0].toDouble(), orig[1].toDouble(), orig[2].toDouble()),
+                    Eigen::Vector3d(norm[0].toDouble(), norm[1].toDouble(), norm[2].toDouble())
+                );
+            }
+        }
+
+        // 5. Restore Solved Metrology Features & 3D Viewport Visuals
+        const QJsonArray solvedArr = root.value("solvedFeatures").toArray();
+        for (const QJsonValue& val : solvedArr) {
+            const QJsonObject fObj = val.toObject();
+            MeasuredFeature mf;
+            mf.id = fObj.value("id").toInt();
+            mf.name = fObj.value("name").toString().toStdString();
+            mf.kind = static_cast<FeatureKind>(fObj.value("kind").toInt(0));
+
+            const QJsonArray loc = fObj.value("location").toArray();
+            const QJsonArray pv = fObj.value("primaryVector").toArray();
+            const QJsonArray sv = fObj.value("secondaryVector").toArray();
+            if (loc.size() == 3) mf.location = Eigen::Vector3d(loc[0].toDouble(), loc[1].toDouble(), loc[2].toDouble());
+            if (pv.size() == 3)  mf.primaryVector = Eigen::Vector3d(pv[0].toDouble(), pv[1].toDouble(), pv[2].toDouble());
+            if (sv.size() == 3)  mf.secondaryVector = Eigen::Vector3d(sv[0].toDouble(), sv[1].toDouble(), sv[2].toDouble());
+
+            mf.diameter = fObj.value("diameter").toDouble(0.0);
+            mf.formError = fObj.value("formError").toDouble(0.0);
+            mf.length = fObj.value("length").toDouble(0.0);
+
+            const QString refId = fObj.value("refId").toString();
+            if (!refId.isEmpty()) m_featureRefIds[mf.id] = refId;
+
+            const QString datLet = fObj.value("datumLetter").toString();
+            if (!datLet.isEmpty()) m_featureDatumLetters[mf.id] = datLet;
+
+            std::vector<DmisRecordedHit> dmisHits;
+            const QJsonArray hitsArr = fObj.value("dmisHits").toArray();
+            for (const QJsonValue& hVal : hitsArr) {
+                const QJsonObject hObj = hVal.toObject();
+                DmisRecordedHit dh;
+                dh.surfacePt = Eigen::Vector3d(hObj.value("sx").toDouble(), hObj.value("sy").toDouble(), hObj.value("sz").toDouble());
+                dh.normalVec = Eigen::Vector3d(hObj.value("nx").toDouble(), hObj.value("ny").toDouble(), hObj.value("nz").toDouble());
+                dmisHits.push_back(dh);
+                if (m_viewport) {
+                    m_viewport->addHitPointMarker(dh.surfacePt.x(), dh.surfacePt.y(), dh.surfacePt.z());
+                }
+            }
+            if (m_viewport && !dmisHits.empty()) {
+                m_viewport->commitActiveHitMarkers();
+            }
+
+            m_featureDmisHits[mf.id] = dmisHits;
+            m_solvedFeatures.push_back(mf);
+            m_featureCounter = std::max(m_featureCounter, mf.id + 1);
+
+            if (m_viewport) {
+                if (mf.kind == FeatureKind::Plane3D) {
+                    m_viewport->addFittedPlaneVisual(mf.id,
+                        mf.location.x(), mf.location.y(), mf.location.z(),
+                        mf.primaryVector.x(), mf.primaryVector.y(), mf.primaryVector.z());
+                }
+                else if (mf.kind == FeatureKind::Sphere3D) {
+                    m_viewport->addFittedSphereVisual(mf.id,
+                        mf.location.x(), mf.location.y(), mf.location.z(),
+                        mf.diameter * 0.5);
+                }
+                else if (mf.kind == FeatureKind::Circle2D) {
+                    m_viewport->addFittedCircleVisual(mf.id,
+                        mf.location.x(), mf.location.y(), mf.location.z(),
+                        mf.primaryVector.x(), mf.primaryVector.y(), mf.primaryVector.z(),
+                        mf.diameter * 0.5);
+                }
+                else if (mf.kind == FeatureKind::Cylinder3D) {
+                    m_viewport->addFittedCylinderVisual(mf.id,
+                        mf.location.x(), mf.location.y(), mf.location.z(),
+                        mf.primaryVector.x(), mf.primaryVector.y(), mf.primaryVector.z(),
+                        mf.diameter * 0.5, std::max(4.0, mf.length));
+                }
+                else if (mf.kind == FeatureKind::Slot2D) {
+                    m_viewport->addFittedSlotVisual(mf.id,
+                        mf.location.x(), mf.location.y(), mf.location.z(),
+                        mf.primaryVector.x(), mf.primaryVector.y(), mf.primaryVector.z(),
+                        mf.secondaryVector.x(), mf.secondaryVector.y(), mf.secondaryVector.z(),
+                        mf.diameter, std::max(mf.diameter, mf.length));
+                }
+                else if (mf.kind == FeatureKind::Line2D) {
+                    double tMin = -20.0, tMax = 20.0;
+                    if (dmisHits.size() >= 2) {
+                        for (size_t i = 0; i < dmisHits.size(); ++i) {
+                            const double t = (dmisHits[i].surfacePt - mf.location).dot(mf.primaryVector);
+                            if (i == 0 || t < tMin) tMin = t;
+                            if (i == 0 || t > tMax) tMax = t;
+                        }
+                    }
+                    const Eigen::Vector3d p1 = mf.location + tMin * mf.primaryVector;
+                    const Eigen::Vector3d p2 = mf.location + tMax * mf.primaryVector;
+                    m_viewport->addFittedLineVisual(mf.id, p1.x(), p1.y(), p1.z(), p2.x(), p2.y(), p2.z());
+                }
+            }
+        }
+
+        // 6. Restore Planned DMIS Program Queue
+        const QJsonObject dmisObj = root.value("dmisProgram").toObject();
+        m_dmisProgram.valid = dmisObj.value("valid").toBool(false);
+        m_dmisProgram.stylusDiameterMm = dmisObj.value("stylusDiameterMm").toDouble(m_effectiveProbeRadius * 2.0);
+        m_dmisProgram.clearanceZMm = dmisObj.value("clearanceZMm").toDouble(100.0);
+        m_dmisProgram.datumAlignment.has321Alignment = dmisObj.value("has321Alignment").toBool(false);
+        m_isDmisProgramActive = dmisObj.value("isDmisProgramActive").toBool(false);
+        m_activeDmisFeatureIdx = dmisObj.value("activeDmisFeatureIdx").toInt(-1);
+        m_activeDmisFeatureName = dmisObj.value("activeDmisFeatureName").toString();
+        m_activeDmisRefId = dmisObj.value("activeDmisRefId").toString();
+
+        using DmisFeatureT = typename decltype(m_dmisProgram.features)::value_type;
+        using DmisPointT = typename decltype(DmisFeatureT::points)::value_type;
+
+        const QJsonArray dmisFeatArr = dmisObj.value("features").toArray();
+        for (const QJsonValue& dfVal : dmisFeatArr) {
+            const QJsonObject dfObj = dfVal.toObject();
+            DmisFeatureT df;
+            df.label = dfObj.value("label").toString().toStdString();
+            df.refId = dfObj.value("refId").toString().toStdString();
+            df.featureType = dfObj.value("featureType").toString().toStdString();
+            df.boundarySub = dfObj.value("boundarySub").toString().toStdString();
+            df.datumLetter = dfObj.value("datumLetter").toString().toStdString();
+            df.nomX = dfObj.value("nomX").toDouble(0.0);
+            df.nomY = dfObj.value("nomY").toDouble(0.0);
+            df.nomZ = dfObj.value("nomZ").toDouble(0.0);
+            df.nomI = dfObj.value("nomI").toDouble(0.0);
+            df.nomJ = dfObj.value("nomJ").toDouble(0.0);
+            df.nomK = dfObj.value("nomK").toDouble(1.0);
+            df.nominalDiameter = dfObj.value("nominalDiameter").toDouble(0.0);
+
+            const QJsonArray ptsArr = dfObj.value("points").toArray();
+            for (const QJsonValue& pVal : ptsArr) {
+                const QJsonObject pObj = pVal.toObject();
+                DmisPointT pt{};
+                pt.x = pObj.value("x").toDouble();
+                pt.y = pObj.value("y").toDouble();
+                pt.z = pObj.value("z").toDouble();
+                pt.i = pObj.value("i").toDouble();
+                pt.j = pObj.value("j").toDouble();
+                pt.k = pObj.value("k").toDouble();
+                df.points.push_back(pt);
+            }
+            m_dmisProgram.features.push_back(df);
+        }
+
+        m_plannedDmisTreeItems.assign(m_dmisProgram.features.size(), nullptr);
+
+        // 7. Restore Inspection Feature Tree Items
+        const QJsonArray treeItemsArr = root.value("treeItems").toArray();
+        for (const QJsonValue& tVal : treeItemsArr) {
+            const QJsonObject tObj = tVal.toObject();
+            auto* top = new QTreeWidgetItem(m_featureTree, {
+                tObj.value("col0").toString(),
+                tObj.value("col1").toString(),
+                tObj.value("col2").toString(),
+                tObj.value("col3").toString(),
+                tObj.value("col4").toString()
+                });
+
+            const QString col4Hex = tObj.value("col4Color").toString();
+            if (!col4Hex.isEmpty()) {
+                top->setForeground(4, QBrush(QColor(col4Hex)));
+            }
+
+            if (tObj.contains("roleFeatureId")) {
+                top->setData(0, ROLE_FEATURE_ID, tObj.value("roleFeatureId").toInt());
+            }
+            if (tObj.contains("roleActualMm")) {
+                applyEvaluationToTreeItem(
+                    top,
+                    tObj.value("roleActualMm").toDouble(),
+                    tObj.value("roleHasNominal").toBool(true),
+                    tObj.value("roleNominalMm").toDouble(),
+                    tObj.value("rolePlusTolMm").toDouble(m_defaultTolMm),
+                    tObj.value("roleMinusTolMm").toDouble(m_defaultTolMm)
+                );
+                // Preserve custom FCF text in Column 1 (e.g. GD&T callouts)
+                top->setText(1, tObj.value("col1").toString());
+                top->setText(3, tObj.value("col3").toString());
+            }
+
+            const int pIdx = tObj.value("plannedDmisIdx").toInt(-1);
+            if (pIdx >= 0 && pIdx < static_cast<int>(m_plannedDmisTreeItems.size())) {
+                m_plannedDmisTreeItems[pIdx] = top;
+            }
+            if (tObj.value("isActiveDmisItem").toBool(false)) {
+                m_activeDmisTreeItem = top;
+            }
+
+            const QJsonArray childrenArr = tObj.value("children").toArray();
+            for (const QJsonValue& cVal : childrenArr) {
+                const QJsonObject cObj = cVal.toObject();
+                auto* ch = new QTreeWidgetItem(top, {
+                    cObj.value("col0").toString(),
+                    cObj.value("col1").toString(),
+                    cObj.value("col2").toString(),
+                    cObj.value("col3").toString(),
+                    cObj.value("col4").toString()
+                    });
+                const QString chCol4Hex = cObj.value("col4Color").toString();
+                if (!chCol4Hex.isEmpty()) {
+                    ch->setForeground(4, QBrush(QColor(chCol4Hex)));
+                }
+                if (cObj.contains("roleActualMm")) {
+                    applyEvaluationToTreeItem(
+                        ch,
+                        cObj.value("roleActualMm").toDouble(),
+                        cObj.value("roleHasNominal").toBool(true),
+                        cObj.value("roleNominalMm").toDouble(),
+                        cObj.value("rolePlusTolMm").toDouble(m_defaultTolMm),
+                        cObj.value("roleMinusTolMm").toDouble(m_defaultTolMm)
+                    );
+                }
+            }
+            top->setExpanded(tObj.value("expanded").toBool(true));
+        }
+
+        // 8. Restore Active Unsolved Probe Hit Buffer
+        const int decimals = (m_unitSystem == UnitSystem::Millimeters) ? 4 : 5;
+        const QString unitStr = (m_unitSystem == UnitSystem::Millimeters) ? " mm" : " in";
+        const QJsonArray activeBufferArr = root.value("activeProbeBuffer").toArray();
+        for (int i = 0; i < activeBufferArr.size(); ++i) {
+            const QJsonObject bObj = activeBufferArr[i].toObject();
+            const Eigen::Vector3d rPt(bObj.value("rx").toDouble(), bObj.value("ry").toDouble(), bObj.value("rz").toDouble());
+            const Eigen::Vector3d sPt(bObj.value("sx").toDouble(), bObj.value("sy").toDouble(), bObj.value("sz").toDouble());
+            const Eigen::Vector3d nVec(bObj.value("nx").toDouble(), bObj.value("ny").toDouble(), bObj.value("nz").toDouble());
+
+            m_recordedHits.push_back(rPt);
+            m_recordedDmisHits.push_back({ sPt, nVec });
+
+            auto* hitItem = new QTreeWidgetItem(m_activePointsGroup, {
+                QString("Hit #%1").arg(i + 1),
+                "--",
+                QString("(%1, %2, %3)%4")
+                    .arg(toDisplayUnit(rPt.x(), m_unitSystem), 0, 'f', decimals)
+                    .arg(toDisplayUnit(rPt.y(), m_unitSystem), 0, 'f', decimals)
+                    .arg(toDisplayUnit(rPt.z(), m_unitSystem), 0, 'f', decimals)
+                    .arg(unitStr),
+                "--",
+                "RECORDED"
+                });
+            hitItem->setForeground(4, QBrush(QColor("#61afef")));
+
+            if (m_viewport) {
+                m_viewport->addHitPointMarker(rPt.x(), rPt.y(), rPt.z());
+            }
+        }
+
+        const int bufCount = static_cast<int>(m_recordedHits.size());
+        m_hitCountLabel->setText(QString("Active Feature Hits: %1").arg(bufCount));
+        if (m_activePointsGroup) {
+            m_activePointsGroup->setText(2, QString("%1 pts").arg(bufCount));
+            m_activePointsGroup->setExpanded(true);
+        }
+
+        updateDroDisplay();
+
+        if (m_isDmisProgramActive && m_activeDmisFeatureIdx >= 0 &&
+            m_activeDmisFeatureIdx < static_cast<int>(m_dmisProgram.features.size())) {
+            updateDmisTargetVisuals();
+            updateManualPromptBanner();
+        }
+        else {
+            updateManualPromptBanner();
+        }
+
+        playSolveChime(true);
+        statusBar()->showMessage(QString("Loaded OpenCMM Workspace Project (%1 solved features, %2 buffer hits) <- %3")
+            .arg(m_solvedFeatures.size())
+            .arg(m_recordedHits.size())
+            .arg(filePath));
+
+        return QJsonObject{
+            { "success", true },
+            { "filePath", filePath },
+            { "solvedFeaturesLoaded", static_cast<int>(m_solvedFeatures.size()) },
+            { "plannedFeaturesLoaded", static_cast<int>(m_dmisProgram.features.size()) },
+            { "activeBufferHitsLoaded", static_cast<int>(m_recordedHits.size()) }
+        };
+    }
+
+    namespace {
+        struct QatCommandMeta {
+            const char* id;
+            const char* icon;
+            const char* label;
+            const char* tooltip;
+        };
+
+        constexpr QatCommandMeta kQatCatalog[] = {
+            { "qat_new_project",     "📄", "New Workspace Project",          "New Workspace Project (Ctrl+Shift+N)" },
+            { "qat_open_project",    "📂", "Open Project (.ocmm)...",        "Open Workspace Project (.ocmm) (Ctrl+O)" },
+            { "qat_save_project",    "💾", "Save Project (.ocmm)",           "Save Workspace Project (.ocmm) (Ctrl+Shift+S)" },
+            { "qat_save_project_as", "📝", "Save Project As...",             "Save Workspace Project As a new .ocmm file" },
+            { "qat_load_step",       "📦", "Load 3D STEP Model...",          "Load 3D STEP CAD Model (.step / .stp)" },
+            { "qat_load_dmis",       "📜", "Load DMIS 5.3 Program...",       "Load DMIS 5.3 Inspection Program (.dmis)" },
+            { "qat_save_dmis",       "💿", "Save DMIS 5.3 Program...",       "Save DMIS 5.3 Inspection Program (.dmis)" },
+            { "qat_reverse_eng",     "🧊", "Reverse Engineering Studio...",  "Reverse Engineering & CAD Reconstruction Studio (Ctrl+R)" },
+            { "qat_export_report",   "📊", "Export Inspection Report...",    "Export PDF Certificate, QIF, HTML, or CSV Report" },
+            { "qat_undo_hit",        "↩",  "Undo Last Probe Hit",            "Undo Last Recorded Probe Hit (Ctrl+Z)" },
+            { "qat_clear_points",    "🗑", "Clear Active Probe Buffer",      "Clear Active Probe Buffer (Escape)" },
+            { "qat_zero_axes",       "🎯", "Zero XYZ DRO",                   "Zero Machine Axes at Current Position (Ctrl+0)" },
+            { "qat_toggle_units",    "📏", "Toggle Units (mm / in)",         "Toggle Display Units between mm and inches (Ctrl+U)" },
+            { "qat_calibrate_probe", "🔴", "Calibrate Stylus Tip...",        "Launch Master Ball Stylus Calibration Wizard" },
+            { "qat_align_321",       "📐", "3-2-1 Part Alignment...",        "Run 3-2-1 Datum Reference Frame Alignment" },
+            { "qat_gdt_callout",     "⊕",  "Evaluate GD&T Callout...",       "ASME Y14.5 GD&T Evaluator (Ctrl+G)" },
+            { "qat_settings",        "⚙",  "Settings & Hardware...",         "Open Hardware, Units & Theme Settings (Ctrl+,)" }
+        };
+
+        QStringList defaultQatCommandIds() {
+            return {
+                "qat_new_project",
+                "qat_open_project",
+                "qat_save_project",
+                "qat_load_step",
+                "qat_reverse_eng",
+                "qat_export_report",
+                "qat_undo_hit",
+                "qat_settings"
+            };
+        }
+
+        QStringList loadSavedQatCommandIds() {
+            QSettings settings("JLS Machine", "OpenCMM");
+            if (!settings.contains("QuickAccessToolbar/commands")) {
+                return defaultQatCommandIds();
+            }
+            return settings.value("QuickAccessToolbar/commands").toStringList();
+        }
+
+        void saveQatCommandIds(const QStringList& ids) {
+            QSettings settings("JLS Machine", "OpenCMM");
+            settings.setValue("QuickAccessToolbar/commands", ids);
+            settings.sync();
+        }
+
+        const QatCommandMeta* findQatMeta(const QString& id) {
+            for (const auto& m : kQatCatalog) {
+                if (id == QLatin1String(m.id)) return &m;
+            }
+            return nullptr;
+        }
+    } // anonymous namespace
+
+    void MainWindow::setupFileMenuAndQuickAccess(QTabWidget* ribbonTabs) {
+        if (!ribbonTabs) return;
+
+        m_qatCornerWidget = new QWidget(ribbonTabs);
+        m_qatCornerWidget->setObjectName("QatCornerBar");
+
+        auto* mainLay = new QHBoxLayout(m_qatCornerWidget);
+        mainLay->setContentsMargins(6, 2, 8, 2);
+        mainLay->setSpacing(3);
+
+        // 1. Top-Left "File" Menu Button
+        auto* fileBtn = new QToolButton(m_qatCornerWidget);
+        fileBtn->setProperty("isQatWidget", true);
+        fileBtn->setText("📁 File ▾");
+        fileBtn->setCursor(Qt::PointingHandCursor);
+        fileBtn->setPopupMode(QToolButton::InstantPopup);
+        fileBtn->setToolTip("File Menu — Project Management, CAD Import/Export, Reports & Settings");
+        fileBtn->setStyleSheet(
+            "QToolButton { background-color: #007acc; color: #ffffff; border: 1px solid #38bdf8; "
+            "border-radius: 3px; padding: 3px 10px; font-size: 11px; font-weight: bold; min-height: 20px; max-height: 24px; }"
+            "QToolButton:hover { background-color: #0284c7; border: 1px solid #ffffff; }"
+            "QToolButton::menu-indicator { image: none; }"
+        );
+
+        auto* fileMenu = new QMenu(fileBtn);
+        fileMenu->setStyleSheet(
+            "QMenu { background-color: #1e2227; color: #e2e8f0; border: 1px solid #3a3f4b; padding: 4px; font-size: 12px; }"
+            "QMenu::item { padding: 6px 24px 6px 12px; border-radius: 3px; }"
+            "QMenu::item:selected { background-color: #2d5a88; color: #ffffff; }"
+            "QMenu::separator { height: 1px; background: #3a3f4b; margin: 4px 6px; }"
+        );
+
+        fileMenu->addAction("📄  New Workspace Project", QKeySequence("Ctrl+Shift+N"), this, &MainWindow::onNewProjectClicked);
+        fileMenu->addAction("📂  Open Project (.ocmm)...", QKeySequence("Ctrl+O"), this, &MainWindow::onOpenProjectClicked);
+        fileMenu->addAction("💾  Save Project (.ocmm)", QKeySequence("Ctrl+Shift+S"), this, &MainWindow::onSaveProjectClicked);
+        fileMenu->addAction("📝  Save Project As...", this, &MainWindow::onSaveProjectAsClicked);
+        fileMenu->addSeparator();
+        fileMenu->addAction("📦  Load 3D STEP Model (.step)...", this, &MainWindow::onLoadStepClicked);
+        fileMenu->addAction("📜  Load DMIS 5.3 Program (.dmis)...", this, &MainWindow::onLoadDmisProgramClicked);
+        fileMenu->addAction("💿  Save DMIS 5.3 Program (.dmis)...", this, &MainWindow::onExportDmisProgramClicked);
+        fileMenu->addSeparator();
+        fileMenu->addAction("🧊  Reverse Engineering & CAD Studio...", QKeySequence("Ctrl+R"), this, &MainWindow::onReverseEngineerPartClicked);
+        fileMenu->addAction("📊  Export Inspection Report / Certificate...", this, &MainWindow::onExportReportClicked);
+        fileMenu->addSeparator();
+        fileMenu->addAction("⚡  Customize Quick Access Toolbar...", this, &MainWindow::onCustomizeQuickAccessClicked);
+        fileMenu->addAction("🛠  Customize Ribbon Tabs & Commands...", this, &MainWindow::onCustomizeRibbonClicked);
+        fileMenu->addAction("⚙  Settings & Hardware Configuration...", QKeySequence("Ctrl+,"), this, &MainWindow::onOpenSettingsClicked);
+        fileMenu->addSeparator();
+        fileMenu->addAction("✕  Exit OpenCMM", QKeySequence("Alt+F4"), this, &QWidget::close);
+
+        fileBtn->setMenu(fileMenu);
+        mainLay->addWidget(fileBtn);
+
+        // Vertical divider between File Menu and Quick Access Toolbar icons
+        auto* sep = new QFrame(m_qatCornerWidget);
+        sep->setFrameShape(QFrame::VLine);
+        sep->setStyleSheet("color: #3a3f4b;");
+        mainLay->addWidget(sep);
+
+        // 2. Dynamic Quick Access Icon Container
+        auto* qatHost = new QWidget(m_qatCornerWidget);
+        m_qatButtonsLayout = new QHBoxLayout(qatHost);
+        m_qatButtonsLayout->setContentsMargins(0, 0, 0, 0);
+        m_qatButtonsLayout->setSpacing(2);
+        mainLay->addWidget(qatHost);
+
+        // 3. QAT Customize Dropdown Button (▾)
+        auto* qatMenuBtn = new QToolButton(m_qatCornerWidget);
+        qatMenuBtn->setProperty("isQatWidget", true);
+        qatMenuBtn->setText("▾");
+        qatMenuBtn->setCursor(Qt::PointingHandCursor);
+        qatMenuBtn->setPopupMode(QToolButton::InstantPopup);
+        qatMenuBtn->setToolTip("Customize Quick Access Toolbar");
+        qatMenuBtn->setStyleSheet(
+            "QToolButton { background-color: transparent; color: #94a3b8; border: 1px solid transparent; "
+            "border-radius: 3px; padding: 2px 5px; font-size: 11px; font-weight: bold; min-height: 20px; max-height: 24px; }"
+            "QToolButton:hover { background-color: #2c313a; color: #ffffff; border: 1px solid #61afef; }"
+            "QToolButton::menu-indicator { image: none; }"
+        );
+
+        auto* qatQuickMenu = new QMenu(qatMenuBtn);
+        qatQuickMenu->setStyleSheet(fileMenu->styleSheet());
+        connect(qatQuickMenu, &QMenu::aboutToShow, this, [this, qatQuickMenu]() {
+            qatQuickMenu->clear();
+            const QStringList activeIds = loadSavedQatCommandIds();
+
+            for (const auto& meta : kQatCatalog) {
+                const QString id = QString::fromLatin1(meta.id);
+                QAction* toggleAct = qatQuickMenu->addAction(
+                    QString("%1  %2").arg(QString::fromUtf8(meta.icon), QString::fromLatin1(meta.label))
+                );
+                toggleAct->setCheckable(true);
+                toggleAct->setChecked(activeIds.contains(id));
+                connect(toggleAct, &QAction::triggered, this, [this, id](bool checked) {
+                    QStringList current = loadSavedQatCommandIds();
+                    if (checked && !current.contains(id)) {
+                        current.append(id);
+                    }
+                    else if (!checked) {
+                        current.removeAll(id);
+                    }
+                    saveQatCommandIds(current);
+                    rebuildQuickAccessToolbar();
+                    });
+            }
+
+            qatQuickMenu->addSeparator();
+            qatQuickMenu->addAction("⚡ More Commands / Reorder QAT...", this, &MainWindow::onCustomizeQuickAccessClicked);
+            qatQuickMenu->addAction("↺ Reset Quick Access Toolbar", this, [this]() {
+                saveQatCommandIds(defaultQatCommandIds());
+                rebuildQuickAccessToolbar();
+                statusBar()->showMessage("Reset Quick Access Toolbar to factory defaults.");
+                });
+            });
+
+        qatMenuBtn->setMenu(qatQuickMenu);
+        mainLay->addWidget(qatMenuBtn);
+
+        ribbonTabs->setCornerWidget(m_qatCornerWidget, Qt::TopLeftCorner);
+        rebuildQuickAccessToolbar();
+    }
+
+    QWidget* MainWindow::createQatButtonForId(const QString& qatId) {
+        const QatCommandMeta* meta = findQatMeta(qatId);
+        if (!meta) return nullptr;
+
+        auto* btn = new QToolButton(m_qatCornerWidget);
+        btn->setProperty("isQatWidget", true);
+        btn->setText(QString::fromUtf8(meta->icon));
+        btn->setToolTip(QString::fromLatin1(meta->tooltip));
+        btn->setCursor(Qt::PointingHandCursor);
+        btn->setFixedSize(26, 24);
+        btn->setStyleSheet(
+            "QToolButton { background-color: #282c34; color: #e2e8f0; border: 1px solid #3a3f4b; "
+            "border-radius: 3px; font-size: 13px; padding: 1px; }"
+            "QToolButton:hover { background-color: #3e4451; border: 1px solid #61afef; color: #ffffff; }"
+            "QToolButton:pressed { background-color: #181a1f; }"
+        );
+
+        if (qatId == "qat_new_project")          connect(btn, &QToolButton::clicked, this, &MainWindow::onNewProjectClicked);
+        else if (qatId == "qat_open_project")    connect(btn, &QToolButton::clicked, this, &MainWindow::onOpenProjectClicked);
+        else if (qatId == "qat_save_project")    connect(btn, &QToolButton::clicked, this, &MainWindow::onSaveProjectClicked);
+        else if (qatId == "qat_save_project_as") connect(btn, &QToolButton::clicked, this, &MainWindow::onSaveProjectAsClicked);
+        else if (qatId == "qat_load_step")       connect(btn, &QToolButton::clicked, this, &MainWindow::onLoadStepClicked);
+        else if (qatId == "qat_load_dmis")       connect(btn, &QToolButton::clicked, this, &MainWindow::onLoadDmisProgramClicked);
+        else if (qatId == "qat_save_dmis")       connect(btn, &QToolButton::clicked, this, &MainWindow::onExportDmisProgramClicked);
+        else if (qatId == "qat_reverse_eng")     connect(btn, &QToolButton::clicked, this, &MainWindow::onReverseEngineerPartClicked);
+        else if (qatId == "qat_export_report")   connect(btn, &QToolButton::clicked, this, &MainWindow::onExportReportClicked);
+        else if (qatId == "qat_undo_hit")        connect(btn, &QToolButton::clicked, this, &MainWindow::onUndoLastProbeHitClicked);
+        else if (qatId == "qat_clear_points")    connect(btn, &QToolButton::clicked, this, &MainWindow::onClearPointsClicked);
+        else if (qatId == "qat_zero_axes")       connect(btn, &QToolButton::clicked, this, &MainWindow::onZeroAxesClicked);
+        else if (qatId == "qat_toggle_units")    connect(btn, &QToolButton::clicked, this, &MainWindow::onUnitToggled);
+        else if (qatId == "qat_calibrate_probe") connect(btn, &QToolButton::clicked, this, &MainWindow::onCalibrateProbeClicked);
+        else if (qatId == "qat_align_321")       connect(btn, &QToolButton::clicked, this, &MainWindow::onRun321AlignmentClicked);
+        else if (qatId == "qat_gdt_callout")     connect(btn, &QToolButton::clicked, this, &MainWindow::onEvaluateGdtCalloutClicked);
+        else if (qatId == "qat_settings")        connect(btn, &QToolButton::clicked, this, &MainWindow::onOpenSettingsClicked);
+
+        return btn;
+    }
+
+    void MainWindow::rebuildQuickAccessToolbar() {
+        if (!m_qatButtonsLayout) return;
+
+        while (QLayoutItem* item = m_qatButtonsLayout->takeAt(0)) {
+            if (QWidget* w = item->widget()) {
+                delete w;
+            }
+            delete item;
+        }
+
+        const QStringList cmdIds = loadSavedQatCommandIds();
+        for (const QString& id : cmdIds) {
+            if (QWidget* btn = createQatButtonForId(id)) {
+                m_qatButtonsLayout->addWidget(btn);
+            }
+        }
+
+        if (m_qatCornerWidget) {
+            m_qatCornerWidget->adjustSize();
+            if (auto* ribbonTabs = findChild<QTabWidget*>("RibbonBar")) {
+                ribbonTabs->updateGeometry();
+                ribbonTabs->update();
+            }
+        }
+    }
+
+    void MainWindow::onCustomizeQuickAccessClicked() {
+        QDialog dlg(this);
+        dlg.setWindowTitle("Customize Quick Access Toolbar (Top-Left Icons)");
+        dlg.resize(620, 420);
+
+        auto* mainLay = new QVBoxLayout(&dlg);
+        auto* listsRow = new QHBoxLayout();
+
+        // Left Column: Available Commands
+        auto* availCol = new QVBoxLayout();
+        availCol->addWidget(new QLabel("<b>Available Commands:</b>", &dlg));
+        auto* availList = new QListWidget(&dlg);
+        availCol->addWidget(availList, 1);
+
+        // Center Transfer Buttons
+        auto* midCol = new QVBoxLayout();
+        midCol->addStretch(1);
+        auto* addBtn = new QPushButton("Add →", &dlg);
+        auto* remBtn = new QPushButton("← Remove", &dlg);
+        midCol->addWidget(addBtn);
+        midCol->addWidget(remBtn);
+        midCol->addStretch(1);
+
+        // Right Column: Active QAT Commands + Reorder
+        auto* activeCol = new QVBoxLayout();
+        activeCol->addWidget(new QLabel("<b>Quick Access Toolbar (Left to Right):</b>", &dlg));
+        auto* activeList = new QListWidget(&dlg);
+        activeCol->addWidget(activeList, 1);
+
+        auto* orderRow = new QHBoxLayout();
+        auto* upBtn = new QPushButton("▲ Move Left", &dlg);
+        auto* dnBtn = new QPushButton("▼ Move Right", &dlg);
+        auto* resetBtn = new QPushButton("↺ Reset Defaults", &dlg);
+        orderRow->addWidget(upBtn);
+        orderRow->addWidget(dnBtn);
+        orderRow->addStretch(1);
+        orderRow->addWidget(resetBtn);
+        activeCol->addLayout(orderRow);
+
+        listsRow->addLayout(availCol, 1);
+        listsRow->addLayout(midCol, 0);
+        listsRow->addLayout(activeCol, 1);
+        mainLay->addLayout(listsRow, 1);
+
+        auto populateLists = [&](const QStringList& currentIds) {
+            availList->clear();
+            activeList->clear();
+
+            for (const QString& id : currentIds) {
+                if (const QatCommandMeta* m = findQatMeta(id)) {
+                    auto* item = new QListWidgetItem(
+                        QString("%1  %2").arg(QString::fromUtf8(m->icon), QString::fromLatin1(m->label)),
+                        activeList
+                    );
+                    item->setData(Qt::UserRole, id);
+                }
+            }
+
+            for (const auto& m : kQatCatalog) {
+                const QString id = QString::fromLatin1(m.id);
+                if (!currentIds.contains(id)) {
+                    auto* item = new QListWidgetItem(
+                        QString("%1  %2").arg(QString::fromUtf8(m.icon), QString::fromLatin1(m.label)),
+                        availList
+                    );
+                    item->setData(Qt::UserRole, id);
+                }
+            }
+            };
+
+        populateLists(loadSavedQatCommandIds());
+
+        auto currentActiveIdsFromUi = [&]() -> QStringList {
+            QStringList ids;
+            for (int i = 0; i < activeList->count(); ++i) {
+                ids.append(activeList->item(i)->data(Qt::UserRole).toString());
+            }
+            return ids;
+            };
+
+        connect(addBtn, &QPushButton::clicked, &dlg, [&]() {
+            QListWidgetItem* cur = availList->currentItem();
+            if (!cur) return;
+            QStringList ids = currentActiveIdsFromUi();
+            ids.append(cur->data(Qt::UserRole).toString());
+            populateLists(ids);
+            });
+
+        connect(remBtn, &QPushButton::clicked, &dlg, [&]() {
+            QListWidgetItem* cur = activeList->currentItem();
+            if (!cur) return;
+            QStringList ids = currentActiveIdsFromUi();
+            ids.removeAll(cur->data(Qt::UserRole).toString());
+            populateLists(ids);
+            });
+
+        connect(upBtn, &QPushButton::clicked, &dlg, [&]() {
+            const int row = activeList->currentRow();
+            if (row <= 0) return;
+            QListWidgetItem* item = activeList->takeItem(row);
+            activeList->insertItem(row - 1, item);
+            activeList->setCurrentRow(row - 1);
+            });
+
+        connect(dnBtn, &QPushButton::clicked, &dlg, [&]() {
+            const int row = activeList->currentRow();
+            if (row < 0 || row >= activeList->count() - 1) return;
+            QListWidgetItem* item = activeList->takeItem(row);
+            activeList->insertItem(row + 1, item);
+            activeList->setCurrentRow(row + 1);
+            });
+
+        connect(resetBtn, &QPushButton::clicked, &dlg, [&]() {
+            populateLists(defaultQatCommandIds());
+            });
+
+        auto* btnBox = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, &dlg);
+        connect(btnBox, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+        connect(btnBox, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+        mainLay->addWidget(btnBox);
+
+        if (dlg.exec() != QDialog::Accepted) return;
+
+        saveQatCommandIds(currentActiveIdsFromUi());
+        rebuildQuickAccessToolbar();
+        statusBar()->showMessage("Updated Quick Access Toolbar layout.");
+    }
+
+    void MainWindow::onNewProjectClicked() {
+        if (!m_solvedFeatures.empty() || !m_recordedHits.empty() || !m_dmisProgram.features.empty()) {
+            const auto resp = QMessageBox::question(
+                this,
+                "New Workspace Project",
+                "Start a new OpenCMM workspace? This will clear current features, alignment, and active buffer hits.",
+                QMessageBox::Yes | QMessageBox::No,
+                QMessageBox::No
+            );
+            if (resp != QMessageBox::Yes) return;
+        }
+
+        stopDmisAutoRun();
+        finishFeatureBuffer();
+        m_solvedFeatures.clear();
+        m_featureDmisHits.clear();
+        m_featureRefIds.clear();
+        m_featureDatumLetters.clear();
+        m_plannedDmisTreeItems.clear();
+        m_activeDmisTreeItem = nullptr;
+        m_dmisProgram = DmisProgramData{};
+        m_isDmisProgramActive = false;
+        m_activeDmisFeatureIdx = -1;
+        m_datumAFeatureId = -1;
+        m_datumBFeatureId = -1;
+        m_datumCFeatureId = -1;
+        m_isPartAligned = false;
+        m_pcsMatrix = Eigen::Matrix4d::Identity();
+        m_featureCounter = 1;
+        m_currentProjectFilePath.clear();
+
+        for (int i = m_featureTree->topLevelItemCount() - 1; i >= 0; --i) {
+            QTreeWidgetItem* top = m_featureTree->topLevelItem(i);
+            if (top != m_activePointsGroup) {
+                delete m_featureTree->takeTopLevelItem(i);
+            }
+        }
+
+        if (m_viewport) {
+            m_viewport->clearFittedFeatures();
+            m_viewport->clearHitMarkers();
+            m_viewport->clearProgramTargetMarkers();
+            m_viewport->clearPcsTriadVisual();
+        }
+        updateManualPromptBanner();
+        updateDroDisplay();
+        setWindowTitle("OpenCMM - Precision Coordinate Metrology Studio");
+        statusBar()->showMessage("Started new OpenCMM workspace session.");
+    }
+
+    void MainWindow::onSaveProjectClicked() {
+        if (!m_currentProjectFilePath.isEmpty()) {
+            const QJsonObject res = saveProjectJson(QJsonObject{ { "filePath", m_currentProjectFilePath } });
+            if (!res.value("success").toBool()) {
+                QMessageBox::warning(this, "Save Project Error", res.value("error").toString());
+            }
+            return;
+        }
+        onSaveProjectAsClicked();
+    }
+
+    void MainWindow::onSaveProjectAsClicked() {
+        const QString defaultPath = m_currentProjectFilePath.isEmpty()
+            ? QString("inspection_session.ocmm")
+            : m_currentProjectFilePath;
+
+        const QString filePath = QFileDialog::getSaveFileName(
+            this,
+            "Save OpenCMM Workspace Project (.ocmm)",
+            defaultPath,
+            "OpenCMM Project Files (*.ocmm);;All Files (*.*)"
+        );
+        if (filePath.isEmpty()) return;
+
+        const QJsonObject res = saveProjectJson(QJsonObject{ { "filePath", filePath } });
+        if (!res.value("success").toBool()) {
+            QMessageBox::warning(this, "Save Project Error", res.value("error").toString());
+            return;
+        }
+
+        m_currentProjectFilePath = res.value("filePath").toString();
+        setWindowTitle(QString("OpenCMM — %1").arg(QFileInfo(m_currentProjectFilePath).fileName()));
+    }
+
+    void MainWindow::onOpenProjectClicked() {
+        const QString filePath = QFileDialog::getOpenFileName(
+            this,
+            "Open OpenCMM Workspace Project (.ocmm)",
+            QString(),
+            "OpenCMM Project Files (*.ocmm);;All Files (*.*)"
+        );
+        if (filePath.isEmpty()) return;
+
+        const QJsonObject res = loadProjectJson(QJsonObject{ { "filePath", filePath } });
+        if (!res.value("success").toBool()) {
+            QMessageBox::warning(this, "Open Project Error", res.value("error").toString());
+            return;
+        }
+
+        m_currentProjectFilePath = filePath;
+        setWindowTitle(QString("OpenCMM — %1").arg(QFileInfo(filePath).fileName()));
     }
 
 } // namespace OpenCMM
